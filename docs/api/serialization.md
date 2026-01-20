@@ -16,3 +16,9 @@
 
 ::: jce.JceOption
     handler: python
+
+::: jce.JceConfig
+    handler: python
+
+::: jce.BytesMode
+    handler: python

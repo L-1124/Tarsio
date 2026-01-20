@@ -3,8 +3,7 @@
 提供了JceStruct定义、序列化(dumps)和反序列化(loads)功能.
 """
 
-from . import types
-from .api import dump, dumps, load, loads
+from .api import BytesMode, dump, dumps, load, loads
 from .config import JceConfig
 from .context import DeserializationInfo, SerializationInfo
 from .decoder import jce_field_deserializer
@@ -66,6 +65,7 @@ __all__ = [
     "STRUCT_END",
     "STRUCT_START",
     "ZERO_TAG",
+    "BytesMode",
     "DeserializationInfo",
     "JceConfig",
     "JceDecodeError",
@@ -89,5 +89,4 @@ __all__ = [
     "jce_field_serializer",
     "load",
     "loads",
-    "types",
 ]
