@@ -1,0 +1,157 @@
+[project]
+name = "jce-python"
+description = "基于 Pydantic v2 的现代化 JCE (Tars) 协议 Python 实现"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "l-1124", email = "68656403+L-1124@users.noreply.github.com" }
+]
+keywords = [
+  "binary",
+  "jce",
+  "protocol",
+  "pydantic",
+  "serialization",
+  "struct",
+  "tars"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Networking",
+  "Typing :: Typed",
+]
+dependencies = [
+  "pydantic>=2.0",
+  "typing-extensions>=4.15.0",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/L-1124/JceStruct"
+Issues = "https://github.com/L-1124/JceStruct/issues"
+Repository = "https://github.com/L-1124/JceStruct"
+
+[project.scripts]
+jce = "jce.__main__:main"
+
+[project.optional-dependencies]
+cli = ["click>=8.0"]
+
+[dependency-groups]
+docs = [
+      "griffe-inherited-docstrings>=1.1.2",
+      "griffe-pydantic>=1.2.0",
+      "mkdocs>=1.6.1",
+      "mkdocs-material>=9.7.1",
+      "mkdocstrings[python]>=1.0.1",
+      "pymdown-extensions>=10.20",
+]
+testing = [
+  "pytest>=8.0.0",
+  "pytest-cov>=4.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "jce/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jce"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/jce",
+  "/tests",
+  "README.md",
+  "LICENSE",
+]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.10"
+typeCheckingMode = "standard"
+include = ["jce", "tests"]
+
+[tool.pytest]
+addopts = ["--cov-report=term-missing", "--cov=jce", "-v"]
+minversion = "6.0"
+python_files = ["test_*.py"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle errors
+  "F",  # pyflakes
+  "B",  # flake8-bugbear
+  "I",  # isort
+  "UP",  # pyupgrade
+  "SIM",  # flake8-simplify
+  "RUF",  # ruff specific rules
+  "C4",  # flake8-comprehensions
+  "PT",  # flake8-pytest-style
+  "RET",  # flake8-return
+  "ARG",  # flake8-unused-arguments
+  "ERA",  # eradicate (commented out code)
+  "PL",  # pylint
+  "TRY",  # tryceratops (异常处理反模式)
+  "PERF",  # perflint (性能优化)
+  "D",  # pydocstyle (文档字符串风格)
+]
+ignore = [
+  "D100",
+  "D104",
+  "D105",
+  "D107",  # Missing docstrings in specific locations
+  "PLR0913",  # Too many arguments
+  "PLR2004",  # Magic values used in comparison
+  "PLR0911",  # Too many return statements
+  "PLR0912",  # Too many branches
+  "PLR0915",  # Too many statements
+  "PLC0415",  # Import outside toplevel (necessary for circular dependencies)
+  "PLW2901",  # Loop variable overwritten by assignment target
+  "PLW3201",
+  "PLR0917",
+  "ERA001",  # Commented out code (often false positives on Chinese comments)
+  "SIM102",  # Nested if statements (sometimes clearer than composite)
+  "SIM108",  # Use ternary operator (sometimes less readable)
+  "SIM118",  # Use `key in dict` instead of `key in dict.keys()` (safe but noisy)
+  "TRY003",  # Avoid specifying long messages outside the exception class
+  "TRY300",  # Consider moving this statement to an `else` block
+  "TRY004",  # Prefer `TypeError` exception for invalid type
+  "RET503",  # Missing explicit return
+  "RET504",  # Unnecessary assignment before return
+  "RET505",  # Unnecessary else/elif after return
+  "RUF002",
+  "RUF003",
+  "B028",  # No explicit stacklevel
+  "E501",  # Line too long
+]
+pydocstyle = { convention = "google" }
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "PLR0913", "ARG001", "S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true

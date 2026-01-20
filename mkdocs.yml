@@ -1,0 +1,106 @@
+site_name: JceStruct
+site_description: Modern JCE/Tars serialization library for Python, built on Pydantic v2.
+repo_url: https://github.com/l-1124/JceStruct
+repo_name: JceStruct
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/l-1124/JceStruct
+
+watch:
+  - docs
+  - mkdocs.yml
+
+theme:
+  name: "material"
+  language: zh
+  font: false
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - content.tabs.link
+    - content.code.annotate
+    - content.code.copy
+    - announce.dismiss
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - navigation.indexes
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/theme-light-dark
+        name: Automatically Switch ui mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: latte
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: macchiato
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+
+nav:
+  - 简介: index.md
+  - 核心概念 (Concepts):
+    - 模型 (Models): usage/models.md
+    - 字段 (Fields): usage/fields.md
+    - 序列化 (Serialization): usage/serialization.md
+    - 类型适配器 (TypeAdapter): usage/type_adapter.md
+    - 类型转换表 (Conversion Table): usage/conversion_table.md
+    - 流式处理 (Streams): usage/streams.md
+  - 工具 (Tools):
+    - 命令行工具 (CLI): usage/cli.md
+  - API 参考:
+    - 结构体 (Structs): api/struct.md
+    - 字段 (Fields): api/fields.md
+    - 序列化 (Serialization): api/serialization.md
+    - 类型适配器 (TypeAdapter): api/type_adapter.md
+    - 流式处理 (Streams): api/streams.md
+    - 类型定义 (Types): api/types.md
+    - 异常 (Exceptions): api/exceptions.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true 
+  - admonition
+  - attr_list
+  - def_list
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            members_order: source
+            separate_signature: true
+            group_by_category: false
+            show_root_heading: true
+            show_symbol_type_heading: true
+            heading_level: 2
+            show_signature_annotations: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+            docstring_section_style: spacy
+            extensions:
+              - dataclasses
+              - griffe_inherited_docstrings
+              - griffe_pydantic
+              - unpack_typeddict
+          inventories:
+          - https://docs.pydantic.dev/latest/objects.inv
+          - https://docs.python.org/3/objects.inv
+          paths: [.]
+
