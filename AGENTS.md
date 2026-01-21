@@ -194,75 +194,154 @@
   - 使用 `uv build` 和 Trusted Publishing (OIDC) 发布到 PyPI。
   - 创建带有自动生成说明的 GitHub Release。
 
-## 6. 测试约定
+# 6. 测试约定
 
 ### 6.1 测试风格
 
-- **框架**: `pytest` (v9.0.2+)。
-- **风格**: 使用函数式测试 (`def test_xxx()`), 而非类式 (`class TestXxx:`).
-- **位置**: `tests/` 目录 (扁平结构, 所有测试文件位于同一层级)。
+* **框架**: 强制使用 `pytest` (v9.0.2+)。
+* **模式**: 采用**函数式测试** (`def test_xxx()`)，禁止使用类式测试 (`class TestXxx`) 以保持代码简洁。
+* **位置**: 所有测试文件位于根目录的 `tests/` 文件夹下，采用**扁平结构**（不创建子目录）。
+* **原子性**: 测试函数必须短小且聚焦。一个测试函数只验证一个行为，严禁编写“万能测试函数”。
 
 ### 6.2 命名约定
 
-- **测试函数**: `test_<function>_<expected_behavior>`
-  - 例: `test_loads_with_bytes_mode_raw_preserves_bytes`
-  - 例: `test_field_serializer_transforms_value_on_encode`
-  - 例: `test_cli_help`
-- **Fixtures**: 使用 `@pytest.fixture` 提供共享 setup, 遵循 snake_case 命名。
+* **测试文件**: `test_<被测模块>.py`
+* 例: `struct.py`  `test_struct.py`
 
-### 6.3 文档字符串
 
-- **语言**: **中文**。
-- **内容**: 描述测试的预期行为, 不需要描述实现细节。
-- **格式**: 单行, 简洁明了。
-- **示例**:
+* **测试函数**: `test_<被测函数>_<预期行为>`
+* 例: `test_loads_with_invalid_data_raises_decode_error`
 
-  ```python
-  def test_loads_with_invalid_data_raises_decode_error():
-      """loads() 应该在数据无效时抛出 JceDecodeError."""
-      ...
-  ```
 
-### 6.4 结构
+* **Fixtures**: 遵循 `snake_case`，名称应反映其提供的对象或状态。
+
+### 6.3 文档字符串与注释
+
+* **测试函数**:
+* 使用**单行中文**。
+* 描述预期行为，不描述实现细节。
+
+
+* **Fixtures 与辅助函数**:
+* 必须遵循 **Google Style** 注释规范。
+* 包含 `Args`、`Returns` 或 `Yields` 声明。
+
+
+* **类型注解**:
+* 测试函数统一标注返回值为 `-> None`。
+* Fixtures 必须标注返回值类型。
+
+
+
+### 6.4 标准结构示例
 
 ```python
-"""模块级文档字符串, 描述测试文件覆盖的功能."""
+"""测试 JCE 编解码器的核心功能."""
 
 import pytest
+from io import BytesIO
+from typing import Generator
+from jce import JceStruct, JceDecodeError, fields
 
-from jce import ...
-
+class User(JceStruct):
+    """用于测试的简单结构体."""
+    uid: int = fields.Int(1)
+    name: str = fields.String(2)
 
 @pytest.fixture
-def sample_struct():
-    """提供测试用的示例结构体."""
-    return SomeStruct(...)
+def sample_user() -> User:
+    """提供一个预置的 User 实例。
+    
+    Returns:
+        初始化后的 User 对象。
+    """
+    return User(uid=12345, name="Gemini")
 
+@pytest.fixture
+def mock_stream() -> Generator[BytesIO, None, None]:
+    """提供内存字节流环境。
+    
+    Yields:
+        BytesIO 实例。
+    """
+    stream = BytesIO()
+    yield stream
+    stream.close()
 
-def test_function_expected_behavior(sample_struct):
-    """函数应该在特定条件下产生预期结果."""
+def test_user_encode_returns_correct_bytes(sample_user: User) -> None:
+    """User 结构体应该能正确编码为字节流."""
     # Arrange (准备)
-    ...
-    
+    expected_prefix = b"\x01\x15"  # 假设的编码开头
+
     # Act (执行)
-    result = function_under_test(...)
-    
+    result = sample_user.encode()
+
     # Assert (断言)
-    assert result == expected
+    assert isinstance(result, bytes)
+    assert result.startswith(expected_prefix)
+
+def test_decode_with_truncated_data_raises_error() -> None:
+    """当数据被截断时，decode 应该抛出 JceDecodeError."""
+    invalid_data = b"\x01" 
+    
+    with pytest.raises(JceDecodeError, match="Unexpected end of buffer"):
+        User.decode(invalid_data)
+
 ```
 
-### 6.5 最佳实践
+### 6.5 进阶最佳实践
 
-- **独立性**: 每个测试函数应独立运行, 不依赖其他测试的状态。
-- **Fixtures 优于 Setup**: 使用 `@pytest.fixture` 而非在测试函数开头重复 setup 代码。
-- **显式断言**: 使用清晰的断言, 避免 `assert result` 这类模糊断言。
-- **边界情况**: 覆盖边界条件和错误路径。
-- **未使用参数**: API 要求但测试不使用的参数, 使用 `_` 代替。
+#### 1. 参数化测试 (Parametrize)
 
-  ```python
-  def serialize_value(self, value: str, _):
-      return value.upper()
-  ```
+当测试多个输入输出时，必须使用参数化并提供 `ids` 以增强报告可读性。
+
+```python
+@pytest.mark.parametrize(
+    "val, expected",
+    [(1, b"\x01"), (127, b"\x7f")],
+    ids=["small_int", "max_byte_int"]
+)
+def test_int_encoding_variants(val: int, expected: bytes) -> None:
+    """测试不同范围整数的编码结果."""
+    ...
+
+```
+
+#### 2. 异常捕获
+
+* 必须使用 `pytest.raises`。
+* **严禁**使用宽泛的 `Exception`，必须指明具体的异常类（如 `ValueError`, `JceDecodeError`）。
+* 建议使用 `match` 参数校验异常信息关键词。
+
+#### 3. 模拟 (Mocking)
+
+* 优先使用 `pytest-mock` 提供的 `mocker` fixture，避免手动使用 `patch` 装饰器。
+* 禁止在测试中发起真实的 HTTP 请求或修改全局环境变量。
+
+#### 4. I/O 处理
+
+* **内存化**: 涉及文件读取的测试，优先使用 `io.BytesIO` 或 `io.StringIO`。
+* **临时文件**: 若必须操作物理文件，使用 pytest 内置的 `tmp_path` fixture。
+
+#### 5. 显式断言
+
+* 避免 `assert result`（除非结果本身是布尔值）。
+* 使用 `assert result == expected`、`assert "key" in dict` 等明确的比较。
+* 涉及浮点数对比时，使用 `pytest.approx()`。
+
+好的，已将 **`test_protocol.py`** 的特殊地位加入规范，作为库的基石：
+
+---
+
+### 6.6 核心协议测试 (Fundamental)
+
+`test_protocol.py` 是库的**根本性测试**，必须保证 100% 通过。它定义了 JCE 协议实现的基准，任何破坏此文件测试用例的修改均被视为破坏性变更。
+
+* **测试目标**: 验证确定的输入与预期的十六进制输出（Hex）完全一致。
+* **断言要求**:
+* 编码测试：断言生成的 bytes 转为 hex 字符串后与预期值完全匹配。
+* 解码测试：断言从预期 hex 字符串还原的对象与原始对象等值。
+
 
 ## 7. 文档生成 (MkDocs)
 

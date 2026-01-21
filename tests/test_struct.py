@@ -1,16 +1,19 @@
-"""JCE 结构体功能测试.
+"""测试 JCE 结构体.
 
 覆盖 jce.struct 模块的核心特性:
 1. JceStruct 定义与字段配置 (default, default_factory)
 2. 显式反序列化 (model_validate_jce)
 3. 自动解包机制 (_auto_unpack_bytes_field)
 4. 对象方法 (encode, decode)
+5. 字段编码模式 (Nested/Blob/Any)
 """
+
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from jce import JceDict, JceField, JceStruct
+from jce import BYTES, JceDict, JceField, JceStruct, dumps
 
 # --- 辅助模型 ---
 
@@ -44,7 +47,7 @@ class BlobContainer(JceStruct):
 # --- 测试用例 ---
 
 
-def test_struct_defaults():
+def test_struct_defaults() -> None:
     """JceStruct 应正确处理字段默认值和 factory."""
     # 标准 Pydantic 用法: 关键字参数
     u1 = SimpleUser(uid=1)
@@ -56,7 +59,7 @@ def test_struct_defaults():
     assert u2.scores == [100]
 
 
-def test_struct_validate_from_bytes():
+def test_struct_validate_from_bytes() -> None:
     """model_validate_jce() 应支持从 bytes 直接反序列化."""
     # SimpleUser(uid=100, name="test") -> 00 64 ...
     raw_bytes = bytes.fromhex("0064160474657374")
@@ -67,7 +70,7 @@ def test_struct_validate_from_bytes():
     assert u.name == "test"
 
 
-def test_struct_validate_from_tag_dict():
+def test_struct_validate_from_tag_dict() -> None:
     """model_validate_jce() 应支持从 JceDict (Tag-Map) 反序列化."""
     # 模拟 JCE 解码器的中间产物: JceDict({0: 100, ...})
     raw_dict = JceDict({0: 100, 1: "test"})
@@ -78,7 +81,7 @@ def test_struct_validate_from_tag_dict():
     assert u.name == "test"
 
 
-def test_auto_unpack_nested_bytes():
+def test_auto_unpack_nested_bytes() -> None:
     """当字段定义为 Struct 但数据是 bytes 时应自动尝试解包."""
     inner_bytes = bytes.fromhex("0063")  # uid=99
 
@@ -92,8 +95,8 @@ def test_auto_unpack_nested_bytes():
     assert container.inner.uid == 99
 
 
-def test_struct_methods():
-    """model_dump_jce() 和 model_validate_jce() 应该互为逆操作."""
+def test_struct_methods() -> None:
+    """model_dump_jce() 和 model_validate_jce() 应互为逆操作."""
     u = SimpleUser(uid=123)
     data = u.model_dump_jce()
 
@@ -104,8 +107,8 @@ def test_struct_methods():
     assert u.model_dump_jce() == data
 
 
-def test_from_bytes_shortcut():
-    """from_bytes() 应该返回解码后的字典和消耗长度."""
+def test_from_bytes_shortcut() -> None:
+    """from_bytes() 应返回解码后的字典和消耗长度."""
     data = bytes.fromhex("0001")
     res_dict, _ = SimpleUser.from_bytes(data)
 
@@ -113,13 +116,13 @@ def test_from_bytes_shortcut():
     assert res_dict == {0: 1}
 
 
-def test_validation_error():
+def test_validation_error() -> None:
     """缺失必填字段时应抛出 ValidationError."""
     with pytest.raises(ValidationError):
         SimpleUser()  # type: ignore[call-arg]
 
 
-def test_jcedict_key_validation_init():
+def test_jcedict_key_validation_init() -> None:
     """JceDict 初始化时应拒绝非 int 类型的键."""
     # 正常情况: 所有键都是 int
     d1 = JceDict({0: 100, 1: "test"})
@@ -134,7 +137,7 @@ def test_jcedict_key_validation_init():
         JceDict({0: 100, "key": "value"})
 
 
-def test_jcedict_key_validation_setitem():
+def test_jcedict_key_validation_setitem() -> None:
     """JceDict 赋值时应拒绝非 int 类型的键."""
     d = JceDict()
 
@@ -149,3 +152,96 @@ def test_jcedict_key_validation_setitem():
     # 异常: float 键
     with pytest.raises(TypeError, match="keys must be int"):
         d[1.5] = "value"  # type: ignore[arg]
+
+
+# --- 字段编码模式测试 ---
+
+
+class NestedPattern(JceStruct):
+    """模式 A: 标准嵌套结构体."""
+
+    param: JceDict = JceField(jce_id=2)
+
+
+class BlobPattern(JceStruct):
+    """模式 B: 二进制 Blob (透传)."""
+
+    param: JceDict = JceField(jce_id=2, jce_type=BYTES)
+
+
+class AnyPattern(JceStruct):
+    """模式 C: Any 类型 (动态推断)."""
+
+    param: Any = JceField(jce_id=2)
+
+
+class SafeAnyPattern(JceStruct):
+    """模式 D: Any + 显式 BYTES (安全 Blob)."""
+
+    param: Any = JceField(jce_id=2, jce_type=BYTES)
+
+
+@pytest.fixture
+def inner_data() -> JceDict:
+    """提供测试用的标准内部数据 {0: 100}.
+
+    Returns:
+        JceDict({0: 100}).
+    """
+    return JceDict({0: 100})
+
+
+def test_pattern_nested_struct(inner_data: JceDict) -> None:
+    """模式 A 应编码为 JCE Struct (Tag 2, Type 10)."""
+    obj = NestedPattern(param=inner_data)
+    encoded = dumps(obj)
+
+    assert encoded.startswith(b"\x2a")  # Tag 2, Type 10 (StructBegin)
+    assert encoded.endswith(b"\x0b")  # Type 11 (StructEnd)
+    assert b"\x00\x64" in encoded  # 内部数据 (Tag 0: 100)
+
+
+def test_pattern_binary_blob(inner_data: JceDict) -> None:
+    """模式 B 应编码为 SimpleList (Tag 2, Type 13)."""
+    obj = BlobPattern(param=inner_data)
+    encoded = dumps(obj)
+
+    assert encoded.startswith(b"\x2d")  # Tag 2, Type 13 (SimpleList)
+    assert b"\x00\x02\x00\x64" in encoded  # Length + Payload
+
+
+def test_pattern_any_with_jcedict(inner_data: JceDict) -> None:
+    """模式 C 传入 JceDict 时应推断为 STRUCT."""
+    obj = AnyPattern(param=inner_data)
+    encoded = dumps(obj)
+
+    assert encoded.startswith(b"\x2a")  # Tag 2, Type 10 (StructBegin)
+
+
+def test_pattern_any_with_dict() -> None:
+    """模式 C 传入 dict 时应推断为 MAP."""
+    inner_dict = {0: 100}
+    obj = AnyPattern(param=inner_dict)
+    encoded = dumps(obj)
+
+    assert encoded.startswith(b"\x28")  # Tag 2, Type 8 (Map)
+
+
+def test_pattern_any_with_bytes_mode(inner_data: JceDict) -> None:
+    """模式 D (Any + BYTES) 应始终作为 Blob 编码."""
+    obj = SafeAnyPattern(param=inner_data)
+    encoded = dumps(obj)
+
+    assert encoded.startswith(b"\x2d")  # Tag 2, Type 13 (SimpleList)
+
+
+def test_any_field_inference_consistency() -> None:
+    """验证 Any 字段的类型推断一致性."""
+    # int -> INT (100 适合 1 字节)
+    assert dumps(AnyPattern(param=100)).startswith(b"\x20")
+
+    # str -> STRING
+    assert dumps(AnyPattern(param="a")).startswith(b"\x26")  # Tag 2, Type 6 (STRING1)
+
+    # bytes -> SIMPLE_LIST
+    assert dumps(AnyPattern(param=b"a")).startswith(b"\x2d")  # Tag 2, Type 13
