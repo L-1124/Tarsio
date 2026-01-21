@@ -72,8 +72,12 @@ class JceDict(dict[int, Any]):
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: Any):
-        return core_schema.dict_schema(
-            keys_schema=core_schema.int_schema(), values_schema=core_schema.any_schema()
+        return core_schema.no_info_after_validator_function(
+            cls,
+            core_schema.dict_schema(
+                keys_schema=core_schema.int_schema(),
+                values_schema=core_schema.any_schema(),
+            ),
         )
 
 
