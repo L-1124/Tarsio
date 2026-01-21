@@ -17,6 +17,7 @@ from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined, core_schema
 from typing_extensions import Self, dataclass_transform
 
+from .config import BytesMode
 from .options import JceOption
 from .types import (
     JceType,
@@ -164,7 +165,6 @@ class JceModelField:
     def from_field_info(cls, field_info: FieldInfo, annotation: Any) -> Self:
         """从 FieldInfo 创建 JceModelField."""
         extra = field_info.json_schema_extra or {}
-
         if callable(extra):
             extra = {}
 
@@ -449,9 +449,23 @@ class JceStruct(BaseModel, JceType, metaclass=JceStructMeta):
         """
         from .api import dumps
 
+        # 1. 从 model_config 读取配置
+        config = self.model_config
+        default_option = config.get("jce_option", JceOption.NONE)
+        omit_default = config.get("jce_omit_default", False)
+
+        # 2. 合并 Option (参数 > model_config)
+        # 注意: 参数传递的 option 通常应该能够覆盖 model_config，或者进行组合
+        # 这里选择 OR 操作进行组合
+        final_option = option | default_option
+
+        # 3. 处理 omit_default
+        if omit_default:
+            final_option |= JceOption.OMIT_DEFAULT
+
         return dumps(
             self,
-            option=option,
+            option=final_option,
             context=context,
             exclude_unset=exclude_unset,
         )
@@ -480,12 +494,25 @@ class JceStruct(BaseModel, JceType, metaclass=JceStructMeta):
             JceDecodeError: 字节数据解析失败.
             ValidationError: 数据结构不符合模型定义.
         """
+        # 从 model_config 读取配置
+        config = cls.model_config
+        default_option = config.get("jce_option", JceOption.NONE)
+        bytes_mode = cast(BytesMode, config.get("jce_bytes_mode", "auto"))
+
+        final_option = option | default_option
+
         if isinstance(data, bytes | bytearray | memoryview):
             # 这里调用 decode 会触发 warning，但为了复用逻辑暂且如此
             # 或者直接调用 api.loads (推荐)
             from .api import loads
 
-            return loads(data, target=cls, option=option, context=context)
+            return loads(
+                data,
+                target=cls,
+                option=final_option,
+                context=context,
+                bytes_mode=bytes_mode,
+            )
 
         return cls.model_validate(data, context=context)
 
