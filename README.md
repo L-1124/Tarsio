@@ -6,11 +6,11 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://L-1124.github.io/JceStruct/)
 
-**JceStruct** 是一个现代化的 Python JCE (Jce Encoding) 协议实现，基于 **Pydantic v2** 构建。JCE 是腾讯 Tars 框架使用的高效二进制序列化协议。它结合了 Python 的类型提示系统和 JCE 的紧凑编码，提供极致的开发体验和运行时性能。
+**JceStruct** 是一个Python JCE (Jce Encoding) 协议实现，基于 **Pydantic v2** 构建。JCE 是腾讯 Tars 框架使用的高效二进制序列化协议。
 
 ## 📖 官方文档
 
-详细的使用指南和 API 参考请查阅我们的 [文档网站](https://L-1124.github.io/JceStruct/)。
+详细的使用指南和 API 参考请查阅 [文档](https://L-1124.github.io/JceStruct/)。
 
 ## ✨ 核心特性
 
@@ -23,13 +23,11 @@
 - **🧬 泛型支持**: 完整支持 Python `Generic[T]` 类型系统。
 - **🛠️ CLI 工具**: 基于 Click 的强大命令行工具，支持文件读写、格式化输出和调试。
 - **🛡️ 安全防护**: 递归深度限制、容器大小限制，防止 DoS 攻击。
-- **🐍 纯 Python**: 无需编译 C 扩展，易于安装和跨平台使用。
 
 ## 📦 安装
 
 ```bash
 $ pip install git+https://github.com/L-1124/JceStruct.git
-
 ```
 
 ## 🚀 快速开始
@@ -100,17 +98,17 @@ encoded = dumps(cfg, context={"key": "my-secret-key"})
 
 ## 🛠️ CLI 工具
 
-安装 `jce-python[cli]` 后，你可以使用 `jce` 命令直接在终端调试数据。
+安装 `git+https://github.com/L-1124/JceStruct.git[cli]` 后，你可以使用 `jce` 命令直接在终端调试数据。
 
 ```bash
 # 解码 Hex 字符串
-jce "0C 00 01"
+$ jce "0C 00 01"
 
 # 从文件读取并以 JSON 格式输出
-jce -f data.bin --format json
+$ jce -f data.bin --format json
 
 # 查看详细的解码过程 (Verbose 模式)
-jce "0C" -v
+$ jce "0C" -v
 ```
 
 ## 🤝 开发与贡献
@@ -123,6 +121,10 @@ jce "0C" -v
 ## 📄 协议文档
 
 详细的 JCE 协议规范请参阅 [JCE_PROTOCOL.md](JCE_PROTOCOL.md)。
+
+## TODO
+
+- [ ] 使用`rust`实现核心编解码功能
 
 ## ⚖️ 许可
 
