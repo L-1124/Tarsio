@@ -10,7 +10,7 @@
 ### 1.1 包管理
 
 - **工具**: `uv`
-- **依赖**: 在 `pyproject.toml` 中管理 (requires-python >= 3.10)。
+- **依赖**: 位于 `pyproject.toml`
 - **安装**: `uv pip install -e .` 或 `uv pip install -e .[cli]` (包含 CLI 工具)。
 - **开发依赖**: `uv sync --all-groups --all-extras` 。
 
@@ -28,12 +28,8 @@
 
 ### 1.3 代码检查与格式化
 
-- **工具**: `ruff` (在 `pyproject.toml` 中配置)。
-- **配置**:
-  - 行长: 88 字符。
-  - Python 目标: 3.10。
-  - 文档风格: Google 约定。
-  - 检查规则: E, F, B, I, UP, SIM, RUF, C4, PT, RET, ARG, ERA, PL, TRY, PERF, D。
+- **工具**: `ruff`
+- **配置**: `pyproject.toml`
 - **命令**:
   - 检查: `uv run ruff check .`
   - 格式化: `uv run ruff format .`
@@ -42,14 +38,13 @@
 ### 1.4 构建
 
 - **后端**: `hatchling`。
-- **构建命令**: `python -m build` (或 `hatch build`)。
+- **构建命令**: `uv build`。
 
 ## 2. 代码风格与约定
 
 ### 2.1 通用
 
-- **语言**: 文档字符串和注释应使用 **中文**。
-- **符号**: 使用英文符号
+- **语言**: 文档字符串和注释应使用 **中文**，但是使用英文符号
 - **缩进**: 4 个空格。
 - **行长**: 软限制约 80-88 字符 (由 Ruff 强制执行)。
 
@@ -71,36 +66,7 @@
 
 - **严格性**: 高。所有函数签名和字段都使用类型提示。
 - **工具**: `pydantic` v2.0+ 是数据建模的核心。
-- **泛型**: 使用 `list[T]`, `dict[K, V]` (Python 3.9+ 风格)。
-- **联合类型**: **不支持** (除了 `Optional[T]`)。
-  - `T | None`: 支持。
-  - `T1 | T2`: 定义时抛出 `TypeError` 以防止歧义。
-- **Bytes 模式**: `loads` 和 `load` 函数支持 `bytes_mode` 参数:
-  - `"raw"`: 保持原始字节。
-  - `"string"`: 尝试转为 UTF-8 字符串。
-  - `"auto"`: (默认) 智能模式, 尝试解析嵌套 JCE, 失败则转字符串, 最后保持原始字节。
-- **JceStruct**: 字段必须使用带有 `jce_id` 的 `JceField`。
-
-  ```python
-  class User(JceStruct):
-      uid: int = JceField(jce_id=0, jce_type=types.INT)
-  ```
-
-### 2.5 错误处理
-
-- **基类**: `JceError` (在 `jce.exceptions` 中)。
-- **具体错误**:
-  - `JceEncodeError`: 编码失败。
-  - `JceDecodeError`: 解码失败。
-  - `JcePartialDataError`: 数据不完整(流处理时常用)。
-  - `JceTypeError`: 类型不匹配。
-  - `JceValueError`: 值无效或超出范围。
-- **模式**: 使用描述性消息抛出具体异常。
-
-### 2.6 日志
-
-- **Logger**: 使用 `jce.log.logger`。
-- **模式**: 如果有助于调试，在抛出异常前记录错误/警告。
+- **泛型**: 使用 `list[T]`, `dict[K, V]` (Python 3.10+ 风格)。
 
 ## 3. 架构与模式
 
@@ -130,8 +96,15 @@
 
 ### 3.3 数据建模
 
-- 继承自 `JceStruct`。
+- `JceStruct` 继承自 `pydantic.BaseModel`。
 - 使用类型注解和 `JceField` 定义字段。
+- **联合类型**: **不支持** (除了 `Optional[T]`)。
+  - `T | None`: 支持。
+  - `T1 | T2`: 定义时抛出 `TypeError` 以防止歧义。
+- **自动解析 Bytes(SimpleList) 模式**: `loads` 和 `load` 函数支持 `bytes_mode` 参数:
+  - `"raw"`: 保持原始字节。
+  - `"string"`: 尝试转为 UTF-8 字符串。
+  - `"auto"`: (默认) 智能模式, 尝试解析嵌套 JCE, 失败则转字符串, 最后保持原始字节。
 - `jce_id` (标签) 是强制性的，且在结构体中必须唯一。
 - **JceDict**: 用于匿名结构体 (键必须是 int, 代表 Tag ID)。
   - `JceDict({0: 100})` -> 编码为 JCE Struct。
@@ -166,6 +139,22 @@
   - 在解码后转换字段值。
 - **Context**: 编解码函数可通过 `context` 参数传递外部状态, 在钩子中通过 `info.context` 访问。
 
+### 3.6 错误处理
+
+- **基类**: `JceError` (在 `jce.exceptions` 中)。
+- **具体错误**:
+  - `JceEncodeError`: 编码失败。
+  - `JceDecodeError`: 解码失败。
+  - `JcePartialDataError`: 数据不完整(流处理时常用)。
+  - `JceTypeError`: 类型不匹配。
+  - `JceValueError`: 值无效或超出范围。
+- **模式**: 使用描述性消息抛出具体异常。
+
+### 3.7 日志
+
+- **Logger**: 使用 `jce.log.logger`。
+- **模式**: 如果有助于调试，在抛出异常前记录错误/警告。
+
 ## 4. 文档
 
 - **Docstrings**: Google 风格。
@@ -184,19 +173,9 @@
       """
   ```
 
-## 5. Git 与工作流
+# 5. 测试约定
 
-- **提交**: 使用约定式提交 (feat, fix, docs, test, chore)。
-- **PR**: 提交前确保通过测试并通过代码检查。
-- **发布**:
-  - 通过 GitHub Actions 自动执行 (`release.yml`)。
-  - 通过推送标签触发 (例如 `git tag v0.2.0 && git push origin v0.2.0`)。
-  - 使用 `uv build` 和 Trusted Publishing (OIDC) 发布到 PyPI。
-  - 创建带有自动生成说明的 GitHub Release。
-
-# 6. 测试约定
-
-### 6.1 测试风格
+### 5.1 测试风格
 
 * **框架**: 强制使用 `pytest` (v9.0.2+)。
 * **模式**: 采用**函数式测试** (`def test_xxx()`)，禁止使用类式测试 (`class TestXxx`) 以保持代码简洁。
@@ -364,8 +343,6 @@ def test_int_encoding_variants(val: int, expected: bytes) -> None:
 
 - **安装依赖**:
   ```bash
-  uv add --group docs mkdocs-material mkdocstrings[python]
-  # 或同步环境
   uv sync --all-groups
   ```
 
@@ -394,3 +371,11 @@ def test_int_encoding_variants(val: int, expected: bytes) -> None:
   专注于"如何做" (How-to) 和"为什么" (Why)。代码块应可运行。
 - **交叉引用**:
   链接到其他文档页面或 API 定义。
+
+## 8. Git 与工作流
+
+- **提交**: 使用 `Conventional Commits` 规范提交。
+- **PR**: 提交前确保通过测试并通过代码检查
+  - 运行 `uv run pytest` 运行测试
+  - 运行 `uv run ruff check` 检查代码风格
+  - 运行 `uvx basedpyright` 检查类型注解
