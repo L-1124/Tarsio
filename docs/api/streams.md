@@ -7,7 +7,7 @@
         - pack
         - get_buffer
         - clear
-      show_root_toc_entry: false
+      
 
 ::: jce.stream.LengthPrefixedReader
     options:
@@ -15,7 +15,7 @@
         - __init__
         - feed
         - __iter__
-      show_root_toc_entry: false
+      
 
 ::: jce.stream.JceStreamWriter
     options:
@@ -25,7 +25,7 @@
         - write_bytes
         - get_buffer
         - clear
-      show_root_toc_entry: false
+      
 
 ::: jce.stream.JceStreamReader
     options:
@@ -34,4 +34,4 @@
         - feed
         - has_packet
         - read_packet
-      show_root_toc_entry: false
+      

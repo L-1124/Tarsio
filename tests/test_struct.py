@@ -245,3 +245,91 @@ def test_any_field_inference_consistency() -> None:
 
     # bytes -> SIMPLE_LIST
     assert dumps(AnyPattern(param=b"a")).startswith(b"\x2d")  # Tag 2, Type 13
+
+
+def test_jce_field_with_extra_kwargs() -> None:
+    """JceField 应能透传其他参数给 Pydantic Field."""
+
+    class ValidatedUser(JceStruct):
+        age: int = JceField(jce_id=0, gt=0, lt=150, description="Age")
+
+    # 1. 验证 description
+    schema = ValidatedUser.model_json_schema()
+    assert schema["properties"]["age"]["description"] == "Age"
+
+    # 2. 验证 gt (Greater Than)
+    with pytest.raises(ValidationError):
+        ValidatedUser(age=0)  # gt=0
+
+    # 3. 验证 lt (Less Than)
+    with pytest.raises(ValidationError):
+        ValidatedUser(age=150)  # lt=150
+
+    # 4. 正常情况
+    u = ValidatedUser(age=25)
+    assert u.age == 25
+
+
+def test_jce_field_full_parameters() -> None:
+    """验证 JceField 的扩展参数能正确传递给 Pydantic."""
+    import math
+
+    class ComplexUser(JceStruct):
+        # 1. Alias & Exclude
+        name: str = JceField(jce_id=0, alias="username", exclude=True)
+
+        # 2. String constraints
+        code: str = JceField(jce_id=1, min_length=3, max_length=5, pattern=r"^[A-Z]+$")
+
+        # 3. Number constraints
+        score: float = JceField(jce_id=2, ge=0, le=100, multiple_of=0.5)
+
+        # 4. Special constraints
+        ratio: float = JceField(jce_id=3, allow_inf_nan=False)
+
+        # 5. Frozen field
+        fixed: int = JceField(jce_id=4, default=10, frozen=True)
+
+    # Test 1: Alias
+    # 使用 alias 初始化
+    u = ComplexUser(username="Admin", code="ABC", score=50.0, ratio=1.0)
+    assert u.name == "Admin"
+
+    # Test 2: Exclude
+    # model_dump 应该排除该字段
+    dump_dict = u.model_dump()
+    assert "name" not in dump_dict
+    assert "code" in dump_dict
+
+    # Test 3: String constraints
+    with pytest.raises(ValidationError, match="should have at least 3 characters"):
+        ComplexUser(username="A", code="AB", score=50.0, ratio=1.0)
+
+    with pytest.raises(ValidationError, match="should have at most 5 characters"):
+        ComplexUser(username="A", code="ABCDEF", score=50.0, ratio=1.0)
+
+    with pytest.raises(ValidationError, match="should match pattern"):
+        ComplexUser(username="A", code="abc", score=50.0, ratio=1.0)
+
+    # Test 4: Number constraints
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        # -0.5 is a multiple of 0.5, so only ge=0 fails
+        ComplexUser(username="A", code="ABC", score=-0.5, ratio=1.0)
+
+    with pytest.raises(ValidationError, match="less than or equal to 100"):
+        # 100.5 is multiple of 0.5, so only le=100 fails
+        ComplexUser(username="A", code="ABC", score=100.5, ratio=1.0)
+
+    with pytest.raises(ValidationError, match="multiple of 0.5"):
+        # 50.1 is >=0 and <=100, so only multiple_of fails
+        ComplexUser(username="A", code="ABC", score=50.1, ratio=1.0)
+
+    # Test 5: allow_inf_nan
+    with pytest.raises(ValidationError, match="finite number"):
+        ComplexUser(username="A", code="ABC", score=50.0, ratio=math.nan)
+
+    # Test 6: Frozen
+    # Frozen 字段在赋值时应该报错 (Pydantic v2 行为可能需要 ConfigDict(validate_assignment=True) 或者只在 model 层面 frozen)
+    # Field(frozen=True) 通常意味着该字段不可修改
+    with pytest.raises(ValidationError, match="frozen"):
+        u.fixed = 20

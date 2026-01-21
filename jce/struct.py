@@ -1,10 +1,13 @@
 """JCE 结构体定义模块."""
 
+import re
 import types as stdlib_types
 import warnings
+from collections.abc import Callable
 from typing import (
     Any,
     ClassVar,
+    Literal,
     TypeVar,
     Union,
     cast,
@@ -12,7 +15,7 @@ from typing import (
     get_origin,
 )
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, AliasPath, BaseModel, Field, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined, core_schema
 from typing_extensions import Self, dataclass_transform
@@ -87,7 +90,42 @@ def JceField(
     *,
     jce_id: int,
     jce_type: type[JceType] | None = None,
-    default_factory: Any | None = None,
+    default_factory: Callable[[], Any] | Callable[[dict[str, Any]], Any] | None = None,
+    alias: str | None = None,
+    alias_priority: int | None = None,
+    validation_alias: str | AliasPath | AliasChoices | None = None,
+    serialization_alias: str | None = None,
+    title: str | None = None,
+    field_title_generator: Callable[[str, FieldInfo], str] | None = None,
+    description: str | None = None,
+    examples: list[Any] | None = None,
+    exclude: bool | None = None,
+    exclude_if: Callable[[Any], bool] | None = None,
+    discriminator: str | Any | None = None,
+    deprecated: str | bool | None = None,
+    json_schema_extra: dict[str, Any] | Callable[[dict[str, Any]], None] | None = None,
+    frozen: bool | None = None,
+    validate_default: bool | None = None,
+    repr: bool | None = None,
+    init: bool | None = None,
+    init_var: bool | None = None,
+    kw_only: bool | None = None,
+    pattern: str | re.Pattern[str] | None = None,
+    strict: bool | None = None,
+    coerce_numbers_to_str: bool | None = None,
+    gt: float | None = None,
+    ge: float | None = None,
+    lt: float | None = None,
+    le: float | None = None,
+    multiple_of: float | None = None,
+    allow_inf_nan: bool | None = None,
+    max_digits: int | None = None,
+    decimal_places: int | None = None,
+    min_length: int | None = None,
+    max_length: int | None = None,
+    union_mode: Literal["smart", "left_to_right"] | None = None,
+    fail_fast: bool | None = None,
+    **extra: Any,
 ) -> Any:
     """创建 JCE 结构体字段配置.
 
@@ -104,6 +142,41 @@ def JceField(
             *   指定 `types.BYTES` 可强制将复杂对象（如 JceStruct/JceDict）**先序列化为二进制**再作为 SimpleList 存储 (Binary Blob 模式)。
         default_factory: 用于生成默认值的无参可调用对象。
             对于可变类型（如 `list`, `dict`），**必须**使用此参数而不是 `default`。
+        alias: 字段别名 (Pydantic).
+        alias_priority: 别名优先级 (Pydantic).
+        validation_alias: 验证别名 (Pydantic).
+        serialization_alias: 序列化别名 (Pydantic).
+        title: 字段标题 (Pydantic).
+        field_title_generator: 标题生成器 (Pydantic).
+        description: 字段描述 (Pydantic).
+        examples: 示例值 (Pydantic).
+        exclude: 是否从序列化中排除 (Pydantic).
+        exclude_if: 条件排除 (Pydantic).
+        discriminator: 联合类型鉴别器 (Pydantic).
+        deprecated: 废弃标记 (Pydantic).
+        json_schema_extra: 额外的 JSON Schema 数据 (Pydantic).
+        frozen: 是否冻结 (Pydantic).
+        validate_default: 是否验证默认值 (Pydantic).
+        repr: 是否包含在 repr 中 (Pydantic).
+        init: 是否包含在 __init__ 中 (Pydantic).
+        init_var: 是否作为 InitVar (Pydantic).
+        kw_only: 是否仅限关键字参数 (Pydantic).
+        pattern: 正则表达式模式 (Pydantic).
+        strict: 严格模式 (Pydantic).
+        coerce_numbers_to_str: 强制数字转字符串 (Pydantic).
+        gt: Greater than (Pydantic).
+        ge: Greater than or equal (Pydantic).
+        lt: Less than (Pydantic).
+        le: Less than or equal (Pydantic).
+        multiple_of: 倍数 (Pydantic).
+        allow_inf_nan: 允许 Inf/NaN (Pydantic).
+        max_digits: 最大位数 (Pydantic).
+        decimal_places: 小数位数 (Pydantic).
+        min_length: 最小长度 (Pydantic).
+        max_length: 最大长度 (Pydantic).
+        union_mode: 联合模式 (Pydantic).
+        fail_fast: 快速失败 (Pydantic).
+        **extra: 传递给 Pydantic `Field` 的其他参数.
 
     Returns:
         Any: 包含 JCE 元数据的 Pydantic FieldInfo 对象。
@@ -126,29 +199,83 @@ def JceField(
         ...     # 4. 显式指定 JCE 类型 (Tag 3)
         ...     # 即使是 int，也强制按 Byte (INT1) 编码
         ...     flags: int = JceField(jce_id=3, jce_type=types.INT1)
+        ...
+        ...     # 5. 使用 Pydantic 的验证参数 (Tag 4)
+        ...     age: int = JceField(jce_id=4, gt=0, lt=150, description="Age")
     """
     if jce_id < 0:
         raise ValueError(f"Invalid JCE ID: {jce_id}")
 
-    # 构造仅包含 JCE 元数据的 extra 字典
-    # 这些元数据稍后会被 JceStructMeta 提取并存入 __jce_fields__
-    json_schema_extra = {
+    # 构造 JCE 元数据
+    final_extra = {
         "jce_id": jce_id,
         "jce_type": jce_type,
     }
 
-    kwargs = {
-        "json_schema_extra": json_schema_extra,
+    # 合并显式传入的 json_schema_extra
+    if json_schema_extra is not None:
+        if isinstance(json_schema_extra, dict):
+            final_extra.update(json_schema_extra)
+        # 注意: 如果 json_schema_extra 是 callable, 当前 JceStruct 实现可能不支持提取 jce_id
+        # JceModelField.from_field_info 会忽略 callable extra
+        # 建议用户始终使用 dict 形式的 extra
+
+    # 显式参数收集 (仅收集非 None 值)
+    field_args = {
+        "alias": alias,
+        "alias_priority": alias_priority,
+        "validation_alias": validation_alias,
+        "serialization_alias": serialization_alias,
+        "title": title,
+        "field_title_generator": field_title_generator,
+        "description": description,
+        "examples": examples,
+        "exclude": exclude,
+        "exclude_if": exclude_if,
+        "discriminator": discriminator,
+        "deprecated": deprecated,
+        "frozen": frozen,
+        "validate_default": validate_default,
+        "repr": repr,
+        "init": init,
+        "init_var": init_var,
+        "kw_only": kw_only,
+        "pattern": pattern,
+        "strict": strict,
+        "coerce_numbers_to_str": coerce_numbers_to_str,
+        "gt": gt,
+        "ge": ge,
+        "lt": lt,
+        "le": le,
+        "multiple_of": multiple_of,
+        "allow_inf_nan": allow_inf_nan,
+        "max_digits": max_digits,
+        "decimal_places": decimal_places,
+        "min_length": min_length,
+        "max_length": max_length,
+        "union_mode": union_mode,
+        "fail_fast": fail_fast,
     }
 
+    # Cast extra to dict to allow assignment, bypassing Unpack[_EmptyKwargs] restriction
+    kwargs_dict = cast(dict[str, Any], extra)
+
+    # 将非 None 的显式参数合并到 kwargs
+    for k, v in field_args.items():
+        if v is not None:
+            kwargs_dict[k] = v
+
+    # 将合并后的 extra 放回 kwargs
+    kwargs_dict["json_schema_extra"] = final_extra
+
     if default is not PydanticUndefined:
-        kwargs["default"] = default
+        kwargs_dict["default"] = default
 
     if default_factory is not None:
-        kwargs["default_factory"] = default_factory
+        kwargs_dict["default_factory"] = default_factory
 
     # cast call to Any to avoid type checking issues with Field return type
-    return cast(Any, Field)(**kwargs)
+    return cast(Any, Field)(**kwargs_dict)
 
 
 class JceModelField:
