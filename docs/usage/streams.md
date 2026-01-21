@@ -6,7 +6,6 @@
 
 JceStruct 实现了 `LengthPrefixedReader` 和 `LengthPrefixedWriter`，支持处理带有长度头部的 JCE 数据流。
 
-
 ### 写入 (Writer)
 
 `LengthPrefixedWriter` 会自动在数据前添加长度头。
@@ -14,7 +13,7 @@ JceStruct 实现了 `LengthPrefixedReader` 和 `LengthPrefixedWriter`，支持�
 !!! note "前提条件"
     本节示例假设你已经定义了 `User` 结构体。详见 [定义模型](models.md)。
 
-```python
+```python title="writer.py"
 from jce.stream import LengthPrefixedWriter
 # from my_models import User
 
@@ -43,7 +42,7 @@ buffer = writer.get_buffer()
 
 `LengthPrefixedReader` 是一个迭代器，它维护内部缓冲区，自动处理分片数据，仅当接收到完整的数据包时才产出对象。
 
-```python
+```python title="reader.py"
 from jce.stream import LengthPrefixedReader
 
 reader = LengthPrefixedReader(
@@ -74,7 +73,7 @@ for user in reader:
 
 如果你需要处理更复杂的协议（不仅仅是长度前缀），可以继承 `JceStreamReader` 并实现自己的解析逻辑。
 
-```python
+```python title="custom_protocol.py"
 from jce.stream import JceStreamReader
 
 class MyProtocolReader(JceStreamReader):

@@ -31,17 +31,17 @@
 
 使用 `pip` 或 `uv` 进行安装：
 
-```bash
+```bash title="Terminal"
 # 安装核心库
-uv add jce-struct
+uv add git+https://github.com/l-1124/JceStruct.git
 
 # 安装包含 CLI 工具的版本
-uv add "jce-struct[cli]"
+uv add "git+https://github.com/l-1124/JceStruct.git[cli]"
 ```
 
 ### 定义与序列化
 
-```python
+```python title="quickstart.py"
 from jce import JceStruct, JceField, types, dumps, loads
 
 # 1. 定义结构体

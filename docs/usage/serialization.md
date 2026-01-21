@@ -8,7 +8,7 @@ JceStruct 提供了简单直观的 API 用于数据的序列化和反序列化�
 
 将 `JceStruct` 对象或字典序列化为 `bytes`。
 
-```python
+```python title="serialize.py"
 from jce import dumps
 
 data = dumps(user)
@@ -27,7 +27,7 @@ map_data = dumps({"key": "value"})
 
 将 `bytes` 反序列化为 `JceStruct` 对象。
 
-```python
+```python title="deserialize.py"
 from jce import loads
 
 user = loads(data, User, context={"db": db_connection})
@@ -73,10 +73,9 @@ user = loads(data, User, context={"db": db_connection})
 
 ## 文件 I/O
 
-
 如果你需要直接读写文件，可以使用 `dump` 和 `load`。
 
-```python
+```python title="file_io.py"
 from jce import dump, load
 
 # 写入文件
@@ -97,7 +96,7 @@ JCE 协议没有原生的 String 类型，只有 `String1` (长度<256) 和 `Str
 * `"string"`: 强制尝试解码为 UTF-8 字符串。
 * `"raw"`: 始终保留为 `bytes`。
 
-```python
+```python title="bytes_mode.py"
 # 假设 data 包含字符串 "hello"
 print(loads(data, bytes_mode="auto"))   # > "hello"
 print(loads(data, bytes_mode="raw"))    # > b"hello"
@@ -109,7 +108,7 @@ print(loads(data, bytes_mode="raw"))    # > b"hello"
 
 JCE 协议默认使用**大端序 (Big Endian)**。如果你的对端系统使用小端序，可以通过选项指定：
 
-```python
+```python title="endian.py"
 from jce import JceOption
 
 data = dumps(user, option=JceOption.LITTLE_ENDIAN)
@@ -119,7 +118,7 @@ data = dumps(user, option=JceOption.LITTLE_ENDIAN)
 
 如果你不知道数据的具体结构，或者只是想查看原始 Tag-Value 对，可以使用 `JceDict`。
 
-```python
+```python title="jcedict.py"
 from jce import JceDict
 
 # 解码为通用字典结构
@@ -129,7 +128,7 @@ print(raw_struct)
 ```
 
 !!! note "JceDict vs dict"
-    *`JceDict`: 代表一个 **Struct**，编码时直接拼接字段。
+    *   `JceDict`: 代表一个 **Struct**，编码时直接拼接字段。
     *   `dict`: 代表一个 **Map**，编码时包含 Map 头信息 (Key-Value Pairs)。
 
 ## 延伸阅读

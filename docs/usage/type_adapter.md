@@ -8,7 +8,7 @@
 
 ### 序列化
 
-```python
+```python title="serialization.py"
 from jce import JceTypeAdapter
 
 # 定义一个处理 int 列表的适配器
@@ -21,12 +21,11 @@ print(data.hex())
 
 ### 反序列化
 
-```python
+```python title="deserialization.py"
 # 反序列化
 restored = adapter.validate_jce(data)
 assert restored == [1, 2, 3]
 ```
-
 
 ## 支持的类型
 
@@ -41,7 +40,7 @@ assert restored == [1, 2, 3]
 
 当使用 `JceTypeAdapter` 处理**基础类型**（如 `int` 或 `str`）时，JCE 协议要求所有数据必须包含 Tag。默认情况下，适配器会将这些基础类型包装在 **Tag 0** 中。
 
-```python
+```python title="primitive.py"
 adapter = JceTypeAdapter(int)
 
 # 实际上编码为 {0: 123}
@@ -50,7 +49,7 @@ data = adapter.dump_jce(123)
 
 如果你需要从非 Tag 0 的位置读取数据，可以指定 `jce_id` 参数：
 
-```python
+```python title="custom_tag.py"
 # 假设数据实际上在 Tag 5
 val = adapter.validate_jce(data, jce_id=5)
 ```
@@ -59,7 +58,7 @@ val = adapter.validate_jce(data, jce_id=5)
 
 `JceTypeAdapter` 在初始化时会构建类型特定的序列化/反序列化器。因此，建议**创建一次适配器实例并重复使用**，而不是每次操作都重新创建，以获得最佳性能。
 
-```python
+```python title="best_practice.py"
 # 推荐做法：模块级变量
 user_list_adapter = JceTypeAdapter(list[User])
 

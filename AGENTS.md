@@ -2,8 +2,14 @@
 
 本文档为在 JceStruct 仓库工作的 AI Agent 提供必要的上下文和规则。
 
-**包名**: `jce` (Python 模块)  未发布到pypi
-**当前版本**: `1.0.0`
+**包名**: `jce` (Python 模块)  
+**当前版本**: `jce/__init__.py` 中的 `__version__` 变量。
+
+**`AGENTS.md` 更新规则**:
+
+- 本文件由 AI Agent 维护和更新。
+- 每次修改后，AI Agent 应更新此文件以反映最新的代码结构和约定。
+- AI Agent 应确保文档内容与实际代码保持一致，避免过时或错误的信息。
 
 ## 1. 环境与命令
 
@@ -48,7 +54,63 @@
 - **缩进**: 4 个空格。
 - **行长**: 软限制约 80-88 字符 (由 Ruff 强制执行)。
 
-### 2.2 命名
+### 2.2 注释和文档字符串
+
+- **语言**: **中文，但是使用半角标点**。
+- **Docstrings**: Google 风格。
+- **示例**:
+
+  ```python
+  def encode(self) -> bytes:
+      """序列化当前对象.
+
+      Returns:
+          bytes: JCE格式的二进制数据.
+
+      Raises:
+          JceEncodeError: 编码失败时抛出.
+      """
+  ```
+
+#### 2.2.1 源码注释规范 (Google Style Docstrings)
+
+所有**公共类**和**方法**必须包含符合 Google Style 的注释，这是文档生成的基石。
+
+- **语言**: 中文描述，半角标点。
+- **结构要求**:
+
+1. **简述**: 第一行提供简洁的功能描述。
+2. **详细描述**: （可选）如有复杂逻辑，在简述后空一行编写。
+3. **Args**: 列出参数名、类型及说明。
+4. **Returns**: 说明返回值的类型及含义。
+5. **Raises**: 列出可能抛出的异常类（如 `JceDecodeError`）。
+6. **Examples**: 提供一个可直接运行的代码片段。
+
+- **标准示例**:
+
+```python
+def loads(data: bytes, jce_struct: type[T], bytes_mode: str = "auto") -> T:
+    """从字节序列反序列化为 JceStruct 对象.
+
+    Args:
+        data: 符合 JCE 协议的二进制数据.
+        jce_struct: 目标 JceStruct 类.
+        bytes_mode: 字节处理模式, 可选 "auto", "raw", "string".
+
+    Returns:
+        T: 实例化的 JceStruct 对象.
+
+    Raises:
+        JceDecodeError: 当数据格式非法或长度不足时抛出.
+
+    Examples:
+        >>> user = jce.loads(b"\x00\x01\x15...", User)
+        >>> print(user.uid)
+    """
+
+```
+
+### 2.3 命名
 
 - **类**: `PascalCase` (例如 `JceStruct`, `JceField`)。
 - **函数/方法**: `snake_case` (例如 `model_validate`, `to_bytes`)。
@@ -56,13 +118,13 @@
 - **常量**: `UPPER_SNAKE_CASE` (例如 `OPT_LITTLE_ENDIAN`)。
 - **私有**: 使用单下划线前缀 `_` (例如 `_buffer`)。
 
-### 2.3 导入
+### 2.4 导入
 
 - **风格**: **相对导入** (例如 `from .types import INT`)。
 - **排序**: 标准库 -> 第三方 (`pydantic`) -> 本地 (`jce`)。
 - **分组**: 多行导入使用圆括号。
 
-### 2.4 类型提示
+### 2.5 类型提示
 
 - **严格性**: 高。所有函数签名和字段都使用类型提示。
 - **工具**: `pydantic` v2.0+ 是数据建模的核心。
@@ -86,11 +148,11 @@
 - **`jce/exceptions.py`**: 异常定义 (6 个异常类)。
 - **`jce/const.py`**: JCE 协议常量定义 (类型码、魔数等)。
 - **`jce/log.py`**: 日志配置。
-- **`jce/__main__.py`**: CLI 工具入口 (可选依赖 click)。
+- **`jce/__main__.py`**: CLI 工具入口 (需要可选依赖 click)。
 
 ### 3.2 协议实现
 
-- 遵循 JCE (腾讯 Tars) 协议规范。
+- 遵循 JCE (腾讯 Tars) 协议规范(`JCE_PROTOCOL.md`)。
 - 默认支持 **大端序**。
 - 实现了特定优化，如 `Zero Tag` (0x0C) 和 `Simple List` (0x0D)。
 
@@ -155,62 +217,34 @@
 - **Logger**: 使用 `jce.log.logger`。
 - **模式**: 如果有助于调试，在抛出异常前记录错误/警告。
 
-## 4. 文档
-
-- **Docstrings**: Google 风格。
-- **语言**: **中文，但是使用半角标点**。
-- **示例**:
-
-  ```python
-  def encode(self) -> bytes:
-      """序列化当前对象.
-
-      Returns:
-          bytes: JCE格式的二进制数据.
-
-      Raises:
-          JceEncodeError: 编码失败时抛出.
-      """
-  ```
-
-# 5. 测试约定
+## 5. 测试约定
 
 ### 5.1 测试风格
 
-* **框架**: 强制使用 `pytest` (v9.0.2+)。
-* **模式**: 采用**函数式测试** (`def test_xxx()`)，禁止使用类式测试 (`class TestXxx`) 以保持代码简洁。
-* **位置**: 所有测试文件位于根目录的 `tests/` 文件夹下，采用**扁平结构**（不创建子目录）。
-* **原子性**: 测试函数必须短小且聚焦。一个测试函数只验证一个行为，严禁编写“万能测试函数”。
+- **框架**: 强制使用 `pytest` (v9.0.2+)。
+- **模式**: 采用**函数式测试** (`def test_xxx()`)，禁止使用类式测试 (`class TestXxx`) 以保持代码简洁。
+- **位置**: 所有测试文件位于根目录的 `tests/` 文件夹下，采用**扁平结构**（不创建子目录）。
+- **原子性**: 测试函数必须短小且聚焦。一个测试函数只验证一个行为，严禁编写“万能测试函数”。
 
 ### 6.2 命名约定
 
-* **测试文件**: `test_<被测模块>.py`
-* 例: `struct.py`  `test_struct.py`
-
-
-* **测试函数**: `test_<被测函数>_<预期行为>`
-* 例: `test_loads_with_invalid_data_raises_decode_error`
-
-
-* **Fixtures**: 遵循 `snake_case`，名称应反映其提供的对象或状态。
+- **测试文件**: `test_<被测模块>.py`
+  - 例: `struct.py`  `test_struct.py`
+- **测试函数**: `test_<被测函数>_<预期行为>`
+  - 例: `test_loads_with_invalid_data_raises_decode_error`
+- **Fixtures**: 遵循 `snake_case`，名称应反映其提供的对象或状态。
 
 ### 6.3 文档字符串与注释
 
-* **测试函数**:
-* 使用**单行中文**。
-* 描述预期行为，不描述实现细节。
-
-
-* **Fixtures 与辅助函数**:
-* 必须遵循 **Google Style** 注释规范。
-* 包含 `Args`、`Returns` 或 `Yields` 声明。
-
-
-* **类型注解**:
-* 测试函数统一标注返回值为 `-> None`。
-* Fixtures 必须标注返回值类型。
-
-
+- **测试函数**:
+  - 使用**单行中文**。
+  - 描述预期行为，不描述实现细节。
+- **Fixtures 与辅助函数**:
+  - 必须遵循 **Google Style** 注释规范。
+  - 包含 `Args`、`Returns` 或 `Yields` 声明。
+- **类型注解**:
+  - 测试函数统一标注返回值为 `-> None`。
+  - Fixtures 必须标注返回值类型。
 
 ### 6.4 标准结构示例
 
@@ -245,7 +279,7 @@ def mock_stream() -> Generator[BytesIO, None, None]:
     """
     stream = BytesIO()
     yield stream
-    stream.close()
+    stream.close() 
 
 def test_user_encode_returns_correct_bytes(sample_user: User) -> None:
     """User 结构体应该能正确编码为字节流."""
@@ -276,7 +310,7 @@ def test_decode_with_truncated_data_raises_error() -> None:
 
 ```python
 @pytest.mark.parametrize(
-    "val, expected",
+    ("val","expected"),
     [(1, b"\x01"), (127, b"\x7f")],
     ids=["small_int", "max_byte_int"]
 )
@@ -288,39 +322,34 @@ def test_int_encoding_variants(val: int, expected: bytes) -> None:
 
 #### 2. 异常捕获
 
-* 必须使用 `pytest.raises`。
-* **严禁**使用宽泛的 `Exception`，必须指明具体的异常类（如 `ValueError`, `JceDecodeError`）。
-* 建议使用 `match` 参数校验异常信息关键词。
+- 必须使用 `pytest.raises`。
+- **严禁**使用宽泛的 `Exception`，必须指明具体的异常类（如 `ValueError`, `JceDecodeError`）。
+- 建议使用 `match` 参数校验异常信息关键词。
 
-#### 3. 模拟 (Mocking)
+#### 3. Warnings 处理
 
-* 优先使用 `pytest-mock` 提供的 `mocker` fixture，避免手动使用 `patch` 装饰器。
-* 禁止在测试中发起真实的 HTTP 请求或修改全局环境变量。
+- 使用 `pytest.warns` 捕获预期的警告。
+- **禁止**忽略警告或使用 `warnings` 模块手动捕获
 
 #### 4. I/O 处理
 
-* **内存化**: 涉及文件读取的测试，优先使用 `io.BytesIO` 或 `io.StringIO`。
-* **临时文件**: 若必须操作物理文件，使用 pytest 内置的 `tmp_path` fixture。
+- **内存化**: 涉及文件读取的测试，优先使用 `io.BytesIO` 或 `io.StringIO`。
+- **临时文件**: 若必须操作物理文件，使用 pytest 内置的 `tmp_path` fixture。
 
 #### 5. 显式断言
 
-* 避免 `assert result`（除非结果本身是布尔值）。
-* 使用 `assert result == expected`、`assert "key" in dict` 等明确的比较。
-* 涉及浮点数对比时，使用 `pytest.approx()`。
-
-好的，已将 **`test_protocol.py`** 的特殊地位加入规范，作为库的基石：
-
----
+- 避免 `assert result`（除非结果本身是布尔值）。
+- 使用 `assert result == expected`、`assert "key" in dict` 等明确的比较。
+- 涉及浮点数对比时，使用 `pytest.approx()`。
 
 ### 6.6 核心协议测试 (Fundamental)
 
 `test_protocol.py` 是库的**根本性测试**，必须保证 100% 通过。它定义了 JCE 协议实现的基准，任何破坏此文件测试用例的修改均被视为破坏性变更。
 
-* **测试目标**: 验证确定的输入与预期的十六进制输出（Hex）完全一致。
-* **断言要求**:
-* 编码测试：断言生成的 bytes 转为 hex 字符串后与预期值完全匹配。
-* 解码测试：断言从预期 hex 字符串还原的对象与原始对象等值。
-
+- **测试目标**: 验证确定的输入与预期的十六进制输出（Hex）完全一致。
+- **断言要求**:
+- 编码测试：断言生成的 bytes 转为 hex 字符串后与预期值完全匹配。
+- 解码测试：断言从预期 hex 字符串还原的对象与原始对象等值。
 
 ## 7. 文档生成 (MkDocs)
 
@@ -342,40 +371,115 @@ def test_int_encoding_variants(val: int, expected: bytes) -> None:
 ### 7.2 命令
 
 - **安装依赖**:
+
   ```bash
   uv sync --all-groups
   ```
 
 - **本地预览**:
   启动实时重载的本地服务器：
+
   ```bash
   uv run mkdocs serve
   ```
+
   访问: `http://127.0.0.1:8000`
 
 - **构建静态站**:
   生成 HTML 文件到 `site/` 目录：
+
   ```bash
   uv run mkdocs build
   ```
 
-### 7.3 编写规范
+### 7.3 文档编写规范 (Documentation Standards)
 
-- **API 文档**:
-  使用 `mkdocstrings` 语法引用 Python 对象：
-  ```markdown
-  ::: jce.JceStruct
-      
-  ```
-- **概念文档**:
-  专注于"如何做" (How-to) 和"为什么" (Why)。代码块应可运行。
-- **交叉引用**:
-  链接到其他文档页面或 API 定义。
+本节定义了如何编写高质量的自动化文档，确保“代码即文档”的理念得以落地。
+
+**语法**: 使用标准 Markdown 语法，结合 MkDocs Material Theme 的扩展功能（如 Admonitions, 代码块标题等）。
+**扩展语法**: `PyMdown Extensions`，需在 `mkdocs.yml` 中启用。
+**扩展**: 位于 `mkdocs.yml` 中的 `plugins` 和 `markdown_extensions` 配置。
+
+#### 7.3.1 API 参考文档 (API Reference)
+
+API 文档应通过 `mkdocstrings` 自动从源码中提取，保持同步。
+
+- **引用语法**: 在 `docs/api/` 目录下的 `.md` 文件中，使用 `::: <identifier>` 语法。
+- **控制范围**:
+- 使用 `options` 过滤掉不必要的私有成员（以 `_` 开头但非 `__init__`）。
+- **示例**:
+
+```markdown
+# JceStruct 核心类
+
+::: jce.struct.JceStruct
+    options:
+      members:
+        - __init__
+        - model_validate
+        - encode
+        - decode
+
+```
+
+#### 7.3.2 概念与指南文档 (Concept & Guides)
+
+位于 `docs/usage/`，侧重于高层逻辑和最佳实践。
+
+- **How-to 导向**: 每个页面应解决一个具体问题（例如：“如何处理动态长度前缀”）。
+- **代码块增强**:
+- 必须指定语言标识符（`python`, `bash`, `toml`）。
+- 使用 `title` 属性标注文件名（可选）。
+
+```python title="example.py"
+# 示例代码应具备完整性
+from jce import JceStruct, JceField
+...
+
+```
+
+- **Admonitions (提示框)**: 善用不同级别的提示来突出重点：
+- `!!! note`: 一般信息。
+- `!!! warning`: 技术陷阱或不建议的操作（如 Union 类型限制）。
+- `??? info`: 展开式信息，用于存放协议底层的 Hex 细节。
+
+#### 7.3.3 交叉引用与链接 (Cross-referencing)
+
+- **API 相互引用**: 在文档中使用反引号包裹标识符，`mkdocstrings` 通常会自动建立链接。例如：`参考 [JceStruct][jce.struct.JceStruct] 以获取更多信息`。
+- **外部链接**: 引用 Pydantic 或 Python 标准库文档时，使用标准 Markdown 链接。
+- **内部跳转**: 使用相对路径链接到其他文档页面：`[查看序列化指南](../usage/serialization.md)`。
+
+---
+
+### 7.4 文档范例与覆盖准则
+
+#### 7.4.1 文档语言要求
+
+- **双语处理**: 虽然主要使用中文描述，但关键的技术术语（如 `Schema-less`, `Payload`, `Tag ID`）应保留英文，或在括号中标注。
+
+#### 7.4.2 必须文档化的对象 (Public API)
+
+凡是设计用于外部调用的“公共接口”，都必须有完整的文档字符串（docstrings）。
+
+- 导出模块 (Public Modules)：作为包入口的 **init**.py。打算让用户通过 import 直接使用的 .py 文件。文档应说明该模块的用途及包含的主要工具。
+- 公共类 (Public Classes)：所有不以 _开头的类。文档应说明类的功能、初始化参数（**init**）以及重要的属性。
+- 公共函数与方法 (Public Functions & Methods)：模块层级的全局函数。类中的公共方法（不以_ 开头）。
+- 判定标准： 只要这个函数被定义在 **all** 列表中，或者被预期在模块外调用，就必须写文档。
+
+#### 7.4.3 建议文档化的对象 (Internal logic)
+
+虽然这些对象不直接对最终用户开放，但为了团队协作和长期维护，应当编写文档:
+
+- 复杂的私有方法 (Complex Private Methods)：虽然以 _开头，但如果逻辑极其复杂、算法深奥，必须记录其内部逻辑，防止后人（包括你自己）不敢修改。
+- 抽象基类与接口 (Abstract Base Classes)：即便这些类不直接实例化，也需要说明子类必须实现哪些方法。
+- 模块级变量 (Constants/Globals)：重要的配置常量或全局状态，应说明其含义和取值范围。
 
 ## 8. Git 与工作流
 
-- **提交**: 使用 `Conventional Commits` 规范提交。
-- **PR**: 提交前确保通过测试并通过代码检查
+- **Commit**: 使用 `Conventional Commits` 规范 Commit Message。
+- **PR**: Commit 前确保通过测试并通过代码检查
   - 运行 `uv run pytest` 运行测试
   - 运行 `uv run ruff check` 检查代码风格
   - 运行 `uvx basedpyright` 检查类型注解
+  - 检查文档字符串完整性
+  - 检查 `AGENTS.md` 是否需要更新

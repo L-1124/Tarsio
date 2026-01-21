@@ -6,7 +6,7 @@
 
 每个字段必须通过 `JceField` 指定一个唯一的 `jce_id`。这是 JCE 协议的要求，用于在二进制流中标识字段。
 
-```python
+```python title="basic.py"
 from jce import JceStruct, JceField
 
 class Product(JceStruct):
@@ -36,7 +36,7 @@ JceStruct 支持多种 Python 原生类型，并自动映射到 JCE 类型：
 
 虽然 JceStruct 会自动推断类型，但你也可以显式指定 JCE 类型（通常用于 `float` vs `double`）：
 
-```python
+```python title="explicit_type.py"
 from jce import types
 
 class Metrics(JceStruct):
@@ -58,7 +58,7 @@ class Metrics(JceStruct):
 
 ### 示例
 
-```python
+```python title="config.py"
 from pydantic import ConfigDict
 from jce import JceStruct, JceField, JceOption
 
@@ -80,7 +80,7 @@ class MyConfig(JceStruct):
 
 你可以在一个结构体中嵌套另一个 `JceStruct`：
 
-```python
+```python title="nested.py"
 class Address(JceStruct):
     city: str = JceField(jce_id=0)
     street: str = JceField(jce_id=1)
@@ -112,7 +112,7 @@ class User(JceStruct):
 
 JceStruct 完整支持泛型容器：
 
-```python
+```python title="containers.py"
 class Group(JceStruct):
     # 基础类型列表
     scores: list[int] = JceField(jce_id=0)
@@ -128,7 +128,7 @@ class Group(JceStruct):
 
 JceStruct 支持定义泛型结构体，这在定义通用的响应包装器时非常有用。
 
-```python
+```python title="generics.py"
 from typing import Generic, TypeVar
 from jce import JceStruct, JceField
 
@@ -151,7 +151,7 @@ resp = Response[User](code=0, message="OK", data=user)
 
 你可以使用 `default` 或 `default_factory` 来设置字段默认值：
 
-```python
+```python title="defaults.py"
 class Config(JceStruct):
     version: int = JceField(jce_id=0, default=1)
     tags: list[str] = JceField(jce_id=1, default_factory=list)
@@ -168,4 +168,3 @@ class Config(JceStruct):
 
 - 了解如何 [序列化与反序列化](serialization.md) 模型。
 - 深入了解 [字段配置与钩子](fields.md)。
-

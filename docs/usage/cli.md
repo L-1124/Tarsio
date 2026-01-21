@@ -6,7 +6,7 @@ JceStruct 内置了一个强大的命令行工具，用于快速检查、调试�
 
 CLI 依赖于 `click` 库。如果你在安装时选择了 `[cli]` 额外依赖，就可以直接使用：
 
-```bash
+```bash title="Terminal"
 jce --help
 ```
 
@@ -16,7 +16,7 @@ jce --help
 
 直接将 hex 字符串作为参数传递：
 
-```bash
+```bash title="Terminal"
 # 解码 Struct (默认)
 jce "00 64"
 # > {0: 100}
@@ -30,7 +30,7 @@ jce "08 01 00 64"
 
 使用 `-f` 或 `--file` 参数读取包含纯二进制数据或 hex 文本的文件：
 
-```bash
+```bash title="Terminal"
 jce -f payload.bin
 ```
 
@@ -46,7 +46,7 @@ jce -f payload.bin
 
 使用 `-v` 或 `--verbose` 查看详细的调试信息，包括原始 hex 数据、解码字节数等。
 
-```bash
+```bash title="Terminal"
 jce "00 64" -v
 # [INFO] Input size: 2 bytes
 # [DEBUG] Hex: 00 64
@@ -55,7 +55,7 @@ jce "00 64" -v
 
 ## 参数参考
 
-```text
+```text title="Help Output"
 Usage: jce [OPTIONS] [ENCODED]
 
   JCE 编解码命令行工具.

@@ -6,7 +6,7 @@ JceStruct 的核心是字段定义。就像 Pydantic 一样，我们使用 `JceF
 
 `JceField` 是 `Field` 的 JCE 特定版本。它增加了一个必须的参数 `jce_id` (Tag)。
 
-```python
+```python title="definition.py"
 from jce import JceField
 
 name: str = JceField(jce_id=1, default="unknown", description="User Name")
@@ -29,7 +29,7 @@ name: str = JceField(jce_id=1, default="unknown", description="User Name")
 
 自定义字段的序列化逻辑。
 
-```python
+```python title="serializer.py"
 from jce import JceStruct, JceField, jce_field_serializer, SerializationInfo
 
 class Timestamp(JceStruct):
@@ -45,7 +45,7 @@ class Timestamp(JceStruct):
 
 自定义字段的反序列化逻辑。
 
-```python
+```python title="deserializer.py"
 from jce import JceStruct, JceField, jce_field_deserializer, DeserializationInfo
 
 class Timestamp(JceStruct):
