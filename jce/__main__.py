@@ -10,11 +10,23 @@ from .decoder import JceNode
 
 if TYPE_CHECKING:
     import click as click_module
+    from rich.console import Console
+    from rich.syntax import Syntax
+    from rich.text import Text
+    from rich.tree import Tree
 else:
     try:
         import click as click_module
+        from rich.console import Console
+        from rich.syntax import Syntax
+        from rich.text import Text
+        from rich.tree import Tree
     except ImportError:
         click_module = None
+        Console = None
+        Syntax = None
+        Text = None
+        Tree = None
 
 click = click_module
 
@@ -95,106 +107,135 @@ else:
 
         return bytes.fromhex(cleaned)
 
-    def _print_node_recursive(
-        node: "JceNode", prefix: str, indent_level: int, file: Any = None
-    ) -> None:
-        """递归打印单个JCE节点.
+    def _build_rich_tree(node: "JceNode", tree: Tree, prefix: str) -> None:
+        """递归构建 Rich 树.
 
         Args:
-            node: 要打印的JCE节点.
-            prefix: 节点ID前缀.
-            indent_level: 缩进层级.
-            file: 输出文件对象,默认为stdout.
+            node: 当前 JCE 节点.
+            tree: 父级 Tree 对象.
+            prefix: 节点 ID 前缀 (用于显示完整路径).
         """
-        indent = "   " * indent_level
-
-        # 计算当前标签
+        # 计算当前 ID 显示
         if node.tag is not None:
+            tag_display = f"[{node.tag}]"
             current_id = f"{prefix}{node.tag}"
         else:
-            # 对于列表/Map元素,如果没有标签,使用prefix作为ID
+            tag_display = ""
             current_id = prefix
 
-        # 计算类型名称
+        # 类型和长度
         type_str = node.type_name
         if node.length is not None:
             type_str += f"={node.length}"
 
-        # 打印逻辑
+        # 样式定义
+        style_tag = "bold blue"
+        style_type = "cyan"
+        style_value_str = "green"
+        style_value_num = "magenta"
+
+        # 根据类型构建分支或叶子
         if node.type_name == "Struct":
-            click.echo(f"{indent}[{current_id}]┓", file=file)
+            label = Text()
+            if tag_display:
+                label.append(f"{tag_display} ", style=style_tag)
+            label.append("Struct", style="bold yellow")
+
+            branch = tree.add(label)
             for child in cast(list[JceNode], node.value):
-                _print_node_recursive(
-                    child,
-                    prefix=f"{current_id}.",
-                    indent_level=indent_level + 1,
-                    file=file,
-                )
-            click.echo(f"{indent}[{current_id}]┛", file=file)
+                _build_rich_tree(child, branch, f"{current_id}.")
 
         elif node.type_name == "List":
-            click.echo(f"{indent}[{current_id}]({type_str})", file=file)
+            label = Text()
+            if tag_display:
+                label.append(f"{tag_display} ", style=style_tag)
+            label.append(f"List ({type_str})", style=style_type)
+
+            branch = tree.add(label)
             for i, child in enumerate(cast(list[JceNode], node.value)):
-                _print_node_recursive(
-                    child,
-                    prefix=f"{current_id}[{i}]",
-                    indent_level=indent_level + 1,
-                    file=file,
-                )
+                # List 元素通常没有 Tag，用索引作为 ID
+                child_prefix = f"{current_id}[{i}]"
+
+                # 简单做法：为列表项创建一个分支
+                idx_label = Text(f"[{i}] ", style="dim")
+                idx_branch = branch.add(idx_label)
+                _build_rich_tree(child, idx_branch, child_prefix)
 
         elif node.type_name == "Map":
-            click.echo(f"{indent}[{current_id}]({type_str})", file=file)
+            label = Text()
+            if tag_display:
+                label.append(f"{tag_display} ", style=style_tag)
+            label.append(f"Map ({type_str})", style=style_type)
+
+            branch = tree.add(label)
             for i, (k, v) in enumerate(cast(list[tuple[JceNode, JceNode]], node.value)):
-                _print_node_recursive(
-                    k,
-                    prefix=f"{current_id}[{i}].key",
-                    indent_level=indent_level + 1,
-                    file=file,
-                )
-                _print_node_recursive(
-                    v,
-                    prefix=f"{current_id}[{i}].val",
-                    indent_level=indent_level + 1,
-                    file=file,
-                )
+                entry_branch = branch.add(Text(f"Entry {i}", style="dim"))
+
+                k_branch = entry_branch.add(Text("Key", style="italic"))
+                _build_rich_tree(k, k_branch, f"{current_id}[{i}].key")
+
+                v_branch = entry_branch.add(Text("Value", style="italic"))
+                _build_rich_tree(v, v_branch, f"{current_id}[{i}].val")
 
         elif node.type_name == "SimpleList":
             val = node.value
             if isinstance(val, list):
                 # 递归解析成功的 SimpleList
-                click.echo(f"{indent}[{current_id}]({type_str})┓", file=file)
+                label = Text()
+                if tag_display:
+                    label.append(f"{tag_display} ", style=style_tag)
+                label.append("SimpleList (Parsed)", style="bold yellow")
+
+                branch = tree.add(label)
                 for child in cast(list[JceNode], val):
-                    _print_node_recursive(
-                        child,
-                        prefix=f"{current_id}.",
-                        indent_level=indent_level + 1,
-                        file=file,
-                    )
-                click.echo(f"{indent}[{current_id}]┛", file=file)
+                    _build_rich_tree(child, branch, f"{current_id}.")
             else:
                 # 普通字节数组
                 val_str = bytes(val).hex(" ").upper()
-                click.echo(f"{indent}[{current_id}]({type_str}):{val_str}", file=file)
+                label = Text()
+                if tag_display:
+                    label.append(f"{tag_display} ", style=style_tag)
+                label.append(f"{type_str}: ", style=style_type)
+                label.append(val_str, style=style_value_str)
+                tree.add(label)
 
         else:
-            # 值格式化
+            # 基本类型
             val = node.value
+            val_str = str(val)
             if isinstance(val, bytes | bytearray | memoryview):
                 val_str = bytes(val).hex(" ").upper()
+                val_style = style_value_str
+            elif isinstance(val, str):
+                val_style = style_value_str
             else:
-                val_str = str(val)
+                val_style = style_value_num
 
-            click.echo(f"{indent}[{current_id}]({type_str}):{val_str}", file=file)
+            label = Text()
+            if tag_display:
+                label.append(f"{tag_display} ", style=style_tag)
+            label.append(f"{type_str}: ", style=style_type)
+            label.append(val_str, style=val_style)
+            tree.add(label)
 
     def _print_node_tree(nodes: list["JceNode"], file: Any = None) -> None:
-        """打印JCE节点树.
+        """打印JCE节点树 (使用 Rich).
 
         Args:
             nodes: JCE节点列表.
             file: 输出文件对象,默认为stdout.
         """
+        if not Console:
+            click.echo("错误: 未安装 rich 库,无法使用 Tree 视图.", err=True)
+            return
+
+        console = Console(file=file, force_terminal=file is None)
+        root = Tree("JceStruct Root", style="bold white")
+
         for node in nodes:
-            _print_node_recursive(node, prefix="", indent_level=0, file=file)
+            _build_rich_tree(node, root, "")
+
+        console.print(root)
 
     def _decode_and_print(
         data: bytes,
@@ -250,28 +291,48 @@ else:
                 traceback.print_exc(file=sys.stderr)
             raise click.ClickException(f"解码失败: {e}") from e
 
-        # 格式化输出
+        # 格式化输出准备
         def _json_default(obj: object) -> object:
             if isinstance(obj, bytes | bytearray | memoryview):
                 return bytes(obj).hex()
             return str(obj)
 
+        output_text: str | None = None
+
         if output_format == "json":
-            output = json.dumps(
+            # 始终生成 JSON 字符串，用于 Syntax 高亮或文件写入
+            output_text = json.dumps(
                 result, indent=2, ensure_ascii=False, default=_json_default
             )
-        else:
-            import pprint
+        elif output_format == "pretty":
+            # 仅在需要文本输出时生成 pprint 字符串
+            if output_file or not Console:
+                import pprint
 
-            output = pprint.pformat(result, width=100)
+                output_text = pprint.pformat(result, width=100)
 
-        # 输出结果
+        # 执行输出
         if output_file:
+            assert output_text is not None
             output_path = Path(output_file)
-            output_path.write_text(output, encoding="utf-8")
+            output_path.write_text(output_text, encoding="utf-8")
             click.echo(f"结果已保存到: {output_file}", err=True)
+
+        elif Console:
+            # 使用 Rich 进行高亮输出
+            console = Console()
+            if output_format == "json":
+                assert output_text is not None
+                syntax = Syntax(output_text, "json", theme="monokai", word_wrap=True)
+                console.print(syntax)
+            else:  # pretty
+                # Rich 直接支持 Python 对象高亮
+                console.print(result)
+
         else:
-            click.echo(output)
+            # 降级模式 (无 Rich)
+            assert output_text is not None
+            click.echo(output_text)
 
     @click.command(help="JCE 编解码命令行工具")
     @click.argument("encoded", required=False)
@@ -329,6 +390,9 @@ else:
 
           # 以 JSON 格式输出结果
           jce -f input.hex --format json
+
+          # 以 Tree 格式输出 (需要 rich)
+          jce "0C" --format tree
         """
         # 互斥参数检查
         if encoded and file_path:

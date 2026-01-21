@@ -45,7 +45,10 @@ Repository = "https://github.com/L-1124/JceStruct"
 jce = "jce.__main__:main"
 
 [project.optional-dependencies]
-cli = ["click>=8.0"]
+cli = [
+    "click>=8.0",
+    "rich>=14.2.0",
+]
 
 [dependency-groups]
 docs = [
