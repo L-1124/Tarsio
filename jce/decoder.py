@@ -639,7 +639,11 @@ class GenericDecoder:
             stack.append([container, _STATE_STRUCT_FIELD, 0, 0, None])
 
     def _read_primitive(self, type_id: int) -> Any:
-        """读取基本类型 (非容器)."""
+        """读取基本类型 (非容器).
+
+        注意: JCE_STRUCT_END (0x0B) 本不应作为值读取，但为了保持与旧逻辑的兼容性
+        （旧版 _read_value 对 STRUCT_END 执行 pass），此处返回 None。
+        """
         if type_id == JCE_ZERO_TAG:
             return 0
         if type_id == JCE_INT1:
