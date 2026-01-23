@@ -457,19 +457,6 @@ class GenericDecoder:
 
     def _read_list_iterative(self) -> list[Any]:
         """迭代方式读取列表."""
-        # 这里的难点是列表元素可能是另一个容器。
-        # 如果我们在这里只是循环调用 _read_value，而 _read_value 遇到容器又会调用 _read_list_iterative
-        # 这本质上还是递归。
-        #
-        # 要真正实现迭代，我们需要显式管理栈。
-        # 这意味着我们需要把整个解码过程重写为一个大循环。
-
-        # 为了避免大规模破坏现有结构，我们可以先实现一个基于栈的通用解析器，
-        # 只有在遇到容器时才压栈。
-
-        # 但鉴于 GenericDecoder 的架构，直接替换 _read_value 是最简单的入口。
-        # 我们可以引入一个私有的迭代解析方法，用来处理复杂的嵌套结构。
-
         return self._decode_iterative(JCE_LIST)
 
     def _read_map_iterative(self) -> dict[Any, Any]:
