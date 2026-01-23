@@ -398,7 +398,19 @@ class GenericDecoder:
                 if type_id == JCE_STRUCT_END:
                     break
 
-                value = self._read_value(type_id)
+                # 记录当前处理的 Tag（如果需要路径上下文）
+                # 注意：GenericDecoder 默认将 Tag 作为 Key
+                # 为了支持路径报告，我们需要在这里捕获异常并附加 path
+                try:
+                    value = self._read_value(type_id)
+                except JceDecodeError as e:
+                    # 根级别的错误路径
+                    path_item: str | int = tag
+                    if not e.loc:
+                        e.loc = []
+                    e.loc.insert(0, path_item)
+                    raise
+
                 root[tag] = value
 
             if not suppress_log:
@@ -461,117 +473,131 @@ class GenericDecoder:
         if not stack:
             return root_result
 
-        while stack:
-            frame = stack[-1]
-            container, state, size, index, key = frame
+        try:
+            while stack:
+                frame = stack[-1]
+                container, state, size, index, key = frame
 
-            # --- LIST 处理 ---
-            if state == _STATE_LIST_ITEM:
-                if index >= size:
-                    stack.pop()
-                    continue
+                # --- LIST 处理 ---
+                if state == _STATE_LIST_ITEM:
+                    if index >= size:
+                        stack.pop()
+                        continue
 
-                # 准备读取下一个元素
-                _tag, type_id = self._read_head()
+                    # 准备读取下一个元素
+                    _tag, type_id = self._read_head()
 
-                # 检查是否是容器类型
-                if type_id in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
-                    # 创建新容器并压栈
-                    new_container = self._create_container(type_id)
-                    container.append(new_container)
+                    # 检查是否是容器类型
+                    if type_id in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
+                        # 创建新容器并压栈
+                        new_container = self._create_container(type_id)
+                        container.append(new_container)
 
-                    # 更新当前帧索引 (因为下次回来就是下一个元素了)
-                    frame[3] += 1
+                        # 更新当前帧索引 (因为下次回来就是下一个元素了)
+                        frame[3] += 1
 
-                    # 压入新帧
-                    self._push_stack(stack, new_container, type_id)
+                        # 压入新帧
+                        self._push_stack(stack, new_container, type_id)
+                    else:
+                        # 基本类型，直接读取并追加
+                        val = self._read_primitive(type_id)
+                        container.append(val)
+                        frame[3] += 1
+
+                # --- MAP 处理 ---
+                elif state == _STATE_MAP_KEY:
+                    if index >= size:
+                        stack.pop()
+                        continue
+
+                    # 读取 Key
+                    k_tag, k_type = self._read_head()
+                    if k_tag != 0:
+                        raise JceDecodeError(f"Expected Map Key Tag 0, got {k_tag}")
+
+                    if k_type in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
+                        # Key 是容器类型：先构建容器并入栈解码，完成后再读取对应的 Value
+                        new_container = self._create_container(k_type)
+                        frame[4] = new_container  # 保存 Key 容器
+                        frame[1] = _STATE_MAP_VALUE  # Key 解码完成后转去读 Value
+                        self._push_stack(stack, new_container, k_type)
+                    else:
+                        key_val = self._read_primitive(k_type)
+                        if isinstance(key_val, dict | list):
+                            key_val = self._freeze_key(key_val)
+                        frame[4] = key_val  # 保存 Key
+                        frame[1] = _STATE_MAP_VALUE  # 转去读 Value
+
+                elif state == _STATE_MAP_VALUE:
+                    # 此时 frame[4] 已经是 Key 了
+                    curr_key = frame[4]
+
+                    v_tag, v_type = self._read_head()
+                    if v_tag != 1:
+                        raise JceDecodeError(f"Expected Map Value Tag 1, got {v_tag}")
+
+                    if v_type in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
+                        new_container = self._create_container(v_type)
+
+                        # 如果 Key 也是容器（现在已填满），需要冻结它才能作为字典键
+                        if isinstance(curr_key, dict | list):
+                            curr_key = self._freeze_key(curr_key)
+
+                        container[curr_key] = new_container
+
+                        # 准备读下一个 Entry
+                        frame[1] = _STATE_MAP_KEY
+                        frame[3] += 1
+                        frame[4] = None
+
+                        self._push_stack(stack, new_container, v_type)
+                    else:
+                        val = self._read_primitive(v_type)
+
+                        if isinstance(curr_key, dict | list):
+                            curr_key = self._freeze_key(curr_key)
+
+                        container[curr_key] = val
+
+                        # 准备读下一个 Entry
+                        frame[1] = _STATE_MAP_KEY
+                        frame[3] += 1
+                        frame[4] = None
+
+                # --- STRUCT 处理 ---
+                elif state == _STATE_STRUCT_FIELD:
+                    b = self._reader.peek_u8()
+                    type_id = b & 0x0F
+
+                    if type_id == JCE_STRUCT_END:
+                        self._reader.read_u8()  # Consume END
+                        stack.pop()
+                        continue
+
+                    tag, type_id = self._read_head()
+                    frame[4] = tag  # 记录当前处理的 Tag，用于错误报告
+
+                    if type_id in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
+                        new_container = self._create_container(type_id)
+                        container[tag] = new_container
+                        self._push_stack(stack, new_container, type_id)
+                    else:
+                        val = self._read_primitive(type_id)
+                        container[tag] = val
+
+            return root_result
+
+        except JceDecodeError as e:
+            # 捕获异常并附加路径信息
+            path = self._get_stack_path(stack)
+            if path:
+                # 只有当路径不为空且尚未设置时才设置（避免覆盖更内层的路径）
+                if not e.loc:
+                    e.loc = path
                 else:
-                    # 基本类型，直接读取并追加
-                    val = self._read_primitive(type_id)
-                    container.append(val)
-                    frame[3] += 1
-
-            # --- MAP 处理 ---
-            elif state == _STATE_MAP_KEY:
-                if index >= size:
-                    stack.pop()
-                    continue
-
-                # 读取 Key
-                k_tag, k_type = self._read_head()
-                if k_tag != 0:
-                    raise JceDecodeError(f"Expected Map Key Tag 0, got {k_tag}")
-
-                if k_type in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
-                    # Key 是容器类型：先构建容器并入栈解码，完成后再读取对应的 Value
-                    new_container = self._create_container(k_type)
-                    frame[4] = new_container  # 保存 Key 容器
-                    frame[1] = _STATE_MAP_VALUE  # Key 解码完成后转去读 Value
-                    self._push_stack(stack, new_container, k_type)
-                else:
-                    key_val = self._read_primitive(k_type)
-                    if isinstance(key_val, dict | list):
-                        key_val = self._freeze_key(key_val)
-                    frame[4] = key_val  # 保存 Key
-                    frame[1] = _STATE_MAP_VALUE  # 转去读 Value
-
-            elif state == _STATE_MAP_VALUE:
-                # 此时 frame[4] 已经是 Key 了
-                curr_key = frame[4]
-
-                v_tag, v_type = self._read_head()
-                if v_tag != 1:
-                    raise JceDecodeError(f"Expected Map Value Tag 1, got {v_tag}")
-
-                if v_type in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
-                    new_container = self._create_container(v_type)
-
-                    # 如果 Key 也是容器（现在已填满），需要冻结它才能作为字典键
-                    if isinstance(curr_key, dict | list):
-                        curr_key = self._freeze_key(curr_key)
-
-                    container[curr_key] = new_container
-
-                    # 准备读下一个 Entry
-                    frame[1] = _STATE_MAP_KEY
-                    frame[3] += 1
-                    frame[4] = None
-
-                    self._push_stack(stack, new_container, v_type)
-                else:
-                    val = self._read_primitive(v_type)
-
-                    if isinstance(curr_key, dict | list):
-                        curr_key = self._freeze_key(curr_key)
-
-                    container[curr_key] = val
-
-                    # 准备读下一个 Entry
-                    frame[1] = _STATE_MAP_KEY
-                    frame[3] += 1
-                    frame[4] = None
-
-            # --- STRUCT 处理 ---
-            elif state == _STATE_STRUCT_FIELD:
-                b = self._reader.peek_u8()
-                type_id = b & 0x0F
-
-                if type_id == JCE_STRUCT_END:
-                    self._reader.read_u8()  # Consume END
-                    stack.pop()
-                    continue
-
-                tag, type_id = self._read_head()
-
-                if type_id in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
-                    new_container = self._create_container(type_id)
-                    container[tag] = new_container
-                    self._push_stack(stack, new_container, type_id)
-                else:
-                    val = self._read_primitive(type_id)
-                    container[tag] = val
-
-        return root_result
+                    # 如果已有路径（例如来自递归调用），则拼接
+                    e.loc = path + e.loc
+            raise
 
     def _read_head(self) -> tuple[int, int]:
         """从头部读取Tag和Type."""
@@ -638,16 +664,21 @@ class GenericDecoder:
             return self._read_simple_list()
 
         # Should not reach here for containers if logic is correct
-        raise JceDecodeError(f"Unexpected type id in _read_primitive: {type_id}")
+        raise JceDecodeError(f"Unknown JCE Type ID: {type_id}")
 
     def _get_stack_path(self, stack: list) -> list[str | int]:
         """从解析栈生成当前路径."""
         path: list[str | int] = []
-        for frame in stack:
+        for i, frame in enumerate(stack):
             # frame: [container, state, size, index, key]
             state = frame[1]
             if state == _STATE_LIST_ITEM:
-                path.append(frame[3])  # index
+                # 如果不是栈顶帧，说明当前正在处理子元素，而 index 在入栈前已自增
+                # 所以实际对应的元素索引是 index - 1
+                idx = frame[3]
+                if i < len(stack) - 1:
+                    idx = max(0, idx - 1)
+                path.append(idx)
             elif state == _STATE_MAP_VALUE:
                 # 仅在读取值时添加 Key（如果 Key 已解析）
                 key = frame[4]
@@ -1349,11 +1380,14 @@ class NodeDecoder(GenericDecoder):
     def _get_node_stack_path(self, stack: list) -> list[str | int]:
         """从 NodeDecoder 栈生成当前路径."""
         path: list[str | int] = []
-        for frame in stack:
+        for i, frame in enumerate(stack):
             # frame: [node, state, size, index, key_node]
             state = frame[1]
             if state == _STATE_LIST_ITEM:
-                path.append(frame[3])  # index
+                idx = frame[3]
+                if i < len(stack) - 1:
+                    idx = max(0, idx - 1)
+                path.append(idx)
             elif state == _STATE_MAP_VALUE:
                 # 仅在读取值时添加 Key（如果 Key 已解析）
                 key_node = frame[4]
