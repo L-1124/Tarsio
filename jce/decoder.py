@@ -520,7 +520,7 @@ class GenericDecoder:
                 _tag, type_id = self._read_head()
 
                 # 检查是否是容器类型
-                if type_id in (JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN):
+                if type_id in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
                     # 创建新容器并压栈
                     new_container = self._create_container(type_id)
                     container.append(new_container)
@@ -547,7 +547,7 @@ class GenericDecoder:
                 if k_tag != 0:
                     raise JceDecodeError(f"Expected Map Key Tag 0, got {k_tag}")
 
-                if k_type in (JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN):
+                if k_type in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
                     # Key 是容器类型：先构建容器并入栈解码，完成后再读取对应的 Value
                     new_container = self._create_container(k_type)
                     frame[4] = new_container  # 保存 Key 容器
@@ -568,7 +568,7 @@ class GenericDecoder:
                 if v_tag != 1:
                     raise JceDecodeError(f"Expected Map Value Tag 1, got {v_tag}")
 
-                if v_type in (JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN):
+                if v_type in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
                     new_container = self._create_container(v_type)
 
                     # 如果 Key 也是容器（现在已填满），需要冻结它才能作为字典键
@@ -608,7 +608,7 @@ class GenericDecoder:
 
                 tag, type_id = self._read_head()
 
-                if type_id in (JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN):
+                if type_id in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
                     new_container = self._create_container(type_id)
                     container[tag] = new_container
                     self._push_stack(stack, new_container, type_id)
@@ -1235,7 +1235,7 @@ class NodeDecoder(GenericDecoder):
             return JceNode(tag, type_id, value, length)
 
         # 2. 处理容器类型 (迭代状态机)
-        if type_id not in (JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN):
+        if type_id not in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
             raise JceDecodeError(f"Unknown type {type_id}")
 
         # 迭代核心逻辑
@@ -1285,7 +1285,7 @@ class NodeDecoder(GenericDecoder):
                 sub_tag, sub_type = self._read_head()
 
                 # 递归(迭代)处理子节点
-                if sub_type in (JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN):
+                if sub_type in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
                     new_node = self._create_container_node(sub_tag, sub_type)
                     curr_node.value.append(new_node)
 
