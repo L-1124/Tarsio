@@ -394,26 +394,6 @@ class GenericDecoder:
             root = JceDict()
             # 状态: 0=读取Tag/Type, 1=读取Value
 
-            # 初始栈帧
-            stack: list[Any] = []  # Stack of (container, key/index, state)
-
-            # 为了保持 API 兼容性，这里使用一个简化的循环逻辑，
-            # 但完全重写 GenericDecoder 为迭代式需要较大改动。
-            # 这里我们采用一种混合方法：
-            # 将 _read_struct, _read_list, _read_map 改为迭代式。
-
-            # 实际上，完全重写 GenericDecoder 需要替换所有递归调用。
-            # 鉴于 GenericDecoder 的结构，我们先保留递归入口，但在内部使用迭代。
-            # 或者，我们可以完全重写 decode 方法。
-
-            # 让我们尝试完全迭代的实现。
-
-            # Current container we are filling
-            current_container: Any = root
-
-            # Stack of (container, expected_size, current_index, type_info)
-            # 但 GenericDecoder 是无模式的，Struct 读取直到 END。
-
             while not self._reader.eof:
                 tag, type_id = self._read_head()
                 if type_id == JCE_STRUCT_END:
