@@ -228,74 +228,86 @@ class DataReader:
 
     def read_u8(self) -> int:
         """读取无符号8位整数."""
-        try:
-            val = self._view[self._pos]
-            self._pos += 1
-            return val
-        except IndexError:
-            raise JcePartialDataError("Not enough data to read u8") from None
+        if self._pos >= self.length:
+            raise JcePartialDataError("Not enough data to read u8")
+        val = self._view[self._pos]
+        self._pos += 1
+        return val
 
     def peek_u8(self) -> int:
         """查看下一个无符号8位整数而不移动指针."""
-        try:
-            return self._view[self._pos]
-        except IndexError:
-            raise JcePartialDataError("Not enough data to peek u8") from None
+        if self._pos >= self.length:
+            raise JcePartialDataError("Not enough data to peek u8")
+        return self._view[self._pos]
 
     def skip(self, length: int) -> None:
         """跳过指定数量的字节."""
         if length < 0:
             raise JceDecodeError(f"Cannot skip negative bytes: {length}")
-        if self._pos + length > self.length:
+        new_pos = self._pos + length
+        if new_pos > self.length:
             raise JcePartialDataError("Not enough data to skip")
-        self._pos += length
+        self._pos = new_pos
 
     def read_int1(self) -> int:
         """读取有符号1字节整数."""
-        try:
-            val = self._view[self._pos]
-            self._pos += 1
-            return val if val <= 127 else val - 256
-        except IndexError:
-            raise JcePartialDataError("Not enough data to read int1") from None
+        if self._pos >= self.length:
+            raise JcePartialDataError("Not enough data to read int1")
+        val = self._view[self._pos]
+        self._pos += 1
+        return val if val <= 127 else val - 256
 
     def read_int2(self) -> int:
         """读取有符号2字节整数."""
-        return cast(
-            int,
-            self._unpack(_STRUCT_H if not self._little_endian else _STRUCT_H_LE, 2)[0],
+        if self._pos + 2 > self.length:
+            raise JcePartialDataError("Not enough data to read int2")
+        val = (
+            _STRUCT_H.unpack_from(self._view, self._pos)[0]
+            if not self._little_endian
+            else _STRUCT_H_LE.unpack_from(self._view, self._pos)[0]
         )
+        self._pos += 2
+        return cast(int, val)
 
     def read_int4(self) -> int:
         """读取有符号4字节整数."""
-        return cast(
-            int,
-            self._unpack(_STRUCT_I if not self._little_endian else _STRUCT_I_LE, 4)[0],
+        if self._pos + 4 > self.length:
+            raise JcePartialDataError("Not enough data to read int4")
+        val = (
+            _STRUCT_I.unpack_from(self._view, self._pos)[0]
+            if not self._little_endian
+            else _STRUCT_I_LE.unpack_from(self._view, self._pos)[0]
         )
+        self._pos += 4
+        return cast(int, val)
 
     def read_int8(self) -> int:
         """读取有符号8字节整数."""
-        return cast(
-            int,
-            self._unpack(_STRUCT_Q if not self._little_endian else _STRUCT_Q_LE, 8)[0],
+        if self._pos + 8 > self.length:
+            raise JcePartialDataError("Not enough data to read int8")
+        val = (
+            _STRUCT_Q.unpack_from(self._view, self._pos)[0]
+            if not self._little_endian
+            else _STRUCT_Q_LE.unpack_from(self._view, self._pos)[0]
         )
+        self._pos += 8
+        return cast(int, val)
 
     def read_float(self) -> float:
         """读取4字节浮点数."""
         if self._pos + 4 > self.length:
             raise JcePartialDataError("Not enough data to read float")
 
-        start = self._pos
-        self._pos += 4
-        buf = self._view[start : self._pos]
-
-        # 始终使用小端读取如果启用了 OPT_LITTLE_ENDIAN
         if self._little_endian:
-            return cast(float, _STRUCT_f_LE.unpack(buf)[0])
+            val = _STRUCT_f_LE.unpack_from(self._view, self._pos)[0]
+            self._pos += 4
+            return cast(float, val)
 
-        # 使用启发式逻辑处理可能的字节序错误
-        primary = _STRUCT_f.unpack(buf)[0]
-        alt = _STRUCT_f_LE.unpack(buf)[0]
+        # 优化读取: 避免切片,直接使用 unpack_from
+        primary = _STRUCT_f.unpack_from(self._view, self._pos)[0]
+        alt = _STRUCT_f_LE.unpack_from(self._view, self._pos)[0]
+        self._pos += 4
+
         if not math.isfinite(primary) and math.isfinite(alt):
             return cast(float, alt)
 
@@ -311,15 +323,15 @@ class DataReader:
         if self._pos + 8 > self.length:
             raise JcePartialDataError("Not enough data to read double")
 
-        start = self._pos
-        self._pos += 8
-        buf = self._view[start : self._pos]
-
         if self._little_endian:
-            return cast(float, _STRUCT_d_LE.unpack(buf)[0])
+            val = _STRUCT_d_LE.unpack_from(self._view, self._pos)[0]
+            self._pos += 8
+            return cast(float, val)
 
-        primary = _STRUCT_d.unpack(buf)[0]
-        alt = _STRUCT_d_LE.unpack(buf)[0]
+        primary = _STRUCT_d.unpack_from(self._view, self._pos)[0]
+        alt = _STRUCT_d_LE.unpack_from(self._view, self._pos)[0]
+        self._pos += 8
+
         if not math.isfinite(primary) and math.isfinite(alt):
             return cast(float, alt)
 
@@ -331,18 +343,17 @@ class DataReader:
 
         return cast(float, primary)
 
-    def _unpack(self, packer: struct.Struct, size: int) -> tuple[Any, ...]:
-        if self._pos + size > self.length:
-            raise JcePartialDataError(f"Not enough data to unpack {size} bytes")
-        # memoryview 可以直接传递给 unpack_from
-        val = packer.unpack_from(self._view, self._pos)
-        self._pos += size
-        return val
-
     @property
     def eof(self) -> bool:
         """检查是否到达流末尾."""
         return self._pos >= self.length
+
+
+# 解码状态常量
+_STATE_LIST_ITEM = 1
+_STATE_MAP_KEY = 2
+_STATE_MAP_VALUE = 3
+_STATE_STRUCT_FIELD = 4
 
 
 class GenericDecoder:
@@ -378,34 +389,39 @@ class GenericDecoder:
             logger.debug("[GenericDecoder] 开始解码 %d 字节", self._reader.length)
 
         try:
-            result = JceDict()
+            # 迭代解码实现
+            root = JceDict()
+            # 状态: 0=读取Tag/Type, 1=读取Value
+
             while not self._reader.eof:
                 tag, type_id = self._read_head()
                 if type_id == JCE_STRUCT_END:
                     break
 
                 value = self._read_value(type_id)
-                result[tag] = value
+                root[tag] = value
 
             if not suppress_log:
-                logger.debug("[GenericDecoder] 成功解码 %d 个标签", len(result))
-            return result
+                logger.debug("[GenericDecoder] 成功解码 %d 个标签", len(root))
+            return root
 
         except Exception as e:
             if not suppress_log:
                 logger.error("[GenericDecoder] 解码错误: %s", e)
             raise
 
-    def _read_head(self) -> tuple[int, int]:
-        """从头部读取Tag和Type."""
-        b = self._reader.read_u8()
-        type_id = b & 0x0F
-        tag = (b & 0xF0) >> 4
-        if tag == 15:
-            tag = self._reader.read_u8()
-        return tag, type_id
-
     def _read_value(self, type_id: int) -> Any:
+        # 这个方法仍然被调用，我们需要确保它不会递归调用 _read_list/_read_map/_read_struct
+        # 如果是容器类型，我们需要使用新的迭代读取方法。
+
+        if type_id == JCE_LIST:
+            return self._read_list_iterative()
+        if type_id == JCE_MAP:
+            return self._read_map_iterative()
+        if type_id == JCE_STRUCT_BEGIN:
+            return self._read_struct_iterative()
+
+        # 基本类型保持不变
         if type_id == JCE_ZERO_TAG:
             return 0
         if type_id == JCE_INT1:
@@ -432,12 +448,6 @@ class GenericDecoder:
                     f"String4 length {length} exceeds max limit {MAX_STRING_LENGTH}"
                 )
             return self._reader.read_bytes(length, self._zero_copy)
-        if type_id == JCE_LIST:
-            return self._read_list()
-        if type_id == JCE_MAP:
-            return self._read_map()
-        if type_id == JCE_STRUCT_BEGIN:
-            return self._read_struct()
         if type_id == JCE_STRUCT_END:
             pass
         elif type_id == JCE_SIMPLE_LIST:
@@ -445,72 +455,222 @@ class GenericDecoder:
         else:
             raise JceDecodeError(f"Unknown JCE Type ID: {type_id}")
 
-    def _read_list(self) -> list[Any]:
-        """读取列表值."""
-        self._check_recursion()
-        self._recursion_limit -= 1
-        try:
-            size = self._read_integer_generic()
-            result: list[Any] = []
-            for _ in range(size):
-                _tag, type_id = self._read_head()
-                value = self._read_value(type_id)
-                result.append(value)
-            return result
-        finally:
-            self._recursion_limit += 1
+    def _read_list_iterative(self) -> list[Any]:
+        """迭代方式读取列表."""
+        return self._decode_iterative(JCE_LIST)
 
-    def _read_map(self) -> dict[Any, Any]:
-        """读取映射值."""
-        self._check_recursion()
-        self._recursion_limit -= 1
-        try:
+    def _read_map_iterative(self) -> dict[Any, Any]:
+        return self._decode_iterative(JCE_MAP)
+
+    def _read_struct_iterative(self) -> JceDict:
+        return self._decode_iterative(JCE_STRUCT_BEGIN)
+
+    def _decode_iterative(self, start_type: int) -> Any:
+        """核心迭代解析循环."""
+        # 栈帧结构: [container, state, size, index, key]
+        # state 使用模块级常量: _STATE_*
+
+        stack = []
+        root_result: Any = None
+
+        # 初始化根容器
+        if start_type == JCE_LIST:
             length = self._read_integer_generic()
-            result: dict[Any, Any] = {}
-            for _ in range(length):
-                # 读取键 (Tag 0)
+            root_result = []
+            if length > 0:
+                stack.append([root_result, _STATE_LIST_ITEM, length, 0, None])
+        elif start_type == JCE_MAP:
+            length = self._read_integer_generic()
+            root_result = {}
+            if length > 0:
+                stack.append([root_result, _STATE_MAP_KEY, length, 0, None])
+        elif start_type == JCE_STRUCT_BEGIN:
+            root_result = JceDict()
+            stack.append(
+                [root_result, _STATE_STRUCT_FIELD, 0, 0, None]
+            )  # Struct 大小未知
+
+        if not stack:
+            return root_result
+
+        while stack:
+            frame = stack[-1]
+            container, state, size, index, key = frame
+
+            # --- LIST 处理 ---
+            if state == _STATE_LIST_ITEM:
+                if index >= size:
+                    stack.pop()
+                    continue
+
+                # 准备读取下一个元素
+                _tag, type_id = self._read_head()
+
+                # 检查是否是容器类型
+                if type_id in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
+                    # 创建新容器并压栈
+                    new_container = self._create_container(type_id)
+                    container.append(new_container)
+
+                    # 更新当前帧索引 (因为下次回来就是下一个元素了)
+                    frame[3] += 1
+
+                    # 压入新帧
+                    self._push_stack(stack, new_container, type_id)
+                else:
+                    # 基本类型，直接读取并追加
+                    val = self._read_primitive(type_id)
+                    container.append(val)
+                    frame[3] += 1
+
+            # --- MAP 处理 ---
+            elif state == _STATE_MAP_KEY:
+                if index >= size:
+                    stack.pop()
+                    continue
+
+                # 读取 Key
                 k_tag, k_type = self._read_head()
                 if k_tag != 0:
                     raise JceDecodeError(f"Expected Map Key Tag 0, got {k_tag}")
-                key = self._read_value(k_type)
 
-                # 读取值 (Tag 1)
+                if k_type in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
+                    # Key 是容器类型：先构建容器并入栈解码，完成后再读取对应的 Value
+                    new_container = self._create_container(k_type)
+                    frame[4] = new_container  # 保存 Key 容器
+                    frame[1] = _STATE_MAP_VALUE  # Key 解码完成后转去读 Value
+                    self._push_stack(stack, new_container, k_type)
+                else:
+                    key_val = self._read_primitive(k_type)
+                    if isinstance(key_val, dict | list):
+                        key_val = self._freeze_key(key_val)
+                    frame[4] = key_val  # 保存 Key
+                    frame[1] = _STATE_MAP_VALUE  # 转去读 Value
+
+            elif state == _STATE_MAP_VALUE:
+                # 此时 frame[4] 已经是 Key 了
+                curr_key = frame[4]
+
                 v_tag, v_type = self._read_head()
                 if v_tag != 1:
                     raise JceDecodeError(f"Expected Map Value Tag 1, got {v_tag}")
-                val = self._read_value(v_type)
 
-                # 处理不可哈希的键
-                if isinstance(key, dict | list):
-                    key = self._freeze_key(key)
+                if v_type in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
+                    new_container = self._create_container(v_type)
 
-                result[key] = val
-            return result
-        finally:
-            self._recursion_limit += 1
+                    # 如果 Key 也是容器（现在已填满），需要冻结它才能作为字典键
+                    if isinstance(curr_key, dict | list):
+                        curr_key = self._freeze_key(curr_key)
 
-    def _read_struct(self) -> JceDict:
-        """读取结构体值."""
-        self._check_recursion()
-        self._recursion_limit -= 1
-        try:
-            result = JceDict()
-            while True:
-                # 窥视以检查STRUCT_END
+                    container[curr_key] = new_container
+
+                    # 准备读下一个 Entry
+                    frame[1] = _STATE_MAP_KEY
+                    frame[3] += 1
+                    frame[4] = None
+
+                    self._push_stack(stack, new_container, v_type)
+                else:
+                    val = self._read_primitive(v_type)
+
+                    if isinstance(curr_key, dict | list):
+                        curr_key = self._freeze_key(curr_key)
+
+                    container[curr_key] = val
+
+                    # 准备读下一个 Entry
+                    frame[1] = _STATE_MAP_KEY
+                    frame[3] += 1
+                    frame[4] = None
+
+            # --- STRUCT 处理 ---
+            elif state == _STATE_STRUCT_FIELD:
                 b = self._reader.peek_u8()
                 type_id = b & 0x0F
-                tag = (b & 0xF0) >> 4
 
                 if type_id == JCE_STRUCT_END:
-                    self._reader.read_u8()  # 消费STRUCT_END头部
-                    break
+                    self._reader.read_u8()  # Consume END
+                    stack.pop()
+                    continue
 
-                # 不是结束,正常读取
                 tag, type_id = self._read_head()
-                result[tag] = self._read_value(type_id)
-            return result
-        finally:
-            self._recursion_limit += 1
+
+                if type_id in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
+                    new_container = self._create_container(type_id)
+                    container[tag] = new_container
+                    self._push_stack(stack, new_container, type_id)
+                else:
+                    val = self._read_primitive(type_id)
+                    container[tag] = val
+
+        return root_result
+
+    def _read_head(self) -> tuple[int, int]:
+        """从头部读取Tag和Type."""
+        b = self._reader.read_u8()
+        type_id = b & 0x0F
+        tag = (b & 0xF0) >> 4
+        if tag == 15:
+            tag = self._reader.read_u8()
+        return tag, type_id
+
+    def _create_container(self, type_id: int) -> Any:
+        if type_id == JCE_LIST:
+            return []
+        if type_id == JCE_MAP:
+            return {}
+        if type_id == JCE_STRUCT_BEGIN:
+            return JceDict()
+        raise JceDecodeError(f"Cannot create container for type {type_id}")
+
+    def _push_stack(self, stack: list, container: Any, type_id: int):
+        if type_id == JCE_LIST:
+            length = self._read_integer_generic()
+            if length > 0:
+                stack.append([container, _STATE_LIST_ITEM, length, 0, None])
+        elif type_id == JCE_MAP:
+            length = self._read_integer_generic()
+            if length > 0:
+                stack.append([container, _STATE_MAP_KEY, length, 0, None])
+        elif type_id == JCE_STRUCT_BEGIN:
+            # 注意：这里对容器的栈行为是刻意不对称的。
+            # - LIST / MAP：只有在 length > 0 时才压栈，因为没有元素时无需再读取任何数据。
+            # - STRUCT：即使是空结构体也必须压栈，以便后续正确消费 JCE_STRUCT_END 标记。
+            stack.append([container, _STATE_STRUCT_FIELD, 0, 0, None])
+
+    def _read_primitive(self, type_id: int) -> Any:
+        """读取基本类型 (非容器)."""
+        if type_id == JCE_ZERO_TAG:
+            return 0
+        if type_id == JCE_INT1:
+            return self._reader.read_int1()
+        if type_id == JCE_INT2:
+            return self._reader.read_int2()
+        if type_id == JCE_INT4:
+            return self._reader.read_int4()
+        if type_id == JCE_INT8:
+            return self._reader.read_int8()
+        if type_id == JCE_FLOAT:
+            return self._reader.read_float()
+        if type_id == JCE_DOUBLE:
+            return self._reader.read_double()
+        if type_id == JCE_STRING1:
+            length = self._reader.read_u8()
+            return self._reader.read_bytes(length, self._zero_copy)
+        if type_id == JCE_STRING4:
+            length = self._reader.read_int4()
+            if length < 0:
+                raise JceDecodeError(f"String4 length cannot be negative: {length}")
+            if length > MAX_STRING_LENGTH:
+                raise JceDecodeError(
+                    f"String4 length {length} exceeds max limit {MAX_STRING_LENGTH}"
+                )
+            return self._reader.read_bytes(length, self._zero_copy)
+        if type_id == JCE_SIMPLE_LIST:
+            return self._read_simple_list()
+
+        # Should not reach here for containers if logic is correct
+        raise JceDecodeError(f"Unexpected type id in _read_primitive: {type_id}")
 
     def _read_simple_list(self) -> bytes | memoryview:
         """读取简单列表(字节数组)."""
@@ -976,10 +1136,7 @@ class NodeDecoder(GenericDecoder):
         return nodes
 
     def _read_node(self, tag: int | None, type_id: int) -> JceNode:
-        length: int | None = None
-        value: Any = None
-
-        # 导入常量以避免 UnboundLocalError
+        """读取单个节点 (迭代实现)."""
         from .const import (
             JCE_DOUBLE,
             JCE_FLOAT,
@@ -993,11 +1150,10 @@ class NodeDecoder(GenericDecoder):
             JCE_STRING1,
             JCE_STRING4,
             JCE_STRUCT_BEGIN,
-            JCE_STRUCT_END,
             JCE_ZERO_TAG,
         )
 
-        # Primitives
+        # 1. 处理简单类型 (非容器)
         if type_id in {
             JCE_INT1,
             JCE_INT2,
@@ -1008,74 +1164,209 @@ class NodeDecoder(GenericDecoder):
             JCE_ZERO_TAG,
         }:
             value = self._read_value(type_id)
+            return JceNode(tag, type_id, value)
 
-        elif type_id == JCE_STRING1:
+        if type_id == JCE_STRING1:
             length = self._reader.read_u8()
             value = self._reader.read_bytes(length, self._zero_copy)
-            with contextlib.suppress(UnicodeDecodeError):
-                value = value.decode("utf-8")
+            # 只有 bytes 才有 decode 方法
+            if isinstance(value, bytes):
+                with contextlib.suppress(UnicodeDecodeError):
+                    value = value.decode("utf-8")
+            elif isinstance(value, memoryview):
+                # memoryview 需要转 bytes 才能 decode
+                with contextlib.suppress(UnicodeDecodeError):
+                    value_bytes = value.tobytes()
+                    value = value_bytes.decode("utf-8")
+            return JceNode(tag, type_id, value, length)
 
-        elif type_id == JCE_STRING4:
+        if type_id == JCE_STRING4:
             length = self._reader.read_int4()
             if length < 0:
                 raise JceDecodeError(f"String4 length negative: {length}")
             if length > MAX_STRING_LENGTH:
                 raise JceDecodeError("String4 too long")
             value = self._reader.read_bytes(length, self._zero_copy)
-            with contextlib.suppress(UnicodeDecodeError):
-                value = value.decode("utf-8")
 
-        elif type_id == JCE_SIMPLE_LIST:
+            if isinstance(value, bytes):
+                with contextlib.suppress(UnicodeDecodeError):
+                    value = value.decode("utf-8")
+            elif isinstance(value, memoryview):
+                with contextlib.suppress(UnicodeDecodeError):
+                    value_bytes = value.tobytes()
+                    value = value_bytes.decode("utf-8")
+            return JceNode(tag, type_id, value, length)
+
+        if type_id == JCE_SIMPLE_LIST:
             _tag, type_ = self._read_head()
-            # SimpleList 必须是 byte 类型 (type=0)
             if type_ != 0:
                 raise JceDecodeError("SimpleList expected Byte type")
             length = self._read_integer_generic()
             data = self._reader.read_bytes(length, self._zero_copy)
             value = data
 
-            # 尝试递归解析 SimpleList
-            if len(data) > 0:
-                # 简单的启发式检查: 第一个字节是否是合法的 Tag/Type (低4位类型码 <= 13)
-                if (data[0] & 0x0F) <= 13:
-                    try:
-                        sub_reader = DataReader(data)
-                        # 使用递归的 NodeDecoder 尝试解码
-                        sub_nodes = NodeDecoder(sub_reader).decode(suppress_log=True)
-                        if sub_nodes:
-                            value = sub_nodes
-                    except Exception:
-                        pass
+            # 尝试递归解析 SimpleList (Bytes -> JCE)
+            # 这里是解析 bytes 内容，不是结构递归，所以可以保留递归调用(实例化新Decoder)
+            if len(data) > 0 and (data[0] & 0x0F) <= 13:
+                try:
+                    sub_reader = DataReader(data)
+                    sub_nodes = NodeDecoder(sub_reader).decode(suppress_log=True)
+                    if sub_nodes:
+                        value = sub_nodes
+                except Exception:
+                    pass
+            return JceNode(tag, type_id, value, length)
 
-        elif type_id == JCE_LIST:
-            length = self._read_integer_generic()
-            value = []
-            for _ in range(length):
-                _tag, type_ = self._read_head()
-                value.append(self._read_node(None, type_))
-
-        elif type_id == JCE_MAP:
-            length = self._read_integer_generic()
-            value = []
-            for _ in range(length):
-                kt, ktype = self._read_head()
-                k = self._read_node(kt, ktype)
-                vt, vtype = self._read_head()
-                v = self._read_node(vt, vtype)
-                value.append((k, v))
-
-        elif type_id == JCE_STRUCT_BEGIN:
-            value = []
-            while True:
-                b = self._reader.peek_u8()
-                tid = b & 0x0F
-                if tid == JCE_STRUCT_END:
-                    self._reader.read_u8()
-                    break
-                t_tag, t_type = self._read_head()
-                value.append(self._read_node(t_tag, t_type))
-
-        else:
+        # 2. 处理容器类型 (迭代状态机)
+        if type_id not in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
             raise JceDecodeError(f"Unknown type {type_id}")
 
-        return JceNode(tag, type_id, value, length)
+        # 迭代核心逻辑
+        return self._read_node_iterative(tag, type_id)
+
+    def _read_node_iterative(self, root_tag: int | None, root_type: int) -> JceNode:
+        """迭代读取容器节点."""
+        from .const import (
+            JCE_LIST,
+            JCE_MAP,
+            JCE_STRUCT_BEGIN,
+            JCE_STRUCT_END,
+        )
+
+        # 初始化根节点
+        root_length = 0
+        root_value: list[Any] = []
+
+        if root_type == JCE_LIST:
+            root_length = self._read_integer_generic()
+            initial_state = _STATE_LIST_ITEM
+        elif root_type == JCE_MAP:
+            root_length = self._read_integer_generic()
+            initial_state = _STATE_MAP_KEY
+        elif root_type == JCE_STRUCT_BEGIN:
+            initial_state = _STATE_STRUCT_FIELD
+        else:
+            raise JceDecodeError(f"Invalid container type: {root_type}")
+
+        root_node = JceNode(root_tag, root_type, root_value, root_length)
+
+        # 栈帧: [node, state, size, index, temp_key_node]
+        # node: 当前正在填充的 JceNode (value 必须是 list)
+        stack = [[root_node, initial_state, root_length, 0, None]]
+
+        while stack:
+            frame = stack[-1]
+            curr_node, state, size, index, key_node = frame
+
+            # --- List ---
+            if state == _STATE_LIST_ITEM:
+                if index >= size:
+                    stack.pop()
+                    continue
+
+                # 读取列表项头部
+                sub_tag, sub_type = self._read_head()
+
+                # 递归(迭代)处理子节点
+                if sub_type in {JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN}:
+                    new_node = self._create_container_node(sub_tag, sub_type)
+                    curr_node.value.append(new_node)
+
+                    frame[3] += 1  # index++
+                    self._push_node_stack(stack, new_node, sub_type)
+                else:
+                    # 基础类型直接读取
+                    child = self._read_node(sub_tag, sub_type)
+                    curr_node.value.append(child)
+                    frame[3] += 1
+
+            # --- Map ---
+            elif state == _STATE_MAP_KEY:
+                if index >= size:
+                    stack.pop()
+                    continue
+
+                # 读取 Key
+                k_tag, k_type = self._read_head()
+                if k_type in (JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN):
+                    new_node = self._create_container_node(k_tag, k_type)
+
+                    frame[4] = new_node  # 保存 Key node
+                    frame[1] = _STATE_MAP_VALUE  # 转到 Value 状态
+
+                    self._push_node_stack(stack, new_node, k_type)
+                else:
+                    k_node = self._read_node(k_tag, k_type)
+                    frame[4] = k_node
+                    frame[1] = _STATE_MAP_VALUE
+
+            elif state == _STATE_MAP_VALUE:
+                # 读取 Value
+                # frame[4] 是 key_node
+                curr_key = frame[4]
+
+                v_tag, v_type = self._read_head()
+
+                if v_type in (JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN):
+                    new_node = self._create_container_node(v_tag, v_type)
+                    curr_node.value.append((curr_key, new_node))
+
+                    frame[1] = _STATE_MAP_KEY  # 回到 Key 状态
+                    frame[3] += 1  # index++
+                    frame[4] = None
+
+                    self._push_node_stack(stack, new_node, v_type)
+                else:
+                    v_node = self._read_node(v_tag, v_type)
+                    curr_node.value.append((curr_key, v_node))
+
+                    frame[1] = _STATE_MAP_KEY
+                    frame[3] += 1
+                    frame[4] = None
+
+            # --- Struct ---
+            elif state == _STATE_STRUCT_FIELD:
+                b = self._reader.peek_u8()
+                type_id = b & 0x0F
+
+                if type_id == JCE_STRUCT_END:
+                    self._reader.read_u8()
+                    stack.pop()
+                    continue
+
+                sub_tag, sub_type = self._read_head()
+
+                if sub_type in (JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN):
+                    new_node = self._create_container_node(sub_tag, sub_type)
+                    curr_node.value.append(new_node)
+                    self._push_node_stack(stack, new_node, sub_type)
+                else:
+                    child = self._read_node(sub_tag, sub_type)
+                    curr_node.value.append(child)
+
+        return root_node
+
+    def _create_container_node(self, tag: int | None, type_id: int) -> JceNode:
+        """创建容器节点骨架."""
+        from .const import JCE_LIST, JCE_MAP
+
+        length = 0
+        if type_id in (JCE_LIST, JCE_MAP):
+            length = self._read_integer_generic()
+
+        return JceNode(tag, type_id, value=[], length=length)
+
+    def _push_node_stack(self, stack: list, node: JceNode, type_id: int):
+        from .const import JCE_LIST, JCE_MAP, JCE_STRUCT_BEGIN
+
+        if type_id == JCE_LIST:
+            # node.length 已经在 _create_container_node 中读取
+            length = node.length if node.length is not None else 0
+            if length > 0:
+                stack.append([node, _STATE_LIST_ITEM, length, 0, None])
+        elif type_id == JCE_MAP:
+            length = node.length if node.length is not None else 0
+            if length > 0:
+                stack.append([node, _STATE_MAP_KEY, length, 0, None])
+        elif type_id == JCE_STRUCT_BEGIN:
+            stack.append([node, _STATE_STRUCT_FIELD, 0, 0, None])

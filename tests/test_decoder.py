@@ -365,16 +365,36 @@ def test_decode_moderate_nesting() -> None:
     assert isinstance(result, dict)
 
 
-def test_recursion_limit() -> None:
-    """Decoder 应在递归深度超过限制时抛出 RecursionError."""
-    depth = 105
+def test_deeply_nested_structure() -> None:
+    """Decoder 应能正确处理深度嵌套结构 (迭代式实现不应抛出 RecursionError)."""
+    depth = 150
+    # Layer: Head(List, Tag0), LenHead(Int1, Tag0), LenValue(1)
     layer = bytes.fromhex("09 00 01")
-    data = layer * depth + bytes.fromhex("00 00 00")
+    # Tail: ItemHead(Int1, Tag0), ItemValue(0)
+    data = layer * depth + bytes.fromhex("00 00")
+
     reader = DataReader(data)
     decoder = GenericDecoder(reader)
 
-    with pytest.raises(RecursionError, match="JCE recursion limit exceeded"):
-        decoder.decode()
+    # 只要不抛出 RecursionError 且能解码成功即可
+    result = decoder.decode()
+
+    assert isinstance(result, dict)
+    assert 0 in result
+
+    # 验证嵌套深度
+    curr = result[0]
+    count = 0
+    while isinstance(curr, list):
+        count += 1
+        if len(curr) > 0:
+            curr = curr[0]
+        else:
+            break
+
+    # 最内层是 0 (int)
+    assert curr == 0
+    assert count == depth
 
 
 # --- 整数解码测试 ---
