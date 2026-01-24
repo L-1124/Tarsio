@@ -326,11 +326,8 @@ class JceModelField:
 
             # 如果推断出的是 JceStruct, jce_type_cls 会是 None, inferred_struct 会是 Struct 类
             if jce_type_cls is None and inferred_struct is not None:
-                # 对于 JceStruct, 我们不使用 JceType, 直接返回
-                # 但我们需要一个占位符, 使用 BYTES
-                from . import types
-
-                jce_type_cls = types.BYTES
+                # Use the struct class itself as the type
+                jce_type_cls = inferred_struct
             elif jce_type_cls is None:
                 if annotation is Any:
                     # 如果是 Any, 允许不指定 jce_type, 编码时将使用运行时推断

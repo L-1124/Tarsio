@@ -928,12 +928,9 @@ class SchemaDecoder(GenericDecoder):
     __slots__ = (
         "_bytes_mode",
         "_context",
-        "_converters",
-        "_defaults",
         "_field_map",
         "_fields",
         "_target_cls",
-        "_validators",
     )
 
     _target_cls: Any
@@ -941,9 +938,6 @@ class SchemaDecoder(GenericDecoder):
     _context: dict[str, Any]
     _field_map: dict[int, tuple[str, Any]]
     _bytes_mode: str
-    _defaults: dict[str, Any]
-    _converters: dict[str, Callable[[Any], Any]]
-    _validators: dict[str, type]
 
     def __init__(
         self,
@@ -961,9 +955,8 @@ class SchemaDecoder(GenericDecoder):
         # Cache check
         cache = getattr(target_cls, "__jce_decoder_cache__", None)
         if cache:
-            self._fields, self._field_map, self._defaults, self._converters, self._validators = cache
+            self._fields, self._field_map = cache
             return
-
 
         # 获取字段,对于泛型类需要从原始类获取
         self._fields = getattr(target_cls, "__jce_fields__", {})
@@ -989,58 +982,11 @@ class SchemaDecoder(GenericDecoder):
             field.jce_id: (name, field.jce_type) for name, field in self._fields.items()
         }
 
-        # 预计算默认值和转换器 (优化)
-        self._defaults = {}
-        self._converters = {}
-        self._validators = {}
-        
-        # 仅当目标类是 Pydantic 模型时才处理
-        if hasattr(target_cls, "model_fields"):
-             for name, field in target_cls.model_fields.items():
-                if field.default is not PydanticUndefined:
-                    self._defaults[name] = field.default
-                
-                # 转换器检测
-                ann = field.annotation
-                origin = get_origin(ann)
-                
-                # Handle Union/Optional
-                if str(origin) == "typing.Union" or str(origin) == "<class 'types.UnionType'>" or (origin is not None and "Union" in str(origin)):
-                     args = get_args(ann)
-                     non_none = [a for a in args if a is not type(None)]
-                     if len(non_none) == 1:
-                         ann = non_none[0]
-                         origin = get_origin(ann)
-
-                # Validators
-                if ann in (int, float, bool, str, bytes):
-                    self._validators[name] = ann
-                if ann is str:
-                    self._converters[name] = self._convert_str
-                elif (origin is list or ann is list):
-                     args = get_args(ann)
-                     if args and args[0] is str:
-                         self._converters[name] = self._convert_list_str
-
         # Save to cache
-        setattr(target_cls, "__jce_decoder_cache__", (self._fields, self._field_map, self._defaults, self._converters, self._validators))
-
-    @staticmethod
-    def _convert_str(v: Any) -> Any:
-        if isinstance(v, bytes):
-            return v.decode("utf-8")
-        return v
-
-    @staticmethod
-    def _convert_list_str(v: Any) -> Any:
-        if isinstance(v, list) and v and isinstance(v[0], bytes):
-             return [x.decode("utf-8") for x in v]
-        return v
+        setattr(target_cls, "__jce_decoder_cache__", (self._fields, self._field_map))
 
     def decode(self, suppress_log: bool = False) -> Any:
         """将流解码为 target_cls 实例.
-
-        使用优化路径直接实例化对象，跳过中间字典创建.
 
         Args:
             suppress_log: 是否抑制日志输出.
@@ -1048,38 +994,28 @@ class SchemaDecoder(GenericDecoder):
         Returns:
             Any: 实例化的目标类对象.
         """
-        return self._decode_direct(suppress_log=suppress_log)
+        # 1. 解码为混合字典 (包含子实例)
+        data = self._decode_to_mixed_dict(suppress_log=suppress_log)
 
-    def _decode_direct(self, suppress_log: bool = False) -> Any:
-        """直接实例化路径."""
+        # 2. 调用 Pydantic 验证 (Root Validator & Type Checks)
+        return self._target_cls.model_validate(data)
+
+    def _decode_to_mixed_dict(self, suppress_log: bool = False) -> dict[str, Any]:
+        """解码为包含嵌套实例的字典."""
         if not suppress_log:
-            logger.debug("[SchemaDecoder] 开始直接解码 %s", self._target_cls.__name__)
-            
-        # 1. 创建未初始化实例
-        instance = self._target_cls.__new__(self._target_cls)
-        # Initialize Pydantic attributes
-        object.__setattr__(instance, "__pydantic_fields_set__", set())
-        object.__setattr__(instance, "__pydantic_extra__", None)
-        object.__setattr__(instance, "__pydantic_private__", None)
-        
-        # 2. 填充静态默认值
-        if self._defaults:
-            instance.__dict__.update(self._defaults)
-        
-        # 3. 处理 factory defaults
-        for name, field in self._target_cls.model_fields.items():
-            if field.default_factory is not None:
-                instance.__dict__[name] = field.default_factory()
+            logger.debug("[SchemaDecoder] 开始解码 %s", self._target_cls.__name__)
 
-        # 局部变量缓存优化
+        deserializers = getattr(self._target_cls, "__jce_deserializers__", {})
+
+        # Local variable optimization
         field_map = self._field_map
-        converters = self._converters
         read_head = self._read_head
         read_value = self._read_value
         skip_value = self._skip_value
         reader = self._reader
-        deserializers = getattr(self._target_cls, "__jce_deserializers__", {})
-        
+
+        result: dict[str, Any] = {}
+
         try:
             while not reader.eof:
                 tag, type_id = read_head()
@@ -1089,36 +1025,41 @@ class SchemaDecoder(GenericDecoder):
 
                 if tag in field_map:
                     field_name, expected_type = field_map[tag]
-                    
+
                     value = None
-                    
+
                     # 递归处理 Struct
                     from .struct import JceStruct
-                    
-                    if (
-                        isinstance(expected_type, type)
-                        and issubclass(expected_type, JceStruct)
-                        and type_id == JCE_STRUCT_BEGIN
-                    ):
+
+                    is_struct_type = isinstance(expected_type, type) and issubclass(
+                        expected_type, JceStruct
+                    )
+
+                    if is_struct_type and type_id == JCE_STRUCT_BEGIN:
+                        # 递归调用 decode() 直接获取实例
                         inner_decoder = SchemaDecoder(
                             reader,
                             expected_type,
                             self._option,
                             self._context,
                         )
-                        value = inner_decoder._decode_direct(suppress_log=suppress_log)
-                    # 处理 Struct 列表 (优化路径)
+                        value = inner_decoder.decode(suppress_log=suppress_log)
+
+                    # 处理 Struct 列表
                     elif type_id == JCE_LIST:
-                         value = self._decode_list_field_direct(
+                        value = self._decode_list_field(
                             field_name, type_id, suppress_log=suppress_log
                         )
                     # 普通值
                     else:
                         value = read_value(type_id)
 
-                    # 快速类型转换 (Bytes -> Str)
-                    if field_name in converters:
-                        value = converters[field_name](value)
+                        # Binary Blob 优化 (Bytes -> Struct)
+                        # 如果目标是 Struct 但读到的是 Bytes (通常是 JCE_SIMPLE_LIST/Bytes)，立即解包
+                        if is_struct_type and isinstance(
+                            value, bytes | bytearray | memoryview
+                        ):
+                            value = expected_type.model_validate_jce(value)
 
                     # 如果是 Any 字段 (expected_type 为 None), 应用 bytes_mode 转换
                     if expected_type is None:
@@ -1132,24 +1073,10 @@ class SchemaDecoder(GenericDecoder):
                             field_name, value, tag, deserializers
                         )
 
-                    # 自动解包 BYTES 字段
-                    if hasattr(self._target_cls, "_auto_unpack_bytes_field"):
-                        jce_info = self._fields[field_name]
-                        value = self._target_cls._auto_unpack_bytes_field(
-                            field_name, jce_info, value
-                        )
+                    # 注意：移除 _auto_unpack_bytes_field 调用，因为上面的 Binary Blob 逻辑已处理
 
-                    # Validation
-                    if field_name in self._validators:
-                        expected = self._validators[field_name]
-                        if not isinstance(value, expected):
-                            # Allow int -> float
-                            if expected is float and isinstance(value, int):
-                                value = float(value)
-                            else:
-                                raise TypeError(f"Field {field_name} expected {expected}, got {type(value)}")
-                    instance.__dict__[field_name] = value
-                    
+                    result[field_name] = value
+
                 else:
                     if not suppress_log:
                         logger.debug(
@@ -1159,146 +1086,10 @@ class SchemaDecoder(GenericDecoder):
                         )
                     skip_value(type_id)
 
-            return instance
-        except Exception as e:
-            if not isinstance(e, JceDecodeError) and not suppress_log:
-                 logger.error(
-                    "[SchemaDecoder] 解码 %s 时出错: %s",
-                    self._target_cls.__name__,
-                    e,
-                )
-            raise
-
-    def _decode_list_field_direct(
-        self, field_name: str, type_id: int, suppress_log: bool = False
-    ) -> Any:
-        # 直接解码列表字段，针对 Struct 列表优化
-        from typing import get_args, get_origin
-        from .struct import JceStruct
-
-        field_info = self._target_cls.model_fields[field_name]
-        annotation = field_info.annotation
-        origin = get_origin(annotation)
-        
-        if (origin is list or annotation is list) and get_args(annotation):
-            item_type = get_args(annotation)[0]
-            if isinstance(item_type, type) and issubclass(item_type, JceStruct):
-                 return self._read_list_of_structs_direct(item_type, suppress_log)
-        
-        return self._read_value(type_id)
-
-    def _read_list_of_structs_direct(
-        self, item_type: Any, suppress_log: bool = False
-    ) -> list[Any]:
-        """直接读取结构体列表 (返回对象列表而不是字典)."""
-        self._check_recursion()
-        self._recursion_limit -= 1
-        try:
-            length = self._read_integer_generic()
-            result = []
-            for _ in range(length):
-                _tag, type_id = self._read_head()
-                if type_id == JCE_STRUCT_BEGIN:
-                    inner_decoder = SchemaDecoder(
-                        self._reader, item_type, self._option, self._context
-                    )
-                    result.append(inner_decoder._decode_direct(suppress_log=suppress_log))
-                else:
-                    val_dict = self._read_struct_fallback(type_id, item_type)
-                    result.append(item_type.model_validate(val_dict))
-            return result
-        finally:
-            self._recursion_limit += 1
-
-    def decode_to_dict(self, suppress_log: bool = False) -> dict[str, Any]:
-        """将流解码为字典 (仅包含 Schema 中定义的字段).
-
-        Args:
-            suppress_log: 是否抑制日志输出.
-
-        Returns:
-            dict[str, Any]: 包含字段名和值的字典.
-
-        Raises:
-            JceDecodeError: 解码失败时抛出.
-        """
-        if not suppress_log:
-            logger.debug("[SchemaDecoder] 开始解码 %s", self._target_cls.__name__)
-        deserializers = getattr(self._target_cls, "__jce_deserializers__", {})
-
-        try:
-            result: dict[str, Any] = {}
-
-            while not self._reader.eof:
-                tag, type_id = self._read_head()
-
-                if type_id == JCE_STRUCT_END:
-                    break
-
-                if tag in self._field_map:
-                    field_name, expected_type = self._field_map[tag]
-
-                    try:
-                        from .struct import JceStruct
-
-                        # 递归处理 Struct
-                        if (
-                            isinstance(expected_type, type)
-                            and issubclass(expected_type, JceStruct)
-                            and type_id == JCE_STRUCT_BEGIN
-                        ):
-                            inner_decoder = SchemaDecoder(
-                                self._reader,
-                                expected_type,
-                                self._option,
-                                self._context,
-                            )
-                            value = inner_decoder.decode_to_dict(
-                                suppress_log=suppress_log
-                            )
-                        # 处理 Struct 列表
-                        elif type_id == JCE_LIST:
-                            value = self._decode_list_field(
-                                field_name, type_id, suppress_log=suppress_log
-                            )
-                        # 普通值
-                        else:
-                            value = self._read_value(type_id)
-
-                        # 如果是 Any 字段 (expected_type 为 None), 应用 bytes_mode 转换
-                        if expected_type is None:
-                            value = convert_bytes_recursive(
-                                value, mode=self._bytes_mode, option=self._option
-                            )
-
-                        # 应用反序列化器
-
-                        value = self._apply_deserializer(
-                            field_name, value, tag, deserializers
-                        )
-
-                        # 自动解包 BYTES 字段
-                        if hasattr(self._target_cls, "_auto_unpack_bytes_field"):
-                            jce_info = self._fields[field_name]
-                            value = self._target_cls._auto_unpack_bytes_field(
-                                field_name, jce_info, value
-                            )
-
-                        result[field_name] = value
-                    except JceDecodeError as e:
-                        e.loc.insert(0, field_name)
-                        raise
-                else:
-                    logger.debug(
-                        "[SchemaDecoder] 跳过未知标签 %d (类型 %d)",
-                        tag,
-                        type_id,
-                    )
-                    self._skip_value(type_id)
-
             if not suppress_log:
                 logger.debug("[SchemaDecoder] 成功解码 %d 个字段", len(result))
             return result
+
         except Exception as e:
             if not isinstance(e, JceDecodeError) and not suppress_log:
                 logger.error(
@@ -1313,19 +1104,19 @@ class SchemaDecoder(GenericDecoder):
     ) -> Any:
         # 处理列表字段解码逻辑的辅助函数.
         from typing import get_args, get_origin
-
         from .struct import JceStruct
 
         field_info = self._target_cls.model_fields[field_name]
         annotation = field_info.annotation
-
-        # Unpack Optional/Union
         origin = get_origin(annotation)
-        # 注意: 如果我们严格检查类型, 则需要导入 'Union',
-        # 但这里我们依赖基本比较或 'typing' 导入.
-        # 假设简单的解包逻辑如原始代码所示:
-        args = get_args(annotation)
-        if args and type(None) in args:  # Optional check
+
+        # Unwrap Optional/Union logic (simplified)
+        if (
+            str(origin) == "typing.Union"
+            or str(origin) == "<class 'types.UnionType'>"
+            or (origin is not None and "Union" in str(origin))
+        ):
+            args = get_args(annotation)
             non_none = [a for a in args if a is not type(None)]
             if len(non_none) == 1:
                 annotation = non_none[0]
@@ -1334,9 +1125,36 @@ class SchemaDecoder(GenericDecoder):
         if (origin is list or annotation is list) and get_args(annotation):
             item_type = get_args(annotation)[0]
             if isinstance(item_type, type) and issubclass(item_type, JceStruct):
-                return self._read_list_of_structs(item_type, suppress_log=suppress_log)
+                return self._read_list_of_structs(item_type, suppress_log)
 
         return self._read_value(type_id)
+
+    def _read_list_of_structs(
+        self, item_type: Any, suppress_log: bool = False
+    ) -> list[Any]:
+        """读取结构体列表 (返回对象列表)."""
+        self._check_recursion()
+        self._recursion_limit -= 1
+        try:
+            length = self._read_integer_generic()
+            result = []
+            for _ in range(length):
+                _tag, type_id = self._read_head()
+                if type_id == JCE_STRUCT_BEGIN:
+                    inner_decoder = SchemaDecoder(
+                        self._reader, item_type, self._option, self._context
+                    )
+                    # 递归调用 decode() 直接获取实例
+                    result.append(inner_decoder.decode(suppress_log=suppress_log))
+                else:
+                    # 回退逻辑：返回 dict，后续由 Pydantic 转换?
+                    # 或者我们在这里手动 model_validate?
+                    # 为了保持列表一致性 (List[JceStruct])，我们应该尝试实例化
+                    val_dict = self._read_struct_fallback(type_id, item_type)
+                    result.append(item_type.model_validate(val_dict))
+            return result
+        finally:
+            self._recursion_limit += 1
 
     def _apply_deserializer(
         self,
@@ -1368,31 +1186,6 @@ class SchemaDecoder(GenericDecoder):
                     ) from e
                 raise
         return value
-
-    def _read_list_of_structs(
-        self, item_type: Any, suppress_log: bool = False
-    ) -> list[dict[str, Any]]:
-        """读取结构体列表."""
-        self._check_recursion()
-        self._recursion_limit -= 1
-        try:
-            length = self._read_integer_generic()
-            result: list[dict[str, Any]] = []
-            for _ in range(length):
-                _tag, type_id = self._read_head()
-                if type_id == JCE_STRUCT_BEGIN:
-                    inner_decoder = SchemaDecoder(
-                        self._reader, item_type, self._option, self._context
-                    )
-                    result.append(
-                        inner_decoder.decode_to_dict(suppress_log=suppress_log)
-                    )
-                else:
-                    result.append(self._read_struct_fallback(type_id, item_type))
-            return result
-
-        finally:
-            self._recursion_limit += 1
 
     def _read_struct_fallback(self, type_id: int, item_type: Any) -> dict[str, Any]:
         """列表中的结构体读取失败时的回退处理 (减少嵌套)."""
