@@ -35,6 +35,11 @@ class JceTypeAdapter(Generic[T]):
     """
 
     def __init__(self, type_: type[T] | Any):
+        """初始化 JCE 类型适配器.
+
+        Args:
+            type_: 目标类型 (如 JceStruct 子类, list[int], int 等).
+        """
         self._type = type_
         self._pydantic_adapter = TypeAdapter(type_)
 

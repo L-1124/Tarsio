@@ -96,6 +96,11 @@ class DataWriter:
     _pack_d: Callable[[float], bytes]
 
     def __init__(self, option: int = 0):
+        """初始化 DataWriter.
+
+        Args:
+            option: JCE 选项 (如 JceOption.LITTLE_ENDIAN).
+        """
         self._buffer = bytearray()
         # 根据字节序选择对应的打包器
         if option & JceOption.LITTLE_ENDIAN:
@@ -215,13 +220,29 @@ class JceEncoder:
     _config: JceConfig
 
     def __init__(self, config: JceConfig):
+        """初始化 JceEncoder.
+
+        Args:
+            config: 编码配置对象.
+        """
         self._config = config
         self._writer = DataWriter(self._config.option)
         # 跟踪正在编码的对象以检测循环引用
         self._encoding_stack: set[int] = set()
 
     def encode(self, obj: Any, target_type: Any = None) -> bytes:
-        """编码入口."""
+        """编码入口.
+
+        Args:
+            obj: 要编码的对象.
+            target_type: 目标类型信息 (可选).
+
+        Returns:
+            bytes: 编码后的二进制数据.
+
+        Raises:
+            JceEncodeError: 编码失败时抛出.
+        """
         try:
             from .struct import JceDict
 

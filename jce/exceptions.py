@@ -36,10 +36,17 @@ class JceDecodeError(JceError):
         msg: str,
         loc: list[str | int] | None = None,
     ) -> None:
+        """初始化解码错误.
+
+        Args:
+            msg: 错误描述信息.
+            loc: 错误发生的位置路径 (Tag ID 或 索引).
+        """
         super().__init__(msg)
         self.loc = loc or []
 
     def __str__(self) -> str:
+        """返回格式化的错误信息 (包含路径)."""
         base_msg = super().__str__()
         if self.loc:
             # 格式化为 dotted path

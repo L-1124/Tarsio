@@ -285,12 +285,26 @@ class JceModelField:
     """
 
     def __init__(self, jce_id: int, jce_type: type[JceType] | Any):
+        """初始化 JCE 模型字段元数据.
+
+        Args:
+            jce_id: JCE Tag ID.
+            jce_type: JCE 类型类.
+        """
         self.jce_id = jce_id
         self.jce_type = jce_type
 
     @classmethod
     def from_field_info(cls, field_info: FieldInfo, annotation: Any) -> Self:
-        """从 FieldInfo 创建 JceModelField."""
+        """从 FieldInfo 创建 JceModelField.
+
+        Args:
+            field_info: Pydantic 字段信息.
+            annotation: 字段类型注解.
+
+        Returns:
+            JceModelField: 创建的 JCE 字段元数据对象.
+        """
         extra = field_info.json_schema_extra or {}
         if callable(extra):
             extra = {}
@@ -312,14 +326,14 @@ class JceModelField:
 
             # 如果推断出的是 JceStruct, jce_type_cls 会是 None, inferred_struct 会是 Struct 类
             if jce_type_cls is None and inferred_struct is not None:
-                # 对于 JceStruct,我们不使用 JceType,直接返回
-                # 但我们需要一个占位符,使用 BYTES
+                # 对于 JceStruct, 我们不使用 JceType, 直接返回
+                # 但我们需要一个占位符, 使用 BYTES
                 from . import types
 
                 jce_type_cls = types.BYTES
             elif jce_type_cls is None:
                 if annotation is Any:
-                    # 如果是 Any,允许不指定 jce_type,编码时将使用运行时推断
+                    # 如果是 Any, 允许不指定 jce_type, 编码时将使用运行时推断
                     return cls(jce_id_int, None)
                 if isinstance(annotation, TypeVar):
                     from . import types

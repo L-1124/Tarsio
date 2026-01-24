@@ -42,25 +42,25 @@ PRIMITIVE_CASES = [
     # Zero Tag (Tag 0, Type 12) -> 0C
     (0, "0C", "Zero Tag"),
     # INT1 (Tag 0, Type 0) -> 00 + 01
-    (1, "0001", "INT1 positive"),
-    (-1, "00FF", "INT1 negative"),
+    (1, "0001", "INT1 正数"),
+    (-1, "00FF", "INT1 负数"),
     # INT2 (Tag 0, Type 1) -> 01 + 0100 (256 Big Endian)
-    (256, "010100", "INT2 Big Endian"),
+    (256, "010100", "INT2 大端序"),
     # INT4 (Tag 0, Type 2) -> 02 + 00010000 (65536)
     (65536, "0200010000", "INT4"),
-    # Float (Default to DOUBLE)
+    # Float (默认转为 DOUBLE)
     # Python float -> JCE DOUBLE (Tag 0, Type 5)
     # 1.5 -> 0x3FF8000000000000 (IEEE 754 Double)
-    # Result: 05 + 3FF8000000000000
-    (1.5, "053FF8000000000000", "Float (as Double)"),
-    # String1 (Tag 0, Type 6) -> 06 + Len(01) + 'a'
-    ("a", "060161", "String1 ascii"),
-    ("", "0600", "String1 empty"),
-    ("你", "0603E4BDA0", "String1 utf-8"),
+    # 结果: 05 + 3FF8000000000000
+    (1.5, "053FF8000000000000", "Float (转为 Double)"),
+    # String1 (Tag 0, Type 6) -> 06 + 长度(01) + 'a'
+    ("a", "060161", "String1 ASCII"),
+    ("", "0600", "String1 空"),
+    ("你", "0603E4BDA0", "String1 UTF-8"),
     # SimpleList (Bytes)
     # Tag 0, Type 13 (SimpleList) -> 0D
-    # Head(Type 0, Tag 0) -> 00
-    # Length(2) as INT1(Tag 0) -> 00 02  <-- 修正点: 长度也是 Integer，带头部 00
+    # 头(Type 0, Tag 0) -> 00
+    # 长度(2) 转为 INT1(Tag 0) -> 00 02  <-- 修正点: 长度也是 Integer，带头部 00
     # Data -> CA FE
     (b"\xca\xfe", "0D000002CAFE", "SimpleList (Bytes)"),
 ]
@@ -69,24 +69,24 @@ STRUCT_CASES = [
     # User(uid=100, name="test")
     # Tag 0: 00 64
     # Tag 1: 16 04 74657374
-    (User(uid=100, name="test"), "0064160474657374", "Simple Struct"),
+    (User(uid=100, name="test"), "0064160474657374", "简单结构体"),
     # ComplexStruct(flag=True, nums=[1, 2])
     # Tag 0 (flag): 00 01
     # Tag 1 (nums): LIST(Type 9) -> 19
-    #   Length 2 (as INT1 Tag 0) -> 00 02  <-- 修正点: 长度头部
-    #   Item 0: 00 01
-    #   Item 1: 00 02
+    #   长度 2 (转为 INT1 Tag 0) -> 00 02  <-- 修正点: 长度头部
+    #   项 0: 00 01
+    #   项 1: 00 02
     (
         ComplexStruct(flag=True, nums=[1, 2]),
         "000119000200010002",
-        "Complex Struct with List",
+        "包含列表的复杂结构体",
     ),
 ]
 
 OPTION_CASES = [
-    # Little Endian
+    # 小端序 (Little Endian)
     # 256 -> 00 01 (Tag 0, Type 1 INT2) -> 01 0001
-    (256, "010001", JceOption.LITTLE_ENDIAN, "Option Little Endian"),
+    (256, "010001", JceOption.LITTLE_ENDIAN, "小端序选项"),
 ]
 
 # --- 测试函数 ---
@@ -133,11 +133,11 @@ def test_protocol_nested_map():
     """Map 的序列化结构 (Key-Value Pairs) 应符合协议标准."""
     # 输入: {10: [1]}
     # Map (Tag 0): Type 8 -> 08
-    # Length 1 (as INT1 Tag 0) -> 00 01
-    # Key (Tag 0): INT1(10) -> 00 0A
-    # Val (Tag 1): LIST(Type 9) -> 19
-    #   List Len 1 (as INT1 Tag 0) -> 00 01
-    #   Item (Tag 0): INT1(1) -> 00 01
+    # 长度 1 (转为 INT1 Tag 0) -> 00 01
+    # 键 (Tag 0): INT1(10) -> 00 0A
+    # 值 (Tag 1): LIST(Type 9) -> 19
+    #   列表长度 1 (转为 INT1 Tag 0) -> 00 01
+    #   项 (Tag 0): INT1(1) -> 00 01
 
     container = MapContainer(data={10: [1]})
 

@@ -217,16 +217,16 @@ def loads(data: bytes, jce_struct: type[T], bytes_mode: str = "auto") -> T:
 - **Logger**: 使用 `jce.log.logger`。
 - **模式**: 如果有助于调试，在抛出异常前记录错误/警告。
 
-## 5. 测试约定
+## 4. 测试约定
 
-### 5.1 测试风格
+### 4.1 测试风格
 
 - **框架**: 强制使用 `pytest` (v9.0.2+)。
 - **模式**: 采用**函数式测试** (`def test_xxx()`)，禁止使用类式测试 (`class TestXxx`) 以保持代码简洁。
 - **位置**: 所有测试文件位于根目录的 `tests/` 文件夹下，采用**扁平结构**（不创建子目录）。
 - **原子性**: 测试函数必须短小且聚焦。一个测试函数只验证一个行为，严禁编写“万能测试函数”。
 
-### 6.2 命名约定
+### 4.2 命名约定
 
 - **测试文件**: `test_<被测模块>.py`
   - 例: `struct.py`  `test_struct.py`
@@ -234,7 +234,7 @@ def loads(data: bytes, jce_struct: type[T], bytes_mode: str = "auto") -> T:
   - 例: `test_loads_with_invalid_data_raises_decode_error`
 - **Fixtures**: 遵循 `snake_case`，名称应反映其提供的对象或状态。
 
-### 6.3 文档字符串与注释
+### 4.3 文档字符串与注释
 
 - **测试函数**:
   - 使用**单行中文**。
@@ -246,7 +246,7 @@ def loads(data: bytes, jce_struct: type[T], bytes_mode: str = "auto") -> T:
   - 测试函数统一标注返回值为 `-> None`。
   - Fixtures 必须标注返回值类型。
 
-### 6.4 标准结构示例
+### 4.4 标准结构示例
 
 ```python
 """测试 JCE 编解码器的核心功能."""
@@ -302,7 +302,7 @@ def test_decode_with_truncated_data_raises_error() -> None:
 
 ```
 
-### 6.5 进阶最佳实践
+### 4.5 进阶最佳实践
 
 #### 1. 参数化测试 (Parametrize)
 
@@ -342,7 +342,7 @@ def test_int_encoding_variants(val: int, expected: bytes) -> None:
 - 使用 `assert result == expected`、`assert "key" in dict` 等明确的比较。
 - 涉及浮点数对比时，使用 `pytest.approx()`。
 
-### 6.6 核心协议测试 (Fundamental)
+### 4.6 核心协议测试 (Fundamental)
 
 `test_protocol.py` 是库的**根本性测试**，必须保证 100% 通过。它定义了 JCE 协议实现的基准，任何破坏此文件测试用例的修改均被视为破坏性变更。
 
@@ -351,11 +351,11 @@ def test_int_encoding_variants(val: int, expected: bytes) -> None:
 - 编码测试：断言生成的 bytes 转为 hex 字符串后与预期值完全匹配。
 - 解码测试：断言从预期 hex 字符串还原的对象与原始对象等值。
 
-## 7. 文档生成 (MkDocs)
+## 5. 文档生成 (MkDocs)
 
 项目使用 **MkDocs** (Material Theme) 生成静态文档网站。
 
-### 7.1 结构
+### 5.1 结构
 
 文档源文件位于 `docs/` 目录：
 
@@ -368,7 +368,7 @@ def test_int_encoding_variants(val: int, expected: bytes) -> None:
 - **`docs/index.md`**: 项目主页和快速开始。
 - **`mkdocs.yml`**: MkDocs 配置文件。
 
-### 7.2 命令
+### 5.2 命令
 
 - **安装依赖**:
 
@@ -392,7 +392,7 @@ def test_int_encoding_variants(val: int, expected: bytes) -> None:
   uv run mkdocs build
   ```
 
-### 7.3 文档编写规范 (Documentation Standards)
+### 5.3 文档编写规范 (Documentation Standards)
 
 本节定义了如何编写高质量的自动化文档，确保“代码即文档”的理念得以落地。
 
@@ -400,7 +400,7 @@ def test_int_encoding_variants(val: int, expected: bytes) -> None:
 **扩展语法**: `PyMdown Extensions`，需在 `mkdocs.yml` 中启用。
 **扩展**: 位于 `mkdocs.yml` 中的 `plugins` 和 `markdown_extensions` 配置。
 
-#### 7.3.1 API 参考文档 (API Reference)
+#### 5.3.1 API 参考文档 (API Reference)
 
 API 文档应通过 `mkdocstrings` 自动从源码中提取，保持同步。
 
@@ -422,7 +422,7 @@ API 文档应通过 `mkdocstrings` 自动从源码中提取，保持同步。
 
 ```
 
-#### 7.3.2 概念与指南文档 (Concept & Guides)
+#### 5.3.2 概念与指南文档 (Concept & Guides)
 
 位于 `docs/usage/`，侧重于高层逻辑和最佳实践。
 
@@ -443,7 +443,7 @@ from jce import JceStruct, JceField
 - `!!! warning`: 技术陷阱或不建议的操作（如 Union 类型限制）。
 - `??? info`: 展开式信息，用于存放协议底层的 Hex 细节。
 
-#### 7.3.3 交叉引用与链接 (Cross-referencing)
+#### 5.3.3 交叉引用与链接 (Cross-referencing)
 
 - **API 相互引用**: 在文档中使用反引号包裹标识符，`mkdocstrings` 通常会自动建立链接。例如：`参考 [JceStruct][jce.struct.JceStruct] 以获取更多信息`。
 - **外部链接**: 引用 Pydantic 或 Python 标准库文档时，使用标准 Markdown 链接。
@@ -451,13 +451,13 @@ from jce import JceStruct, JceField
 
 ---
 
-### 7.4 文档范例与覆盖准则
+### 5.4 文档范例与覆盖准则
 
-#### 7.4.1 文档语言要求
+#### 5.4.1 文档语言要求
 
 - **双语处理**: 虽然主要使用中文描述，但关键的技术术语（如 `Schema-less`, `Payload`, `Tag ID`）应保留英文，或在括号中标注。
 
-#### 7.4.2 必须文档化的对象 (Public API)
+#### 5.4.2 必须文档化的对象 (Public API)
 
 凡是设计用于外部调用的“公共接口”，都必须有完整的文档字符串（docstrings）。
 
@@ -466,7 +466,7 @@ from jce import JceStruct, JceField
 - 公共函数与方法 (Public Functions & Methods)：模块层级的全局函数。类中的公共方法（不以_ 开头）。
 - 判定标准： 只要这个函数被定义在 **all** 列表中，或者被预期在模块外调用，就必须写文档。
 
-#### 7.4.3 建议文档化的对象 (Internal logic)
+#### 5.4.3 建议文档化的对象 (Internal logic)
 
 虽然这些对象不直接对最终用户开放，但为了团队协作和长期维护，应当编写文档:
 
@@ -474,7 +474,7 @@ from jce import JceStruct, JceField
 - 抽象基类与接口 (Abstract Base Classes)：即便这些类不直接实例化，也需要说明子类必须实现哪些方法。
 - 模块级变量 (Constants/Globals)：重要的配置常量或全局状态，应说明其含义和取值范围。
 
-## 8. Git 与工作流
+## 6. Git 与工作流
 
 - **Commit**: 使用 `Conventional Commits` 规范 Commit Message。
 - **PR**: Commit 前确保通过测试并通过代码检查

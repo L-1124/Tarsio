@@ -275,33 +275,33 @@ def test_jce_field_full_parameters() -> None:
     import math
 
     class ComplexUser(JceStruct):
-        # 1. Alias & Exclude
+        # 1. 别名与排除
         name: str = JceField(jce_id=0, alias="username", exclude=True)
 
-        # 2. String constraints
+        # 2. 字符串约束
         code: str = JceField(jce_id=1, min_length=3, max_length=5, pattern=r"^[A-Z]+$")
 
-        # 3. Number constraints
+        # 3. 数值约束
         score: float = JceField(jce_id=2, ge=0, le=100, multiple_of=0.5)
 
-        # 4. Special constraints
+        # 4. 特殊约束
         ratio: float = JceField(jce_id=3, allow_inf_nan=False)
 
-        # 5. Frozen field
+        # 5. 冻结字段
         fixed: int = JceField(jce_id=4, default=10, frozen=True)
 
-    # Test 1: Alias
+    # 测试 1: Alias (别名)
     # 使用 alias 初始化
     u = ComplexUser(username="Admin", code="ABC", score=50.0, ratio=1.0)
     assert u.name == "Admin"
 
-    # Test 2: Exclude
+    # 测试 2: Exclude (排除)
     # model_dump 应该排除该字段
     dump_dict = u.model_dump()
     assert "name" not in dump_dict
     assert "code" in dump_dict
 
-    # Test 3: String constraints
+    # 测试 3: String constraints (字符串约束)
     with pytest.raises(ValidationError, match="should have at least 3 characters"):
         ComplexUser(username="A", code="AB", score=50.0, ratio=1.0)
 
@@ -311,7 +311,7 @@ def test_jce_field_full_parameters() -> None:
     with pytest.raises(ValidationError, match="should match pattern"):
         ComplexUser(username="A", code="abc", score=50.0, ratio=1.0)
 
-    # Test 4: Number constraints
+    # 测试 4: Number constraints (数值约束)
     with pytest.raises(ValidationError, match="greater than or equal to 0"):
         # -0.5 is a multiple of 0.5, so only ge=0 fails
         ComplexUser(username="A", code="ABC", score=-0.5, ratio=1.0)
@@ -324,11 +324,11 @@ def test_jce_field_full_parameters() -> None:
         # 50.1 is >=0 and <=100, so only multiple_of fails
         ComplexUser(username="A", code="ABC", score=50.1, ratio=1.0)
 
-    # Test 5: allow_inf_nan
+    # 测试 5: allow_inf_nan (允许 Inf/NaN)
     with pytest.raises(ValidationError, match="finite number"):
         ComplexUser(username="A", code="ABC", score=50.0, ratio=math.nan)
 
-    # Test 6: Frozen
+    # 测试 6: Frozen (冻结)
     # Frozen 字段在赋值时应该报错 (Pydantic v2 行为可能需要 ConfigDict(validate_assignment=True) 或者只在 model 层面 frozen)
     # Field(frozen=True) 通常意味着该字段不可修改
     with pytest.raises(ValidationError, match="frozen"):

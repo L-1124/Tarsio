@@ -9,7 +9,6 @@ from collections.abc import Generator
 from typing import Any, cast
 
 from .api import BytesMode, convert_bytes_recursive
-
 from .config import JceConfig
 from .decoder import DataReader, GenericDecoder, SchemaDecoder
 from .encoder import JceEncoder
@@ -29,6 +28,13 @@ class JceStreamWriter:
         default: Any = None,
         context: dict[str, Any] | None = None,
     ):
+        """初始化流式写入器.
+
+        Args:
+            option: JCE 选项 (如字节序).
+            default: 自定义序列化函数 (用于处理未知类型).
+            context: 序列化上下文.
+        """
         self._config = JceConfig.from_params(
             option=option,
             default=default,
@@ -77,6 +83,15 @@ class JceStreamReader:
         context: dict[str, Any] | None = None,
         bytes_mode: BytesMode = "auto",
     ):
+        """初始化流式读取器.
+
+        Args:
+            target: 目标类型 (JceStruct 子类或 dict).
+            option: JCE 选项.
+            max_buffer_size: 最大缓冲区大小 (防止内存耗尽).
+            context: 反序列化上下文.
+            bytes_mode: 字节处理模式 ("auto", "string", "raw").
+        """
         self._target = target
         self._option = option
         self._buffer = bytearray()
@@ -132,6 +147,16 @@ class LengthPrefixedWriter(JceStreamWriter):
         inclusive_length: bool = True,  # 长度包含头部本身
         little_endian_length: bool = False,  # 长度字段字节序
     ):
+        """初始化带长度前缀的写入器.
+
+        Args:
+            option: JCE 选项.
+            default: 默认序列化函数.
+            context: 序列化上下文.
+            length_type: 长度字段字节数 (1, 2, 4).
+            inclusive_length: 长度是否包含头部本身.
+            little_endian_length: 长度字段是否使用小端序.
+        """
         super().__init__(option, default, context)
         if length_type not in {1, 2, 4}:
             raise ValueError("length_type must be 1, 2, or 4")
@@ -196,6 +221,18 @@ class LengthPrefixedReader(JceStreamReader):
         little_endian_length: bool = False,
         bytes_mode: BytesMode = "auto",
     ):
+        """初始化带长度前缀的读取器.
+
+        Args:
+            target: 目标类型.
+            option: JCE 选项.
+            max_buffer_size: 最大缓冲区大小.
+            context: 上下文.
+            length_type: 长度字段字节数.
+            inclusive_length: 长度是否包含头部.
+            little_endian_length: 长度字段是否小端序.
+            bytes_mode: 字节处理模式.
+        """
         super().__init__(target, option, max_buffer_size, context, bytes_mode)
         if length_type not in {1, 2, 4}:
             raise ValueError("length_type must be 1, 2, or 4")
