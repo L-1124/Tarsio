@@ -16,6 +16,7 @@ dev = ["maturin"]
 [tool.maturin]
 module-name = "jce.jce_core"
 features = ["pyo3/extension-module"]
+python-source = "python"
 bindings = 'pyo3'
 editable-profile = 'dev'
 

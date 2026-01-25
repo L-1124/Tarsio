@@ -371,6 +371,9 @@ cli = [
 ]
 
 [package.dev-dependencies]
+dev = [
+    { name = "maturin" },
+]
 docs = [
     { name = "griffe-inherited-docstrings" },
     { name = "griffe-pydantic" },
@@ -395,6 +398,7 @@ requires-dist = [
 provides-extras = ["cli"]
 
 [package.metadata.requires-dev]
+dev = [{ name = "maturin", specifier = ">=1.11.5" }]
 docs = [
     { name = "griffe-inherited-docstrings", specifier = ">=1.1.2" },
     { name = "griffe-pydantic", specifier = ">=1.2.0" },
