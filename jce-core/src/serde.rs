@@ -19,11 +19,11 @@ const OPT_EXCLUDE_UNSET: i32 = 64;
 #[pyo3(signature = (obj, schema, options=0, context=None))]
 pub fn dumps(
     py: Python<'_>,
-    obj: PyObject,
+    obj: Py<PyAny>,
     schema: &Bound<'_, PyList>,
     options: i32,
-    context: Option<PyObject>,
-) -> PyResult<PyObject> {
+    context: Option<Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
     let mut writer = JceWriter::new();
     if options & 1 != 0 {
         writer.set_little_endian(true);
@@ -50,10 +50,10 @@ pub fn dumps(
 #[pyo3(signature = (obj, options=0, context=None))]
 pub fn dumps_generic(
     py: Python<'_>,
-    obj: PyObject,
+    obj: Py<PyAny>,
     options: i32,
-    context: Option<PyObject>,
-) -> PyResult<PyObject> {
+    context: Option<Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
     let mut writer = JceWriter::new();
     if options & 1 != 0 {
         writer.set_little_endian(true);
@@ -66,7 +66,7 @@ pub fn dumps_generic(
 
     let type_name = obj_bound.get_type().name()?.to_string();
     if type_name == "JceDict" {
-        if let Ok(dict) = obj_bound.downcast::<PyDict>() {
+        if let Ok(dict) = obj_bound.cast::<PyDict>() {
             encode_generic_struct(py, &mut writer, dict, options, &context_bound, 0)?;
         } else {
             return Err(PyTypeError::new_err("JceDict must be a dict-like object"));
@@ -87,8 +87,8 @@ pub fn loads(
     data: &[u8],
     schema: &Bound<'_, PyList>,
     options: i32,
-    context: Option<PyObject>,
-) -> PyResult<PyObject> {
+    context: Option<Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
     let mut reader = JceReader::new(data, options);
     let context_bound = match context {
         Some(ctx) => ctx.into_bound(py),
@@ -104,8 +104,8 @@ pub fn loads_generic(
     py: Python<'_>,
     data: &[u8],
     options: i32,
-    context: Option<PyObject>,
-) -> PyResult<PyObject> {
+    context: Option<Py<PyAny>>,
+) -> PyResult<Py<PyAny>> {
     let mut reader = JceReader::new(data, options);
     let context_bound = match context {
         Some(ctx) => ctx.into_bound(py),
@@ -130,7 +130,7 @@ fn encode_struct(
 
     for item in schema.iter() {
         let tuple = item
-            .downcast::<PyTuple>()
+            .cast::<PyTuple>()
             .map_err(|_| PyTypeError::new_err("Schema item must be a tuple"))?;
 
         // schema: (name, tag, type, default, has_serializer, has_deserializer)
@@ -225,24 +225,24 @@ fn encode_generic_field(
         return Ok(());
     }
 
-    if let Ok(val) = value.downcast::<PyInt>() {
+    if let Ok(val) = value.cast::<PyInt>() {
         let v: i64 = val.extract()?;
         writer.write_int(tag, v);
-    } else if let Ok(val) = value.downcast::<PyFloat>() {
+    } else if let Ok(val) = value.cast::<PyFloat>() {
         let v: f64 = val.extract()?;
         writer.write_double(tag, v);
-    } else if let Ok(val) = value.downcast::<PyString>() {
+    } else if let Ok(val) = value.cast::<PyString>() {
         let v: String = val.extract()?;
         writer.write_string(tag, &v);
-    } else if let Ok(val) = value.downcast::<PyBytes>() {
+    } else if let Ok(val) = value.cast::<PyBytes>() {
         writer.write_bytes(tag, val.as_bytes());
-    } else if let Ok(val) = value.downcast::<PyList>() {
+    } else if let Ok(val) = value.cast::<PyList>() {
         writer.write_tag(tag, JceType::List);
         writer.write_int(0, val.len() as i64);
         for item in val.iter() {
             encode_generic_field(py, writer, 0, &item, options, context, depth + 1)?;
         }
-    } else if let Ok(val) = value.downcast::<PyDict>() {
+    } else if let Ok(val) = value.cast::<PyDict>() {
         let type_name = value.get_type().name()?.to_string();
         if type_name == "JceDict" {
             writer.write_tag(tag, JceType::StructBegin);
@@ -257,12 +257,12 @@ fn encode_generic_field(
             }
         }
     } else if let Ok(schema_method) = value.getattr("__get_jce_core_schema__") {
-        let schema = schema_method.call0()?.downcast_into::<PyList>()?;
+        let schema = schema_method.call0()?.cast_into::<PyList>()?;
         writer.write_tag(tag, JceType::StructBegin);
         encode_struct(py, writer, value, &schema, options, context, depth + 1)?;
         writer.write_tag(0, JceType::StructEnd);
     } else if let Ok(schema) = value.getattr("__jce_schema__") {
-        if let Ok(schema_list) = schema.downcast::<PyList>() {
+        if let Ok(schema_list) = schema.cast::<PyList>() {
             writer.write_tag(tag, JceType::StructBegin);
             encode_struct(py, writer, value, schema_list, options, context, depth + 1)?;
             writer.write_tag(0, JceType::StructEnd);
@@ -313,7 +313,7 @@ fn encode_field(
             writer.write_string(tag, &val);
         }
         JceType::SimpleList => {
-            if let Ok(val) = value.downcast::<PyBytes>() {
+            if let Ok(val) = value.cast::<PyBytes>() {
                 writer.write_bytes(tag, val.as_bytes());
             } else {
                 // Binary Blob 模式: 自动序列化非字节对象
@@ -323,12 +323,12 @@ fn encode_field(
                     options,
                     Some(context.clone().into()),
                 )?;
-                let bytes = serialized.bind(py).downcast::<PyBytes>()?;
+                let bytes = serialized.bind(py).cast::<PyBytes>()?;
                 writer.write_bytes(tag, bytes.as_bytes());
             }
         }
         JceType::List => {
-            let val = value.downcast::<PyList>()?;
+            let val = value.cast::<PyList>()?;
             writer.write_tag(tag, JceType::List);
             writer.write_int(0, val.len() as i64);
             for item in val.iter() {
@@ -336,7 +336,7 @@ fn encode_field(
             }
         }
         JceType::Map => {
-            let val = value.downcast::<PyDict>()?;
+            let val = value.cast::<PyDict>()?;
             writer.write_tag(tag, JceType::Map);
             writer.write_int(0, val.len() as i64);
             for (k, v) in val.iter() {
@@ -348,13 +348,13 @@ fn encode_field(
             writer.write_tag(tag, JceType::StructBegin);
             let type_name = value.get_type().name()?.to_string();
             if type_name == "JceDict" {
-                if let Ok(dict) = value.downcast::<PyDict>() {
+                if let Ok(dict) = value.cast::<PyDict>() {
                     encode_generic_struct(py, writer, dict, options, context, depth + 1)?;
                 } else {
                     return Err(PyTypeError::new_err("JceDict must be a dict-like object"));
                 }
             } else {
-                let nested_schema = value.getattr("__jce_schema__")?.downcast_into::<PyList>()?;
+                let nested_schema = value.getattr("__jce_schema__")?.cast_into::<PyList>()?;
                 encode_struct(py, writer, value, &nested_schema, options, context, depth)?;
             }
             writer.write_tag(0, JceType::StructEnd);
@@ -376,7 +376,7 @@ fn decode_struct(
     options: i32,
     context: &Bound<'_, PyAny>,
     depth: usize,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     if depth > MAX_DEPTH {
         return Err(PyValueError::new_err("Max recursion depth exceeded"));
     }
@@ -387,7 +387,7 @@ fn decode_struct(
     let mut tag_map = std::collections::HashMap::new();
     let schema_items: Vec<Bound<'_, PyTuple>> = schema
         .iter()
-        .map(|item| item.downcast_into::<PyTuple>())
+        .map(|item| item.cast_into::<PyTuple>())
         .collect::<Result<Vec<_>, _>>()?;
 
     for tuple in &schema_items {
@@ -453,7 +453,7 @@ fn decode_generic_struct(
     options: i32,
     context: &Bound<'_, PyAny>,
     depth: usize,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     if depth > MAX_DEPTH {
         return Err(PyValueError::new_err("Max recursion depth exceeded"));
     }
@@ -484,7 +484,7 @@ fn decode_generic_field(
     options: i32,
     context: &Bound<'_, PyAny>,
     depth: usize,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     match jce_type {
         JceType::Int1 | JceType::Int2 | JceType::Int4 | JceType::Int8 | JceType::ZeroTag => {
             let val = reader.read_int(jce_type).map_err(map_decode_error)?;
@@ -557,7 +557,7 @@ fn decode_field(
     options: i32,
     context: &Bound<'_, PyAny>,
     depth: usize,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     match actual_type {
         JceType::Int1 | JceType::Int2 | JceType::Int4 | JceType::Int8 | JceType::ZeroTag => {
             let val = reader.read_int(actual_type).map_err(map_decode_error)?;
@@ -619,7 +619,7 @@ fn decode_field(
 }
 
 fn map_decode_error(err: JceDecodeError) -> PyErr {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         if let Ok(module) = py.import("jce.exceptions") {
             if let Ok(cls) = module.getattr("JceDecodeError") {
                 if let Ok(err_obj) = cls.call1((err.to_string(),)) {
