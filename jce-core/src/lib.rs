@@ -1,3 +1,6 @@
+pub mod consts;
+pub mod error;
+
 use pyo3::prelude::*;
 
 #[pyfunction]
