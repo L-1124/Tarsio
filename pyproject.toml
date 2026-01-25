@@ -33,6 +33,7 @@ classifiers = [
 dependencies = [
   "pydantic>=2.0",
   "typing-extensions>=4.15.0",
+  "jce-core",
 ]
 dynamic = ["version"]
 
@@ -65,15 +66,8 @@ testing = [
 ]
 
 [build-system]
-requires = ["maturin>=1.0"]
-build-backend = "maturin"
-
-[tool.maturin]
-python-source = "."
-module-name = "jce.jce_core"
-manifest-path = "jce-core/Cargo.toml"
-features = ["pyo3/extension-module"]
-
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.hatch.version]
 path = "jce/__init__.py"
@@ -88,6 +82,17 @@ include = [
   "README.md",
   "LICENSE",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv.workspace]
+members = [
+    "jce-core",
+]
+
+[tool.uv.sources]
+jce-core = { workspace = true }
 
 [tool.pyright]
 venvPath = "."
@@ -164,11 +169,4 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 docstring-code-format = true
 
-[tool.uv.workspace]
-members = [
-    "jce-core",
-]
-
-[tool.uv.sources]
-jce-core = { workspace = true }
 
