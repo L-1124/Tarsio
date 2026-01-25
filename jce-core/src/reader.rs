@@ -239,6 +239,18 @@ impl<'a> JceReader<'a> {
         }
     }
 
+    /// 读取字节数组.
+    pub fn read_bytes(&mut self, len: usize) -> Result<Vec<u8>, JceDecodeError> {
+        let pos = self.position();
+        let mut buf = vec![0u8; len];
+        std::io::Read::read_exact(&mut self.cursor, &mut buf).map_err(|_| {
+            JceDecodeError::BufferOverflow {
+                path: format!("offset {}", pos),
+            }
+        })?;
+        Ok(buf)
+    }
+
     fn skip(&mut self, len: u64) -> Result<(), JceDecodeError> {
         let pos = self.position();
         let new_pos = pos + len;
