@@ -6,9 +6,9 @@
 
 import struct
 from collections.abc import Generator
-from typing import Any
+from typing import Any, cast
 
-from .api import dumps, loads
+from .api import BytesMode, dumps, loads
 from .config import JceConfig
 from .options import JceOption
 
@@ -282,7 +282,7 @@ class LengthPrefixedReader(JceStreamReader):
                 body_data,
                 target=self._target,
                 option=self._option,
-                bytes_mode=self._bytes_mode,
+                bytes_mode=cast(BytesMode, self._bytes_mode),
                 context=self._context,
             )
 

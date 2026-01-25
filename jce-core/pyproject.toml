@@ -1,16 +1,28 @@
 [project]
 name = "jce-core"
-version = "0.1.0"
 description = "Core Rust extension for JCE Struct"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
+dynamic = ['version']
 
 [build-system]
-requires = ["maturin>=1.0"]
-build-backend = "maturin"
+requires = ['maturin>=1.10,<2']
+build-backend = 'maturin'
+
+[dependency-groups]
+dev = ["maturin"]
 
 [tool.maturin]
 module-name = "jce.jce_core"
 features = ["pyo3/extension-module"]
+bindings = 'pyo3'
+editable-profile = 'dev'
 
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "**/*.rs" },
+]
