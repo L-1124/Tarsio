@@ -1,0 +1,13 @@
+[package]
+name = "jce-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "jce_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23.4", features = ["extension-module"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
