@@ -5,9 +5,12 @@
 
 from .api import BytesMode, dump, dumps, load, loads
 from .config import JceConfig
-from .context import DeserializationInfo, SerializationInfo
-from .decoder import jce_field_deserializer
-from .encoder import jce_field_serializer
+from .context import (
+    DeserializationInfo,
+    SerializationInfo,
+    jce_field_deserializer,
+    jce_field_serializer,
+)
 from .exceptions import (
     JceDecodeError,
     JceEncodeError,

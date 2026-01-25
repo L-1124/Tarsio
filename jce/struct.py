@@ -505,6 +505,78 @@ class JceStruct(BaseModel, JceType, metaclass=JceStructMeta):
     __jce_fields__: ClassVar[dict[str, "JceModelField"]] = {}
     __jce_serializers__: ClassVar[dict[str, str]] = {}
     __jce_deserializers__: ClassVar[dict[str, str]] = {}
+    __jce_core_schema_cache__: ClassVar[list[tuple] | None] = None
+
+    @classmethod
+    def __get_jce_core_schema__(cls) -> list[tuple]:
+        """获取用于 jce_core (Rust) 的结构体 Schema.
+
+        Returns:
+            list[tuple]: Schema 列表, 每个元素为:
+                (field_name, tag_id, jce_type_code, default_value, has_serializer, has_deserializer)
+        """
+        if cls.__jce_core_schema_cache__ is not None:
+            return cls.__jce_core_schema_cache__
+
+        from . import types
+
+        # 类型映射表: JceType 类 -> JCE 类型码
+        type_map = {
+            types.INT: 0,  # Int1 (Rust 会自动提升)
+            types.INT8: 0,
+            types.INT16: 1,
+            types.INT32: 2,
+            types.INT64: 3,
+            types.FLOAT: 4,
+            types.DOUBLE: 5,
+            types.STRING: 6,
+            types.STRING1: 6,
+            types.STRING4: 7,
+            types.MAP: 8,
+            types.LIST: 9,
+            types.BYTES: 13,  # SimpleList
+        }
+
+        schema = []
+        for name, field_info in cls.model_fields.items():
+            if name not in cls.__jce_fields__:
+                continue
+
+            jce_info = cls.__jce_fields__[name]
+            tag = jce_info.jce_id
+            jce_type_cls = jce_info.jce_type
+
+            # 确定类型码
+            if isinstance(jce_type_cls, type) and issubclass(jce_type_cls, JceStruct):
+                type_code = 10  # StructBegin
+            else:
+                type_code = type_map.get(jce_type_cls, 0)
+
+            # 确定默认值
+            if field_info.default_factory is not None:
+                # 如果有 default_factory, 设置为 None, 避免 Rust 端错误地 OMIT_DEFAULT
+                default_val = None
+            elif field_info.default is PydanticUndefined:
+                default_val = None
+            else:
+                default_val = field_info.default
+
+            has_serializer = name in cls.__jce_serializers__
+            has_deserializer = name in cls.__jce_deserializers__
+
+            schema.append(
+                (
+                    name,
+                    tag,
+                    type_code,
+                    default_val,
+                    has_serializer,
+                    has_deserializer,
+                )
+            )
+
+        cls.__jce_core_schema_cache__ = schema
+        return schema
 
     def encode(
         self,
@@ -561,12 +633,13 @@ class JceStruct(BaseModel, JceType, metaclass=JceStructMeta):
         Returns:
             tuple[dict[Any, Any], int]: (解析出的标签字典, 消耗的字节长度)
         """
-        from .decoder import DataReader, GenericDecoder
+        from .api import loads
 
-        reader = DataReader(data)
-        decoder = GenericDecoder(reader)
-        result = decoder.decode(suppress_log=True)
-        return result, reader._pos
+        # 使用 loads 解析为 JceDict (Struct 语义)
+        # 注意: loads 返回的是解析后的对象，不直接返回消耗的长度
+        # 但为了保持兼容性，我们假设它消耗了全部数据
+        result = loads(data, target=JceDict)
+        return result, len(data)
 
     def model_dump_jce(
         self,

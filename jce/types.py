@@ -64,13 +64,13 @@ class JceType(abc.ABC):
         Returns:
             bytes: 序列化后的字节.
         """
-        from .config import JceConfig
-        from .encoder import JceEncoder
+        from .api import dumps
 
-        config = JceConfig.from_params()
-        encoder = JceEncoder(config)
-        encoder.encode_value(value, tag, target_type=cls)
-        return encoder._writer.get_bytes()
+        # 注意: api.dumps 目前不支持直接指定 tag 编码单个值
+        # 这里我们构造一个 JceDict 来实现
+        from .struct import JceDict
+
+        return dumps(JceDict({tag: value}))
 
     @classmethod
     def validate(cls, value: Any) -> Any:
@@ -188,13 +188,10 @@ class BYTE(JceType):
             head = (tag << 4) | 0  # Type 0 (BYTE)
             return bytes([head]) + value
 
-        from .config import JceConfig
-        from .encoder import JceEncoder
+        from .api import dumps
+        from .struct import JceDict
 
-        config = JceConfig.from_params()
-        encoder = JceEncoder(config)
-        encoder.encode_value(value, tag, target_type=cls)
-        return encoder._writer.get_bytes()
+        return dumps(JceDict({tag: value}))
 
 
 class BOOL(JceType):

@@ -48,3 +48,31 @@ class DeserializationInfo:
     field_name: str | None = None
     # 当前字段的JCE ID
     jce_id: int | None = None
+
+
+def jce_field_serializer(field_name: str):
+    """装饰器: 标记一个方法为特定字段的自定义序列化器.
+
+    Args:
+        field_name: 目标字段名.
+    """
+
+    def decorator(func):
+        func.__jce_serializer_target__ = field_name
+        return func
+
+    return decorator
+
+
+def jce_field_deserializer(field_name: str):
+    """装饰器: 标记一个方法为特定字段的自定义反序列化器.
+
+    Args:
+        field_name: 目标字段名.
+    """
+
+    def decorator(func):
+        func.__jce_deserializer_target__ = field_name
+        return func
+
+    return decorator

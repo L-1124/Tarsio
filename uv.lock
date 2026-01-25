@@ -350,7 +350,6 @@ source = { editable = "jce-core" }
 name = "jce-python"
 source = { editable = "." }
 dependencies = [
-    { name = "jce-core" },
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
@@ -378,7 +377,6 @@ testing = [
 [package.metadata]
 requires-dist = [
     { name = "click", marker = "extra == 'cli'", specifier = ">=8.0" },
-    { name = "jce-core", editable = "jce-core" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=14.2.0" },
     { name = "typing-extensions", specifier = ">=4.15.0" },
