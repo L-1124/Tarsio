@@ -2,7 +2,7 @@ from typing import Any
 
 def dumps(
     obj: Any,
-    schema: list[tuple[str, int, int, Any, bool, bool]],
+    schema: list[tuple[Any, ...]],
     options: int = 0,
     context: dict[str, Any] | None = None,
 ) -> bytes: ...
@@ -11,10 +11,10 @@ def dumps_generic(
 ) -> bytes: ...
 def loads(
     data: bytes,
-    schema: list[tuple[str, int, int, Any, bool, bool]],
+    schema: list[tuple[Any, ...]],
     options: int = 0,
     context: dict[str, Any] | None = None,
-) -> dict[str, Any]: ...
+) -> dict[Any, Any]: ...
 def loads_generic(
     data: bytes, options: int = 0, context: dict[str, Any] | None = None
-) -> dict[int, Any]: ...
+) -> dict[Any, Any]: ...

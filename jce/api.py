@@ -6,7 +6,7 @@
 
 from typing import IO, Any, Literal, TypeVar, cast, overload
 
-from . import jce_core
+import jce_core
 from .config import JceConfig
 from .options import JceOption
 from .struct import JceDict, JceStruct

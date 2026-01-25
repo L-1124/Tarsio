@@ -14,11 +14,9 @@ build-backend = 'maturin'
 dev = ["maturin"]
 
 [tool.maturin]
-module-name = "jce.jce_core"
+module-name = "jce_core._jce_core"
 features = ["pyo3/extension-module"]
-python-source = ".."
-include = ["jce/jce_core.pyi"]
-exclude = ["jce/*.py", "tests", "docs", "site", "uv.lock"]
+python-source = "python"
 bindings = 'pyo3'
 editable-profile = 'dev'
 
