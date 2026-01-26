@@ -6,13 +6,12 @@
 
 from typing import Any
 
-from jce_core import (
+from ._jce_core import (
     LengthPrefixedReader as _RustLengthPrefixedReader,
 )
-from jce_core import (
+from ._jce_core import (
     LengthPrefixedWriter as _RustLengthPrefixedWriter,
 )
-
 from .options import JceOption
 from .struct import JceDict, JceStruct
 

@@ -6,8 +6,7 @@
 
 from typing import IO, Any, Literal, TypeVar, cast, overload
 
-import jce_core
-
+from . import _jce_core as jce_core
 from .config import JceConfig
 from .options import JceOption
 from .struct import JceDict, JceStruct
@@ -28,7 +27,7 @@ def dumps(
 
 @overload
 def dumps(
-    obj: Any,
+    obj: JceDict | dict[int, Any],
     option: JceOption = JceOption.NONE,
     default: Any | None = None,
     context: dict[str, Any] | None = None,
@@ -37,7 +36,7 @@ def dumps(
 
 
 def dumps(
-    obj: Any,
+    obj: JceStruct | JceDict | dict[int, Any],
     option: JceOption = JceOption.NONE,
     default: Any | None = None,
     context: dict[str, Any] | None = None,
@@ -88,12 +87,7 @@ def dumps(
                 raw_options,
                 config.context if config.context is not None else {},
             )
-    elif (
-        isinstance(
-            obj, JceDict | dict | list | tuple | str | int | float | bytes | bool
-        )
-        and default is None
-    ):
+    elif isinstance(obj, dict) and default is None:
         # 使用 Rust 核心进行通用序列化
         return jce_core.dumps_generic(
             obj,
@@ -101,9 +95,7 @@ def dumps(
             config.context if config.context is not None else {},
         )
 
-    raise NotImplementedError(
-        "Legacy Python encoder has been removed. Please use JceStruct or supported types."
-    )
+    raise NotImplementedError("Please use JceStruct or supported types.")
 
 
 @overload
@@ -261,7 +253,7 @@ def loads(
         # Rust 返回的是 dict, 需要通过 Pydantic 验证
         return target.model_validate(raw_dict, context=context)
 
-    raise NotImplementedError("Legacy Python decoder has been removed.")
+    raise NotImplementedError("Please use JceStruct or supported types.")
 
 
 @overload
