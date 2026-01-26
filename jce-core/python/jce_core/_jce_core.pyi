@@ -6,17 +6,17 @@ import typing
 class LengthPrefixedReader:
     r"""
     从流缓冲区读取带长度前缀的 JCE 数据包。
-    
+
     处理 TCP 粘包和数据包分片问题。
     """
     def __new__(cls,target,option = ...,max_buffer_size = ...,length_type = ...,inclusive_length = ...,little_endian_length = ...,bytes_mode = ...): ...
     def feed(self, data:bytes) -> None:
         r"""
         将数据追加到内部缓冲区。
-        
+
         Args:
             data: 要追加的字节数据。
-        
+
         Raises:
             BufferError: 如果缓冲区超过 max_buffer_size。
         """
@@ -28,7 +28,7 @@ class LengthPrefixedReader:
     def __next__(self) -> typing.Optional[typing.Any]:
         r"""
         迭代缓冲区中的完整数据包。
-        
+
         Yields:
             从缓冲区解码的对象（JceStruct 或 dict）。
         """
@@ -38,16 +38,16 @@ class LengthPrefixedReader:
 class LengthPrefixedWriter:
     r"""
     写入带长度前缀的 JCE 数据包。
-    
+
     辅助类，用于将数据打包成带长度头的流传输格式。
     """
     def __new__(cls,length_type = ...,inclusive_length = ...,little_endian_length = ...,options = ...,context = ...): ...
     def pack(self, obj) -> None:
         r"""
         将对象打包成带长度前缀的数据包。
-        
+
         使用 JCE 编码对象并将数据包追加到缓冲区。
-        
+
         Args:
             obj: 要打包的对象（JceStruct 或 dict）。
         """
@@ -59,7 +59,7 @@ class LengthPrefixedWriter:
     def pack_bytes(self, data) -> None:
         r"""
         将原始字节作为带长度前缀的数据包写入。
-        
+
         Args:
             data: 原始字节负载。
         """
@@ -74,7 +74,7 @@ class LengthPrefixedWriter:
     def get_buffer(self) -> typing.Any:
         r"""
         获取当前缓冲区内容。
-        
+
         Returns:
             bytes: 累积的缓冲区内容。
         """
@@ -90,13 +90,13 @@ class LengthPrefixedWriter:
 def decode_safe_text(data:bytes) -> typing.Optional[str]:
     r"""
     将字节数据解码为字符串，安全处理编码问题。
-    
+
     尝试使用 UTF-8 解码。如果包含非法的 ASCII 控制字符（\t, \n, \r 除外）
     或无效的 UTF-8 序列，则返回 None。
-    
+
     Args:
         data: 要解码的字节数据。
-    
+
     Returns:
         Optional[str]: 解码后的字符串，如果无效则返回 None。
     """
@@ -105,13 +105,13 @@ def decode_safe_text(data:bytes) -> typing.Optional[str]:
 def dumps(obj,schema,options = ...,context = ...) -> typing.Any:
     r"""
     将 JceStruct 序列化为字节。
-    
+
     Args:
         obj: 要序列化的 JceStruct 实例。
         schema: 从 JceStruct 派生的 schema 列表。
         options: 序列化选项（例如位标志）。
         context: 用于序列化钩子的可选上下文字典。
-    
+
     Returns:
         bytes: 序列化后的 JCE 数据。
     """
@@ -120,12 +120,12 @@ def dumps(obj,schema,options = ...,context = ...) -> typing.Any:
 def dumps_generic(obj,options = ...,context = ...) -> typing.Any:
     r"""
     将通用对象（dict 或 JceDict）序列化为字节，无需 schema。
-    
+
     Args:
         obj: 要序列化的对象（带有整数 tag 的 dict 或 JceDict）。
         options: 序列化选项。
         context: 可选的上下文字典。
-    
+
     Returns:
         bytes: 序列化后的 JCE 数据。
     """
@@ -134,12 +134,12 @@ def dumps_generic(obj,options = ...,context = ...) -> typing.Any:
 def loads(data,schema,options = ...) -> typing.Any:
     r"""
     将字节反序列化为 JceStruct。
-    
+
     Args:
         data: 要反序列化的 JCE 字节数据。
         schema: 目标 JceStruct 的 schema 列表。
         options: 反序列化选项。
-    
+
     Returns:
         dict: 用于构造 JceStruct 的字段值字典。
     """
@@ -148,14 +148,13 @@ def loads(data,schema,options = ...) -> typing.Any:
 def loads_generic(data,options = ...,bytes_mode = ...) -> typing.Any:
     r"""
     将字节反序列化为通用字典 (JceDict)，无需 schema。
-    
+
     Args:
         data: 要反序列化的 JCE 字节数据。
         options: 反序列化选项。
         bytes_mode: 处理字节的模式 (0: Raw, 1: String, 2: Auto)。
-    
+
     Returns:
         dict: 包含反序列化数据的字典 (兼容 JceDict)。
     """
     ...
-

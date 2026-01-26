@@ -67,7 +67,7 @@ assert restored.tags == ["admin"]
 from jce.stream import LengthPrefixedWriter, LengthPrefixedReader
 
 # 1. 写入 (Writer) - 自动添加长度头
-writer = LengthPrefixedWriter(length_type=4) 
+writer = LengthPrefixedWriter(length_type=4)
 writer.pack(User(uid=1, name="A"))
 writer.pack(User(uid=2, name="B"))
 data = writer.get_buffer()

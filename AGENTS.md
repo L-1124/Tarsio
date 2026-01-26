@@ -1,12 +1,12 @@
 # JceStruct Agent 指南
 
-**Generated:** 2026-01-26  
-**Commit:** 3d3f530  
+**Generated:** 2026-01-26
+**Commit:** 3d3f530
 **Branch:** feat/rust-core
 
 本文档为在 JceStruct 仓库工作的 AI Agent 提供必要的上下文和规则.
 
-**包名**: `jce` (Python 模块)  
+**包名**: `jce` (Python 模块)
 **当前版本**: `jce/__init__.py` 中的 `__version__` 变量
 
 ## 概览
