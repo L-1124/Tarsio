@@ -23,7 +23,7 @@ name: str = JceField(jce_id=1, default="unknown", description="User Name")
 
 ## 字段装饰器
 
-你可以使用装饰器来定制特定字段的序列化/反序列化逻辑。
+你可以使用装饰器来定制特定字段的序列化逻辑。
 
 ### @jce_field_serializer
 
@@ -40,4 +40,3 @@ class Timestamp(JceStruct):
         # 假设我们需要在编码前做一些转换
         return value + 1000
 ```
-

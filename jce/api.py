@@ -214,8 +214,7 @@ def loads(
               1. 无损解码: 优先尝试 UTF-8 解码.
               2. JCE 探测: 尝试作为嵌套 JCE 结构解析.
               3. 回退: 保持为 bytes.
-        context: 反序列化上下文.
-            传递给 `JceStruct` 的验证器.
+        context: Pydantic 验证器上下文.
 
     Returns:
         T: 目标类型实例 (如果 target=JceStruct).

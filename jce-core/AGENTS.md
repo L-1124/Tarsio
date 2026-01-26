@@ -44,6 +44,9 @@ cd .. && uv sync                  # uv 会自动构建 workspace 成员
 cargo test                        # 运行 Rust 单元测试
 cargo clippy                      # Lint
 
+# Stub 生成
+cargo run --bin stub_gen          # 生成 .pyi 类型提示文件
+
 # Release 构建
 maturin build --release           # 生成 wheel
 ```

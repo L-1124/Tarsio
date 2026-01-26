@@ -4,7 +4,7 @@
 支持增量编码和解码.
 """
 
-from typing import Any, cast
+from typing import Any
 
 from jce_core import (
     LengthPrefixedReader as _RustLengthPrefixedReader,
@@ -68,8 +68,37 @@ class LengthPrefixedWriter(_RustLengthPrefixedWriter):
         little_endian_length: bool = False,  # 长度字段字节序
     ):
         """初始化带长度前缀的写入器."""
-        # Rust 核心已完成初始化
         pass
+
+    def pack(self, obj: Any) -> None:
+        """将对象打包成带长度前缀的数据包.
+
+        使用 JCE 编码对象并将数据包追加到缓冲区。
+
+        Args:
+            obj: 要打包的对象 (JceStruct 子类或 JceDict/dict).
+        """
+        super().pack(obj)
+
+    def pack_bytes(self, data: bytes) -> None:
+        """将原始字节作为带长度前缀的数据包写入.
+
+        Args:
+            data: 原始字节负载.
+        """
+        super().pack_bytes(data)
+
+    def get_buffer(self) -> bytes:
+        """获取当前缓冲区内容.
+
+        Returns:
+            bytes: 累积的缓冲区内容.
+        """
+        return super().get_buffer()
+
+    def clear(self) -> None:
+        """清空内部缓冲区."""
+        super().clear()
 
 
 class LengthPrefixedReader(_RustLengthPrefixedReader):
@@ -78,11 +107,20 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
     自动处理 TCP 粘包/拆包，从流中提取完整的数据包并反序列化。
     该类使用 Rust 核心实现以获得高性能。
 
-    Usage:
-        >>> reader = LengthPrefixedReader(target=MyStruct)
-        >>> reader.feed(received_bytes)
-        >>> for obj in reader:
-        ...     process(obj)
+    Args:
+        target: 目标类型 (JceStruct 子类, JceDict, 或 dict).
+        option: JCE 选项.
+        max_buffer_size: 内部缓冲区的最大大小 (默认 10MB).
+        context: 反序列化上下文.
+        length_type: 长度字段的字节数 (1, 2, 或 4).
+            - 1: 1字节长度 (Max 255)
+            - 2: 2字节长度 (Max 65535)
+            - 4: 4字节长度 (Max 4GB)
+        inclusive_length: 长度值是否包含头部本身的长度.
+            - True: TotalSize (Header + Body)
+            - False: BodySize
+        little_endian_length: 长度字段是否使用小端序.
+        bytes_mode: 字节数据处理模式 ('raw', 'string', 'auto').
     """
 
     _target: Any
@@ -150,10 +188,6 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
         self._option = option
         self._bytes_mode = bytes_mode
 
-    def feed_data(self, data: bytes | bytearray | memoryview) -> None:
-        """输入数据到内部缓冲区 (向后兼容)."""
-        self.feed(cast(bytes, data))
-
     def __next__(self) -> Any:
         """获取下一个解析出的对象.
 
@@ -168,3 +202,22 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
         if self._target is JceDict:
             return JceDict(obj)
         return obj
+
+    def feed(self, data: bytes) -> None:
+        """将数据追加到内部缓冲区.
+
+        Args:
+            data: 要追加的字节数据.
+
+        Raises:
+            BufferError: 如果缓冲区超过 max_buffer_size.
+        """
+        super().feed(data)
+
+    def __iter__(self) -> "LengthPrefixedReader":
+        """获取迭代器.
+
+        Returns:
+            LengthPrefixedReader: 迭代器本身.
+        """
+        return self

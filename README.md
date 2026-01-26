@@ -19,7 +19,7 @@
 - **🧩 灵活性**: 支持 Schema (JceStruct) 和无 Schema (dict/JceDict) 两种模式。
 - **🌊 流式处理**: 提供 [`LengthPrefixedWriter/Reader`](docs/usage/streams.md) 支持增量打包和长度前缀协议。
 - **📂 文件支持**: 提供 `dump`/`load` 直接读写文件类对象（IO[bytes]）。
-- **🔌 上下文**: 支持序列化/反序列化上下文传递 (`context`) 和字段钩子 (`@jce_field_serializer`).
+- **🔌 上下文**: 支持序列化上下文传递 (`context`) 和字段钩子 (`@jce_field_serializer`).
 - **🧬 泛型支持**: 完整支持 Python `Generic[T]` 类型系统。
 - **🛠️ CLI 工具**: 基于 Click 的强大命令行工具，支持文件读写、格式化输出和调试。
 - **🛡️ 安全防护**: 递归深度限制、容器大小限制，防止 DoS 攻击。

@@ -3,6 +3,7 @@
 提供了JceStruct定义、序列化(dumps)和反序列化(loads)功能.
 """
 
+from .adapter import JceTypeAdapter
 from .api import BytesMode, dump, dumps, load, loads
 from .config import JceConfig
 from .context import (
@@ -77,6 +78,7 @@ __all__ = [
     "JcePartialDataError",
     "JceStruct",
     "JceType",
+    "JceTypeAdapter",
     "JceTypeError",
     "JceValueError",
     "LengthPrefixedReader",
