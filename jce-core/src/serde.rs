@@ -151,7 +151,7 @@ pub fn loads_generic(
     decode_generic_struct(py, &mut reader, options, mode, &context_bound, 0)
 }
 
-fn encode_struct(
+pub(crate) fn encode_struct(
     py: Python<'_>,
     writer: &mut JceWriter,
     obj: &Bound<'_, PyAny>,
@@ -227,7 +227,7 @@ fn encode_struct(
     Ok(())
 }
 
-fn encode_generic_struct(
+pub(crate) fn encode_generic_struct(
     py: Python<'_>,
     writer: &mut JceWriter,
     dict: &Bound<'_, PyDict>,
@@ -248,7 +248,7 @@ fn encode_generic_struct(
     Ok(())
 }
 
-fn encode_generic_field(
+pub(crate) fn encode_generic_field(
     py: Python<'_>,
     writer: &mut JceWriter,
     tag: u8,

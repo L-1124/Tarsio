@@ -15,6 +15,7 @@ fn _jce_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(serde::loads_generic, m)?)?;
     m.add_function(wrap_pyfunction!(decode_safe_text, m)?)?;
     m.add_class::<stream::LengthPrefixedReader>()?;
+    m.add_class::<stream::LengthPrefixedWriter>()?;
     Ok(())
 }
 

@@ -9,7 +9,10 @@ from collections.abc import Generator
 from typing import Any, cast
 
 import jce_core
-from jce_core import LengthPrefixedReader as _RustLengthPrefixedReader
+from jce_core import (
+    LengthPrefixedReader as _RustLengthPrefixedReader,
+    LengthPrefixedWriter as _RustLengthPrefixedWriter,
+)
 
 from .api import BytesMode, dumps, loads
 from .config import JceConfig
@@ -124,15 +127,17 @@ class JceStreamReader:
         raise NotImplementedError("Use LengthPrefixedUnpacker for stream decoding")
 
 
-class LengthPrefixedWriter(JceStreamWriter):
+class LengthPrefixedWriter(_RustLengthPrefixedWriter):
     """带长度前缀的写入器.
 
     在序列化数据前自动添加长度头部，用于解决 TCP 粘包问题。
     格式: `[Length][Data]`
 
+    该类使用 Rust 核心实现以获得高性能。
+
     Args:
         option: JCE 选项.
-        default: 默认序列化函数.
+        default: 默认序列化函数 (暂不支持，保留参数兼容性).
         context: 序列化上下文.
         length_type: 长度字段的字节数 (1, 2, 或 4).
             - 1: 1字节长度 (Max 255)
@@ -144,6 +149,24 @@ class LengthPrefixedWriter(JceStreamWriter):
         little_endian_length: 长度字段是否使用小端序.
     """
 
+    def __new__(
+        cls,
+        option: JceOption = JceOption.NONE,
+        default: Any = None,
+        context: dict[str, Any] | None = None,
+        length_type: int = 4,
+        inclusive_length: bool = True,
+        little_endian_length: bool = False,
+    ):
+        return super().__new__(  # type: ignore
+            cls,
+            length_type=length_type,
+            inclusive_length=inclusive_length,
+            little_endian_length=little_endian_length,
+            options=int(option),
+            context=context if context is not None else {},
+        )
+
     def __init__(
         self,
         option: JceOption = JceOption.NONE,
@@ -153,61 +176,9 @@ class LengthPrefixedWriter(JceStreamWriter):
         inclusive_length: bool = True,  # 长度包含头部本身
         little_endian_length: bool = False,  # 长度字段字节序
     ):
-        """初始化带长度前缀的写入器.
-
-        Args:
-            option: JCE 选项.
-            default: 默认序列化函数.
-            context: 序列化上下文.
-            length_type: 长度字段字节数 (1, 2, 4).
-            inclusive_length: 长度是否包含头部本身.
-            little_endian_length: 长度字段是否使用小端序.
-        """
-        super().__init__(option, default, context)
-        if length_type not in {1, 2, 4}:
-            raise ValueError("length_type must be 1, 2, or 4")
-        self._length_type = length_type
-        self._inclusive_length = inclusive_length
-        self._little_endian_length = little_endian_length
-
-    def pack(self, obj: Any) -> None:
-        """序列化对象, 添加长度前缀, 并追加到缓冲区."""
-        # 1. 编码包体
-        body = dumps(
-            obj,
-            option=self._config.flags,
-            default=self._config.default,
-            context=self._config.context,
-            exclude_unset=self._config.exclude_unset,
-        )
-
-        # 2. 计算长度
-
-        length = len(body)
-        if self._inclusive_length:
-            length += self._length_type
-
-        # 3. 编码长度头
-        header = self._pack_length(length)
-
-        # 4. 追加
-        self._buffer.extend(header)
-        self._buffer.extend(body)
-
-    def _pack_length(self, length: int) -> bytes:
-        endian = "<" if self._little_endian_length else ">"
-        if self._length_type == 1:
-            if length > 255:
-                raise ValueError(f"Packet too large for 1-byte length: {length}")
-            return struct.pack(f"{endian}B", length)
-        elif self._length_type == 2:
-            if length > 65535:
-                raise ValueError(f"Packet too large for 2-byte length: {length}")
-            return struct.pack(f"{endian}H", length)
-        else:  # 4
-            if length > 4294967295:
-                raise ValueError(f"Packet too large for 4-byte length: {length}")
-            return struct.pack(f"{endian}I", length)
+        """初始化带长度前缀的写入器."""
+        # Rust 核心已完成初始化
+        pass
 
 
 class LengthPrefixedReader(_RustLengthPrefixedReader):

@@ -1,6 +1,10 @@
-use crate::serde::{decode_generic_struct, decode_struct, BytesMode};
+use crate::serde::{
+    decode_generic_struct, decode_struct, encode_generic_field, encode_generic_struct,
+    encode_struct, BytesMode,
+};
+use crate::writer::JceWriter;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList};
 
 #[pyclass(subclass)]
 pub struct LengthPrefixedReader {
@@ -123,7 +127,7 @@ impl LengthPrefixedReader {
         let py = slf.py();
         let context_bound = match &slf.context {
             Some(ctx) => ctx.bind(py).clone(),
-            None => pyo3::types::PyDict::new(py).into_any(),
+            None => PyDict::new(py).into_any(),
         };
 
         // Decode
@@ -158,5 +162,172 @@ impl LengthPrefixedReader {
                 Err(e)
             }
         }
+    }
+}
+
+#[pyclass(subclass)]
+pub struct LengthPrefixedWriter {
+    buffer: Vec<u8>,
+    length_type: u8,
+    inclusive_length: bool,
+    little_endian: bool,
+    options: i32,
+    context: Option<Py<PyAny>>,
+}
+
+#[pymethods]
+impl LengthPrefixedWriter {
+    #[new]
+    #[pyo3(signature = (length_type=4, inclusive_length=true, little_endian_length=false, options=0, context=None))]
+    fn new(
+        length_type: u8,
+        inclusive_length: bool,
+        little_endian_length: bool,
+        options: i32,
+        context: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        if ![1, 2, 4].contains(&length_type) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "length_type must be 1, 2, or 4",
+            ));
+        }
+        Ok(LengthPrefixedWriter {
+            buffer: Vec::with_capacity(4096),
+            length_type,
+            inclusive_length,
+            little_endian: little_endian_length,
+            options,
+            context,
+        })
+    }
+
+    #[pyo3(signature = (obj))]
+    fn pack(&mut self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.write(py, obj)
+    }
+
+    #[pyo3(signature = (obj))]
+    fn write(&mut self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut writer = JceWriter::new();
+        if self.options & 1 != 0 {
+            writer.set_little_endian(true);
+        }
+
+        let context_bound = match &self.context {
+            Some(ctx) => ctx.bind(py).clone(),
+            None => PyDict::new(py).into_any(),
+        };
+
+        // Determine how to encode
+        // 1. Try JceStruct (has __get_jce_core_schema__)
+        if let Ok(schema_method) = obj.getattr("__get_jce_core_schema__") {
+            let schema = schema_method.call0()?.cast_into::<PyList>()?;
+            encode_struct(
+                py,
+                &mut writer,
+                obj,
+                &schema,
+                self.options,
+                &context_bound,
+                0,
+            )?;
+        }
+        // 2. Try JceDict (generic struct)
+        else if let Ok(type_name) = obj.get_type().name() {
+            if type_name.to_string() == "JceDict" {
+                if let Ok(dict) = obj.cast::<PyDict>() {
+                    encode_generic_struct(py, &mut writer, dict, self.options, &context_bound, 0)?;
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "JceDict must be a dict-like object",
+                    ));
+                }
+            } else {
+                encode_generic_field(py, &mut writer, 0, obj, self.options, &context_bound, 0)?;
+            }
+        } else {
+            encode_generic_field(py, &mut writer, 0, obj, self.options, &context_bound, 0)?;
+        }
+
+        let payload = writer.get_buffer();
+        self.append_packet(payload)
+    }
+
+    #[pyo3(signature = (data))]
+    fn pack_bytes(&mut self, data: &[u8]) -> PyResult<()> {
+        self.write_bytes(data)
+    }
+
+    #[pyo3(signature = (data))]
+    fn write_bytes(&mut self, data: &[u8]) -> PyResult<()> {
+        self.append_packet(data)
+    }
+
+    fn get_buffer(&self, py: Python<'_>) -> PyResult<PyObject> {
+        Ok(PyBytes::new(py, &self.buffer).into())
+    }
+
+    fn clear(&mut self) {
+        self.buffer.clear();
+    }
+}
+
+impl LengthPrefixedWriter {
+    fn append_packet(&mut self, payload: &[u8]) -> PyResult<()> {
+        let payload_len = payload.len();
+        let header_len = self.length_type as usize;
+        let total_len = if self.inclusive_length {
+            payload_len + header_len
+        } else {
+            payload_len
+        };
+
+        // Write length
+        match self.length_type {
+            1 => {
+                if total_len > 255 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "Packet too large for 1-byte length",
+                    ));
+                }
+                self.buffer.push(total_len as u8);
+            }
+            2 => {
+                if total_len > 65535 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "Packet too large for 2-byte length",
+                    ));
+                }
+                let bytes = (total_len as u16).to_be_bytes(); // Default BE
+                if self.little_endian {
+                    self.buffer
+                        .extend_from_slice(&(total_len as u16).to_le_bytes());
+                } else {
+                    self.buffer.extend_from_slice(&bytes);
+                }
+            }
+            4 => {
+                if total_len > 4294967295 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "Packet too large for 4-byte length",
+                    ));
+                }
+                let bytes = (total_len as u32).to_be_bytes();
+                if self.little_endian {
+                    self.buffer
+                        .extend_from_slice(&(total_len as u32).to_le_bytes());
+                } else {
+                    self.buffer.extend_from_slice(&bytes);
+                }
+            }
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Invalid length type",
+                ))
+            }
+        }
+
+        self.buffer.extend_from_slice(payload);
+        Ok(())
     }
 }

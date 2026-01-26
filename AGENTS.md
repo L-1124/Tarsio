@@ -136,7 +136,7 @@ def loads(data: bytes, jce_struct: type[T], bytes_mode: str = "auto") -> T:
 
 - **`jce/__init__.py`**: 公开 API 入口, 导出所有核心类和函数。
 - **`jce/api.py`**: 公开 API 层。提供 `dumps`/`loads` (字节操作) 和 `dump`/`load` (文件 IO), 支持 `bytes_mode` 和 `context`。
-- **`jce/jce_core`**: (Rust 核心) 提供高性能的二进制编解码逻辑。
+- **`jce/jce_core`**: (Rust 核心) 提供高性能的二进制编解码逻辑及流式处理 (`LengthPrefixedReader`/`Writer`)。
 - **`jce/stream.py`**: 流式序列化支持。提供 `JceStreamWriter` / `JceStreamReader` 基类, 以及支持网络协议的 `LengthPrefixedWriter` / `LengthPrefixedReader`。
 - **`jce/context.py`**: 序列化上下文定义 (`SerializationInfo`, `DeserializationInfo`)。
 - **`jce/config.py`**: 配置对象 (`JceConfig`), 统一管理选项、上下文和 bytes_mode。

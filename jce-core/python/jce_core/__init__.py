@@ -1,5 +1,6 @@
 from ._jce_core import (
     LengthPrefixedReader,
+    LengthPrefixedWriter,
     decode_safe_text,
     dumps,
     dumps_generic,
@@ -9,6 +10,7 @@ from ._jce_core import (
 
 __all__ = [
     "LengthPrefixedReader",
+    "LengthPrefixedWriter",
     "decode_safe_text",
     "dumps",
     "dumps_generic",
