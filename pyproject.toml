@@ -45,6 +45,10 @@ jce = "jce.__main__:main"
 cli = ["click>=8.0", "rich>=14.2.0"]
 
 [dependency-groups]
+dev = [
+  { include-group = "testing" },
+  { include-group = "cli" },
+]
 docs = [
   "griffe-inherited-docstrings>=1.1.2",
   "griffe-pydantic>=1.2.0",
@@ -55,6 +59,13 @@ docs = [
 ]
 testing = ["pytest>=9.0.2", "pytest-cov>=7.0.0"]
 cli = ["click>=8.0", "rich>=14.2.0"]
+linting = ["basedpyright>=1.37.2", "ruff>=0.14.14"]
+all = [
+  { include-group = "docs" },
+  { include-group = "testing" },
+  { include-group = "cli" },
+  { include-group = "linting" },
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -154,4 +165,4 @@ line-ending = "auto"
 docstring-code-format = true
 
 [tool.uv]
-default-groups = ["testing", "cli"]
+default-groups = ["dev"]
