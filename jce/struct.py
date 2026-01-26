@@ -451,7 +451,6 @@ class JceStructMeta(type(BaseModel)):
 
             # 收集自定义序列化器/反序列化器
             cls.__jce_serializers__ = {}
-            cls.__jce_deserializers__ = {}
             for attr_name, attr_value in namespace.items():
                 func = attr_value
                 if isinstance(func, classmethod | staticmethod):
@@ -460,10 +459,6 @@ class JceStructMeta(type(BaseModel)):
                 target = getattr(func, "__jce_serializer_target__", None)
                 if target:
                     cls.__jce_serializers__[target] = attr_name
-
-                target = getattr(func, "__jce_deserializer_target__", None)
-                if target:
-                    cls.__jce_deserializers__[target] = attr_name
 
         return cls
 
@@ -507,7 +502,6 @@ class JceStruct(BaseModel, JceType, metaclass=JceStructMeta):
 
     __jce_fields__: ClassVar[dict[str, "JceModelField"]] = {}
     __jce_serializers__: ClassVar[dict[str, str]] = {}
-    __jce_deserializers__: ClassVar[dict[str, str]] = {}
     __jce_core_schema_cache__: ClassVar[list[tuple] | None] = None
 
     @classmethod
@@ -567,18 +561,14 @@ class JceStruct(BaseModel, JceType, metaclass=JceStructMeta):
                 default_val = field_info.default
 
             has_serializer = name in cls.__jce_serializers__
-            has_deserializer = name in cls.__jce_deserializers__
 
-            schema.append(
-                (
-                    name,
-                    tag,
-                    type_code,
-                    default_val,
-                    has_serializer,
-                    has_deserializer,
-                )
-            )
+            schema.append((
+                name,
+                tag,
+                type_code,
+                default_val,
+                has_serializer,
+            ))
 
         cls.__jce_core_schema_cache__ = schema
         return schema
@@ -706,7 +696,7 @@ class JceStruct(BaseModel, JceType, metaclass=JceStructMeta):
         Args:
             data: 输入数据 (bytes 或者是预解析的 JceDict).
             option: JCE 选项 (如字节序).
-            context: 验证上下文，可传递给自定义反序列化器 (`@jce_field_deserializer`).
+            context: 验证上下文.
 
         Returns:
             S: 结构体实例.
@@ -723,8 +713,6 @@ class JceStruct(BaseModel, JceType, metaclass=JceStructMeta):
         final_option = option | default_option
 
         if isinstance(data, bytes | bytearray | memoryview):
-            # 这里调用 decode 会触发 warning，但为了复用逻辑暂且如此
-            # 或者直接调用 api.loads (推荐)
             from .api import loads
 
             return loads(

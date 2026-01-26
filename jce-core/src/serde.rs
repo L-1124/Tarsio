@@ -115,40 +115,30 @@ pub fn dumps_generic(
 }
 
 #[pyfunction]
-#[pyo3(signature = (data, schema, options=0, context=None))]
+#[pyo3(signature = (data, schema, options=0))]
 pub fn loads(
     py: Python<'_>,
     data: &[u8],
     schema: &Bound<'_, PyList>,
     options: i32,
-    context: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let mut reader = JceReader::new(data, options);
-    let context_bound = match context {
-        Some(ctx) => ctx.into_bound(py),
-        None => PyDict::new(py).into_any(),
-    };
 
-    decode_struct(py, &mut reader, schema, options, &context_bound, 0)
+    decode_struct(py, &mut reader, schema, options, 0)
 }
 
 #[pyfunction]
-#[pyo3(signature = (data, options=0, bytes_mode=2, context=None))]
+#[pyo3(signature = (data, options=0, bytes_mode=2))]
 pub fn loads_generic(
     py: Python<'_>,
     data: &[u8],
     options: i32,
     bytes_mode: u8,
-    context: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let mut reader = JceReader::new(data, options);
-    let context_bound = match context {
-        Some(ctx) => ctx.into_bound(py),
-        None => PyDict::new(py).into_any(),
-    };
 
     let mode = BytesMode::from(bytes_mode);
-    decode_generic_struct(py, &mut reader, options, mode, &context_bound, 0)
+    decode_generic_struct(py, &mut reader, options, mode, 0)
 }
 
 pub(crate) fn encode_struct(
@@ -169,7 +159,7 @@ pub(crate) fn encode_struct(
             .cast::<PyTuple>()
             .map_err(|_| PyTypeError::new_err("Schema item must be a tuple"))?;
 
-        // schema: (name, tag, type, default, has_serializer, has_deserializer)
+        // schema: (name, tag, type, default, has_serializer)
         let name: String = tuple.get_item(0)?.extract()?;
         let tag: u8 = tuple.get_item(1)?.extract()?;
         let jce_type_code: u8 = tuple.get_item(2)?.extract()?;
@@ -410,7 +400,6 @@ pub(crate) fn decode_struct(
     reader: &mut JceReader,
     schema: &Bound<'_, PyList>,
     options: i32,
-    context: &Bound<'_, PyAny>,
     depth: usize,
 ) -> PyResult<Py<PyAny>> {
     if depth > MAX_DEPTH {
@@ -444,7 +433,6 @@ pub(crate) fn decode_struct(
         if let Some(tuple) = tag_map.get(&tag) {
             let name: String = tuple.get_item(0)?.extract()?;
             let jce_type_code: u8 = tuple.get_item(2)?.extract()?;
-            let _has_deserializer: bool = tuple.get_item(5)?.extract()?;
 
             let value = if jce_type_code == 255 {
                 // Generic field in struct, use default BytesMode::Auto (2)
@@ -454,7 +442,6 @@ pub(crate) fn decode_struct(
                     jce_type,
                     options,
                     BytesMode::Auto,
-                    context,
                     depth + 1,
                 )?
             } else {
@@ -468,7 +455,6 @@ pub(crate) fn decode_struct(
                     jce_type,
                     expected_type,
                     options,
-                    context,
                     depth + 1,
                 )?
             };
@@ -497,7 +483,6 @@ pub(crate) fn decode_generic_struct(
     reader: &mut JceReader,
     options: i32,
     bytes_mode: BytesMode,
-    context: &Bound<'_, PyAny>,
     depth: usize,
 ) -> PyResult<Py<PyAny>> {
     if depth > MAX_DEPTH {
@@ -522,7 +507,6 @@ pub(crate) fn decode_generic_struct(
             jce_type,
             options,
             bytes_mode,
-            context,
             depth + 1,
         )?;
         result_dict.set_item(tag, value)?;
@@ -537,7 +521,6 @@ fn decode_generic_field(
     jce_type: JceType,
     options: i32,
     bytes_mode: BytesMode,
-    context: &Bound<'_, PyAny>,
     depth: usize,
 ) -> PyResult<Py<PyAny>> {
     match jce_type {
@@ -591,7 +574,6 @@ fn decode_generic_field(
                             &mut inner_reader,
                             options,
                             bytes_mode,
-                            context,
                             depth + 1,
                         ) {
                             Ok(res) => {
@@ -618,7 +600,7 @@ fn decode_generic_field(
             for _ in 0..len {
                 let (_, it) = reader.read_head().map_err(map_decode_error)?;
                 let item =
-                    decode_generic_field(py, reader, it, options, bytes_mode, context, depth + 1)?;
+                    decode_generic_field(py, reader, it, options, bytes_mode, depth + 1)?;
                 list.append(item)?;
             }
             Ok(list.into())
@@ -630,16 +612,16 @@ fn decode_generic_field(
             for _ in 0..len {
                 let (_, kt) = reader.read_head().map_err(map_decode_error)?;
                 let key =
-                    decode_generic_field(py, reader, kt, options, bytes_mode, context, depth + 1)?;
+                    decode_generic_field(py, reader, kt, options, bytes_mode, depth + 1)?;
                 let (_, vt) = reader.read_head().map_err(map_decode_error)?;
                 let value =
-                    decode_generic_field(py, reader, vt, options, bytes_mode, context, depth + 1)?;
+                    decode_generic_field(py, reader, vt, options, bytes_mode, depth + 1)?;
                 dict.set_item(key, value)?;
             }
             Ok(dict.into())
         }
         JceType::StructBegin => {
-            decode_generic_struct(py, reader, options, bytes_mode, context, depth)
+            decode_generic_struct(py, reader, options, bytes_mode, depth)
         }
         _ => {
             if let Err(e) = reader.skip_field(jce_type) {
@@ -656,7 +638,6 @@ fn decode_field(
     actual_type: JceType,
     _expected_type: JceType,
     options: i32,
-    context: &Bound<'_, PyAny>,
     depth: usize,
 ) -> PyResult<Py<PyAny>> {
     match actual_type {
@@ -700,7 +681,6 @@ fn decode_field(
                     it,
                     options,
                     BytesMode::Auto,
-                    context,
                     depth + 1,
                 )?;
                 list.append(item)?;
@@ -718,7 +698,6 @@ fn decode_field(
                     kt,
                     options,
                     BytesMode::Auto,
-                    context,
                     depth + 1,
                 )?;
                 let (_, vt) = reader.read_head().map_err(map_decode_error)?;
@@ -728,7 +707,6 @@ fn decode_field(
                     vt,
                     options,
                     BytesMode::Auto,
-                    context,
                     depth + 1,
                 )?;
                 dict.set_item(key, value)?;
@@ -736,7 +714,7 @@ fn decode_field(
             Ok(dict.into())
         }
         JceType::StructBegin => {
-            decode_generic_struct(py, reader, options, BytesMode::Auto, context, depth)
+            decode_generic_struct(py, reader, options, BytesMode::Auto, depth)
         }
         _ => {
             reader.skip_field(actual_type).map_err(map_decode_error)?;

@@ -49,7 +49,6 @@ def loads(
     data: bytes,
     schema: list[tuple[str, int, int, object, bool, bool]],
     options: int = 0,
-    context: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """使用 Schema 将 JCE 字节流反序列化为字典.
 
@@ -68,7 +67,6 @@ def loads_generic(
     data: bytes,
     options: int = 0,
     bytes_mode: int = 2,
-    context: dict[str, object] | None = None,
 ) -> dict[int, object]:
     """不使用 Schema 将 JCE 字节流反序列化为标签字典.
 
@@ -89,7 +87,6 @@ class LengthPrefixedReader:
         target: object,
         option: int = 0,
         max_buffer_size: int = 10485760,
-        context: dict[str, object] | None = None,
         length_type: int = 4,
         inclusive_length: bool = True,
         little_endian_length: bool = False,

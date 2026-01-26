@@ -383,8 +383,28 @@ cli = [
 ]
 
 [package.dev-dependencies]
+all = [
+    { name = "basedpyright" },
+    { name = "click" },
+    { name = "griffe-inherited-docstrings" },
+    { name = "griffe-pydantic" },
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+    { name = "pymdown-extensions" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "rich" },
+    { name = "ruff" },
+]
 cli = [
     { name = "click" },
+    { name = "rich" },
+]
+dev = [
+    { name = "click" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
     { name = "rich" },
 ]
 docs = [
@@ -415,8 +435,28 @@ requires-dist = [
 provides-extras = ["cli"]
 
 [package.metadata.requires-dev]
+all = [
+    { name = "basedpyright", specifier = ">=1.37.2" },
+    { name = "click", specifier = ">=8.0" },
+    { name = "griffe-inherited-docstrings", specifier = ">=1.1.2" },
+    { name = "griffe-pydantic", specifier = ">=1.2.0" },
+    { name = "mkdocs", specifier = ">=1.6.1" },
+    { name = "mkdocs-material", specifier = ">=9.7.1" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.1" },
+    { name = "pymdown-extensions", specifier = ">=10.20" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "rich", specifier = ">=14.2.0" },
+    { name = "ruff", specifier = ">=0.14.14" },
+]
 cli = [
     { name = "click", specifier = ">=8.0" },
+    { name = "rich", specifier = ">=14.2.0" },
+]
+dev = [
+    { name = "click", specifier = ">=8.0" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "rich", specifier = ">=14.2.0" },
 ]
 docs = [

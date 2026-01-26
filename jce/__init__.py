@@ -6,9 +6,7 @@
 from .api import BytesMode, dump, dumps, load, loads
 from .config import JceConfig
 from .context import (
-    DeserializationInfo,
     SerializationInfo,
-    jce_field_deserializer,
     jce_field_serializer,
 )
 from .exceptions import (
@@ -69,7 +67,6 @@ __all__ = [
     "STRUCT_START",
     "ZERO_TAG",
     "BytesMode",
-    "DeserializationInfo",
     "JceConfig",
     "JceDecodeError",
     "JceDict",
@@ -88,7 +85,6 @@ __all__ = [
     "__version__",
     "dump",
     "dumps",
-    "jce_field_deserializer",
     "jce_field_serializer",
     "load",
     "loads",

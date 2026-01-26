@@ -41,18 +41,3 @@ class Timestamp(JceStruct):
         return value + 1000
 ```
 
-### @jce_field_deserializer
-
-自定义字段的反序列化逻辑。
-
-```python title="deserializer.py"
-from jce import JceStruct, JceField, jce_field_deserializer, DeserializationInfo
-
-class Timestamp(JceStruct):
-    dt: int = JceField(jce_id=0)
-
-    @jce_field_deserializer("dt")
-    def deserialize_dt(cls, value: int, info: DeserializationInfo) -> int:
-        # 解码后转换
-        return value - 1000
-```

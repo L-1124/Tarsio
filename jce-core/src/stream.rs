@@ -15,20 +15,18 @@ pub struct LengthPrefixedReader {
     options: i32,
     bytes_mode: BytesMode,
     target_schema: Option<Py<PyList>>,
-    context: Option<Py<PyAny>>,
     max_buffer_size: usize,
 }
 
 #[pymethods]
 impl LengthPrefixedReader {
     #[new]
-    #[pyo3(signature = (target, option=0, max_buffer_size=10485760, context=None, length_type=4, inclusive_length=true, little_endian_length=false, bytes_mode=2))]
+    #[pyo3(signature = (target, option=0, max_buffer_size=10485760, length_type=4, inclusive_length=true, little_endian_length=false, bytes_mode=2))]
     fn new(
-        py: Python<'_>,
+        _py: Python<'_>,
         target: &Bound<'_, PyAny>,
         option: i32,
         max_buffer_size: usize,
-        context: Option<Py<PyAny>>,
         length_type: u8,
         inclusive_length: bool,
         little_endian_length: bool,
@@ -44,7 +42,7 @@ impl LengthPrefixedReader {
         let mut target_schema = None;
         if let Ok(schema_method) = target.getattr("__get_jce_core_schema__") {
             if let Ok(schema) = schema_method.call0() {
-                if let Ok(schema_list) = schema.downcast::<PyList>() {
+                if let Ok(schema_list) = schema.cast::<PyList>() {
                     target_schema = Some(schema_list.clone().unbind());
                 }
             }
@@ -58,7 +56,6 @@ impl LengthPrefixedReader {
             options: option,
             bytes_mode: BytesMode::from(bytes_mode),
             target_schema,
-            context,
             max_buffer_size,
         })
     }
@@ -77,7 +74,7 @@ impl LengthPrefixedReader {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<PyObject>> {
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<Py<PyAny>>> {
         let length_type = slf.length_type as usize;
         let inclusive = slf.inclusive_length;
         let little_endian = slf.little_endian;
@@ -125,40 +122,21 @@ impl LengthPrefixedReader {
 
         // Clone context for the call
         let py = slf.py();
-        let context_bound = match &slf.context {
-            Some(ctx) => ctx.bind(py).clone(),
-            None => PyDict::new(py).into_any(),
-        };
 
         // Decode
         let reader = &mut crate::reader::JceReader::new(body_data, slf.options);
         let result = if let Some(schema) = &slf.target_schema {
-            decode_struct(py, reader, schema.bind(py), slf.options, &context_bound, 0)
+            decode_struct(py, reader, schema.bind(py), slf.options, 0)
         } else {
-            decode_generic_struct(py, reader, slf.options, slf.bytes_mode, &context_bound, 0)
+            decode_generic_struct(py, reader, slf.options, slf.bytes_mode, 0)
         };
-
-        // Remove consumed bytes regardless of success/failure (or should we?)
-        // If decoding fails, we probably want to consume the bad packet anyway to avoid infinite loop
-        // But PyResult will return early on Err.
-        // Let's drain FIRST? No, we need body_data reference.
-        // We must perform drain AFTER decode but BEFORE returning.
 
         match result {
             Ok(obj) => {
                 slf.buffer.drain(..packet_size);
-                Ok(Some(obj.into()))
+                Ok(Some(obj))
             }
             Err(e) => {
-                // If decoding fails, what should we do?
-                // Python implementation raises JceDecodeError.
-                // We should probably raise too, but the buffer state is tricky.
-                // Standard behavior: if it's a valid framed packet but invalid content,
-                // we should probably consume it so next call tries next packet?
-                // Or let the user decide?
-                // Let's follow Python: it raises, state is undefined/unchanged?
-                // Python's `del self._buffer[:packet_size]` happens AFTER decode in the generator.
-                // If decode raises, the buffer is NOT consumed.
                 Err(e)
             }
         }
@@ -263,7 +241,7 @@ impl LengthPrefixedWriter {
         self.append_packet(data)
     }
 
-    fn get_buffer(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn get_buffer(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         Ok(PyBytes::new(py, &self.buffer).into())
     }
 

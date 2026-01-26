@@ -300,22 +300,6 @@ JCEDICT_TO_DICT_CASES: list[tuple[Any, Callable[[Any], bool], str]] = [
 ]
 
 
-@pytest.mark.parametrize(
-    ("data", "validator", "desc"),
-    JCEDICT_TO_DICT_CASES,
-    ids=[c[2] for c in JCEDICT_TO_DICT_CASES],
-)
-def test_jcedict_to_plain_dict(
-    data: Any, validator: Callable[[Any], bool], desc: str
-) -> None:
-    """_jcedict_to_plain_dict() 应递归将 JceDict 转换为普通 dict."""
-    from jce.api import _jcedict_to_plain_dict
-
-    result = _jcedict_to_plain_dict(data)
-
-    assert validator(result), f"失败: {desc}"
-
-
 def test_dumps_with_option() -> None:
     """dumps() 应支持传入 option 参数控制编码行为."""
     data = {1: 100}

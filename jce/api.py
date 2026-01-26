@@ -16,33 +16,6 @@ T = TypeVar("T", bound=JceStruct)
 BytesMode = Literal["raw", "string", "auto"]
 
 
-def _jcedict_to_plain_dict(obj: Any) -> Any:
-    """递归将 JceDict 转换为普通 dict.
-
-    DEPRECATED: 仅用于向后兼容，不再内部调用。
-    """
-    if isinstance(obj, JceDict):
-        return {k: _jcedict_to_plain_dict(v) for k, v in obj.items()}
-    if isinstance(obj, dict):
-        return {k: _jcedict_to_plain_dict(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_jcedict_to_plain_dict(v) for v in obj]
-    if isinstance(obj, tuple):
-        return tuple(_jcedict_to_plain_dict(v) for v in obj)
-    return obj
-
-
-def convert_bytes_recursive(
-    obj: Any, _mode: BytesMode = "auto", _option: JceOption = JceOption.NONE
-) -> Any:
-    """递归处理对象中的 bytes (从 decoder.py 移植).
-
-    DEPRECATED: 现在大部分逻辑已移至 Rust 核心 (loads_generic).
-    仅保留用于 target=dict 的后续转换（例如 _jcedict_to_plain_dict）.
-    """
-    return obj
-
-
 @overload
 def dumps(
     obj: JceStruct,
@@ -242,7 +215,7 @@ def loads(
               2. JCE 探测: 尝试作为嵌套 JCE 结构解析.
               3. 回退: 保持为 bytes.
         context: 反序列化上下文.
-            传递给 `JceStruct` 的验证器或自定义反序列化器 (`@jce_field_deserializer`).
+            传递给 `JceStruct` 的验证器.
 
     Returns:
         T: 目标类型实例 (如果 target=JceStruct).
@@ -267,7 +240,6 @@ def loads(
             bytes(data),
             int(option),
             mode_int,
-            context if context is not None else {},
         )
 
         # 3. 如目标为 dict，则直接返回 (Rust 已经返回了纯 dict)
@@ -286,7 +258,6 @@ def loads(
             bytes(data),
             target.__get_jce_core_schema__(),
             int(option),
-            context if context is not None else {},
         )
         # Rust 返回的是 dict, 需要通过 Pydantic 验证
         return target.model_validate(raw_dict, context=context)
