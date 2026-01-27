@@ -1,31 +1,31 @@
-# JceStruct Python 指南 (`python/`)
+# Tarsio Python 指南 (`python/`)
 
 本目录包含 Python 源代码、测试及相关规范。
 
 ## 数据建模 (核心)
 
-使用 `JceStruct` 和 `JceField` 定义协议模型：
+使用 `Struct` 和 `Field` 定义协议模型：
 
 ```python
-from jce import JceStruct, JceField
+from tarsio import Struct, Field
 
-class MyModel(JceStruct):
-    id: int = JceField(jce_id=0)
-    name: str = JceField(jce_id=1, default="")
+class MyModel(Struct):
+    id: int = Field(id=0)
+    name: str = Field(id=1, default="")
 ```
 
-- **`jce_id`**: 必须唯一且连续。
+- **`id`**: 必须唯一且连续。
 - **类型支持**:
   - 基础类型: `int`, `str`, `bytes`, `float`, `bool`。
   - 容器: `list[T]`, `dict[K, V]`。
   - 联合类型: 仅支持 `T | None`。
-- **`JceDict`**: 用于需要显式编码为 Struct 而非 Map 的字典场景。
+- **`StructDict`**: 用于需要显式编码为 Struct 而非 Map 的字典场景。
 
 ## 关键模块职责
 
-- **`struct.py`**: `JceStruct` 与 `JceField` 的实现核心。
+- **`struct.py`**: `Struct` 与 `Field` 的实现核心。
 - **`api.py`**: `dumps`/`loads` 高层入口。
-- **`adapter.py`**: `JceTypeAdapter` 用于动态或非 `JceStruct` 类型。
+- **`adapter.py`**: `TarsTypeAdapter` 用于动态或非 `Struct` 类型。
 - **`stream.py`**: 包装 Rust 流处理类。
 - **`exceptions.py`**: 统一定义 Python 侧异常。
 
@@ -48,10 +48,10 @@ class MyModel(JceStruct):
       """序列化当前对象.
 
       Returns:
-          bytes: JCE格式的二进制数据.
+          bytes: Tarsio格式的二进制数据.
 
       Raises:
-          JceEncodeError: 编码失败时抛出.
+          EncodeError: 编码失败时抛出.
       """
   ```
 
@@ -66,28 +66,28 @@ class MyModel(JceStruct):
 2. **详细描述**: （可选）如有复杂逻辑，在简述后空一行编写。
 3. **Args**: 列出参数名、类型及说明。
 4. **Returns**: 说明返回值的类型及含义。
-5. **Raises**: 列出可能抛出的异常类（如 `JceDecodeError`）。
+5. **Raises**: 列出可能抛出的异常类（如 `DecodeError`）。
 6. **Examples**: 提供一个可直接运行的代码片段。
 
 - **标准示例**:
 
 ```python
-def loads(data: bytes, jce_struct: type[T], bytes_mode: str = "auto") -> T:
-    """从字节序列反序列化为 JceStruct 对象.
+def loads(data: bytes, tars_struct: type[T], bytes_mode: str = "auto") -> T:
+    """从字节序列反序列化为 Struct 对象.
 
     Args:
         data: 符合 JCE 协议的二进制数据.
-        jce_struct: 目标 JceStruct 类.
+        tars_struct: 目标 Struct 类.
         bytes_mode: 字节处理模式, 可选 "auto", "raw", "string".
 
     Returns:
-        T: 实例化的 JceStruct 对象.
+        T: 实例化的 Struct 对象.
 
     Raises:
-        JceDecodeError: 当数据格式非法或长度不足时抛出.
+        DecodeError: 当数据格式非法或长度不足时抛出.
 
     Examples:
-        >>> user = jce.loads(b"\x00\x01\x15...", User)
+        >>> user = tarsio.loads(b"\x00\x01\x15...", User)
         >>> print(user.uid)
     """
 
@@ -95,7 +95,7 @@ def loads(data: bytes, jce_struct: type[T], bytes_mode: str = "auto") -> T:
 
 ### 命名
 
-- **类**: `PascalCase` (例如 `JceStruct`, `JceField`)。
+- **类**: `PascalCase` (例如 `Struct`, `Field`)。
 - **函数/方法**: `snake_case` (例如 `model_validate`, `to_bytes`)。
 - **变量**: `snake_case`。
 - **常量**: `UPPER_SNAKE_CASE` (例如 `OPT_LITTLE_ENDIAN`)。
@@ -104,7 +104,7 @@ def loads(data: bytes, jce_struct: type[T], bytes_mode: str = "auto") -> T:
 ### 导入
 
 - **风格**: **相对导入** (例如 `from .types import INT`)。
-- **排序**: 标准库 -> 第三方 (`pydantic`) -> 本地 (`jce`)。
+- **排序**: 标准库 -> 第三方 (`pydantic`) -> 本地 (`tarsio`)。
 - **分组**: 多行导入使用圆括号。
 
 ### 类型提示
@@ -145,14 +145,14 @@ def loads(data: bytes, jce_struct: type[T], bytes_mode: str = "auto") -> T:
 ### 4.4 标准结构示例
 
 ```python
-"""测试 JCE 编解码器的核心功能."""
+"""测试 Tarsio 编解码器的核心功能."""
 
 import pytest
 from io import BytesIO
 from typing import Generator
-from jce import JceStruct, JceDecodeError, fields
+from tarsio import Struct, DecodeError, fields
 
-class User(JceStruct):
+class User(Struct):
     """用于测试的简单结构体."""
     uid: int = fields.Int(1)
     name: str = fields.String(2)
@@ -190,10 +190,10 @@ def test_user_encode_returns_correct_bytes(sample_user: User) -> None:
     assert result.startswith(expected_prefix)
 
 def test_decode_with_truncated_data_raises_error() -> None:
-    """当数据被截断时，decode 应该抛出 JceDecodeError."""
+    """当数据被截断时，decode 应该抛出 DecodeError."""
     invalid_data = b"\x01"
 
-    with pytest.raises(JceDecodeError, match="Unexpected end of buffer"):
+    with pytest.raises(DecodeError, match="Unexpected end of buffer"):
         User.decode(invalid_data)
 
 ```
@@ -219,7 +219,7 @@ def test_int_encoding_variants(val: int, expected: bytes) -> None:
 #### 异常捕获
 
 - 必须使用 `pytest.raises`。
-- **严禁**使用宽泛的 `Exception`，必须指明具体的异常类（如 `ValueError`, `JceDecodeError`）。
+- **严禁**使用宽泛的 `Exception`，必须指明具体的异常类（如 `ValueError`, `DecodeError`）。
 - 建议使用 `match` 参数校验异常信息关键词。
 
 #### Warnings 处理
@@ -288,9 +288,9 @@ API 文档应通过 `mkdocstrings` 自动从源码中提取，保持同步。
 - **示例**:
 
 ```markdown
-# JceStruct 核心类
+# Tarsio 核心类
 
-::: jce.struct.JceStruct
+::: tarsio.struct.Struct
     options:
       members:
         - __init__
@@ -311,14 +311,14 @@ API 文档应通过 `mkdocstrings` 自动从源码中提取，保持同步。
 
 ```python title="example.py"
 # 示例代码应具备完整性
-from jce import JceStruct, JceField
+from tarsio import Struct, Field
 ...
 
 ```
 
 #### 交叉引用与链接 (Cross-referencing)
 
-- **API 相互引用**: 在文档中使用反引号包裹标识符，`mkdocstrings` 通常会自动建立链接。例如：`参考 [JceStruct][jce.struct.JceStruct] 以获取更多信息`。
+- **API 相互引用**: 在文档中使用反引号包裹标识符，`mkdocstrings` 通常会自动建立链接。例如：`参考 [Struct][tarsio.struct.Struct] 以获取更多信息`。
 - **外部链接**: 引用 Pydantic 或 Python 标准库文档时，使用标准 Markdown 链接。
 - **内部跳转**: 使用相对路径链接到其他文档页面：`[查看序列化指南](../usage/serialization.md)`。
 

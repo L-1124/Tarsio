@@ -1,13 +1,13 @@
 # 命令行工具 (CLI)
 
-JceStruct 内置了一个强大的命令行工具，用于快速检查、调试和转换 JCE 编码的数据。
+Tarsio 内置了一个强大的命令行工具，用于快速检查、调试和转换 JCE 编码的数据。
 
 ## 启用 CLI
 
 CLI 依赖于 `click` 库。如果你在安装时选择了 `[cli]` 额外依赖，就可以直接使用：
 
 ```bash title="Terminal"
-$ jce --help
+tarsio --help
 ```
 
 ## 使用方法
@@ -18,11 +18,11 @@ $ jce --help
 
 ```bash title="Terminal"
 # 解码 Struct (默认)
-$ jce "00 64"
+$ tarsio "00 64"
 # > {0: 100}
 
 # 解码 Map (需要完整 Map 头)
-$ jce "08 01 00 64"
+$ tarsio "08 01 00 64"
 # > {0: 100}
 ```
 
@@ -31,7 +31,7 @@ $ jce "08 01 00 64"
 使用 `-f` 或 `--file` 参数读取包含纯二进制数据或 hex 文本的文件：
 
 ```bash title="Terminal"
-$ jce -f payload.bin
+tarsio -f payload.bin
 ```
 
 ### 3. 输出格式化
@@ -47,7 +47,7 @@ $ jce -f payload.bin
 使用 `-v` 或 `--verbose` 查看详细的调试信息，包括原始 hex 数据、解码字节数等。
 
 ```bash title="Terminal"
-$ jce "00 64" -v
+$ tarsio "00 64" -v
 # [INFO] Input size: 2 bytes
 # [DEBUG] Hex: 00 64
 # {0: 100}
@@ -56,7 +56,7 @@ $ jce "00 64" -v
 ## 参数参考
 
 ```text title="Help Output"
-Usage: jce [OPTIONS] [ENCODED]
+Usage: tarsio [OPTIONS] [ENCODED]
 
   JCE 编解码命令行工具.
 

@@ -1,6 +1,6 @@
 """测试 JCE 流式处理.
 
-覆盖 jce.stream 模块的核心特性:
+覆盖 tarsio.stream 模块的核心特性:
 1. 基础流读写 (Buffer management)
 2. 长度前缀协议 (LengthPrefixedWriter/Reader)
 3. 网络场景模拟 (粘包、拆包)
@@ -11,18 +11,18 @@ import struct
 from typing import cast
 
 import pytest
-from jce import JceDict, JceField, JceStruct
-from jce.stream import (
+from tarsio import Field, Struct, StructDict
+from tarsio.stream import (
     LengthPrefixedReader,
     LengthPrefixedWriter,
 )
 
 
-class StreamMsg(JceStruct):
+class StreamMsg(Struct):
     """用于流传输测试的简单消息."""
 
-    id: int = JceField(jce_id=0)
-    data: str = JceField(jce_id=1)
+    id: int = Field(id=0)
+    data: str = Field(id=1)
 
 
 # --- 基础流写入器测试 ---
@@ -49,14 +49,14 @@ def test_stream_writer_basic() -> None:
 
 def test_stream_reader_basic() -> None:
     """LengthPrefixedReader 应能正确接收数据并执行缓冲区检查."""
-    reader = LengthPrefixedReader(target=JceDict)
+    reader = LengthPrefixedReader(target=StructDict)
 
     reader.feed(b"\x00\x01")
 
     # LengthPrefixedReader 是可迭代的，如果没有完整包，迭代应为空
     assert list(reader) == []
 
-    small_reader = LengthPrefixedReader(target=JceDict, max_buffer_size=5)
+    small_reader = LengthPrefixedReader(target=StructDict, max_buffer_size=5)
     small_reader.feed(b"123")
 
     with pytest.raises(BufferError, match="max size"):
@@ -64,12 +64,12 @@ def test_stream_reader_basic() -> None:
 
 
 def test_stream_reader_with_jcedict_target() -> None:
-    """LengthPrefixedReader 应支持 JceDict 作为 target."""
-    reader = LengthPrefixedReader(target=JceDict)
+    """LengthPrefixedReader 应支持 StructDict 作为 target."""
+    reader = LengthPrefixedReader(target=StructDict)
 
     reader.feed(b"\x00\x64")
 
-    assert reader._target == JceDict  # type: ignore
+    assert reader._target == StructDict  # type: ignore
 
 
 # --- 长度前缀协议测试 ---
@@ -163,17 +163,17 @@ def test_reader_partial_header() -> None:
 
 
 def test_length_prefixed_reader_with_jcedict() -> None:
-    """LengthPrefixedReader 应支持 JceDict 作为 target."""
+    """LengthPrefixedReader 应支持 StructDict 作为 target."""
     writer = LengthPrefixedWriter()
-    test_data = JceDict({0: 100, 1: "test"})
+    test_data = StructDict({0: 100, 1: "test"})
     writer.pack(test_data)
 
-    reader = LengthPrefixedReader(target=JceDict)
+    reader = LengthPrefixedReader(target=StructDict)
     reader.feed(writer.get_buffer())
 
     packets = list(reader)
     assert len(packets) == 1
-    assert isinstance(packets[0], JceDict)
+    assert isinstance(packets[0], StructDict)
     assert packets[0][0] == 100
     assert packets[0][1] == "test"
 

@@ -15,7 +15,7 @@ __all__ = [
 ]
 
 class LengthPrefixedReader:
-    """从流缓冲区读取带长度前缀的 JCE 数据包.
+    """从流缓冲区读取带长度前缀的 Tarsio 数据包.
 
     处理 TCP 粘包和数据包分片问题.
 
@@ -39,7 +39,7 @@ class LengthPrefixedReader:
         """初始化读取器.
 
         Args:
-            target: 用于解码的目标类（JceStruct 子类）或 None（通用解码）.
+            target: 用于解码的目标类（Struct 子类）或 None（通用解码）.
             option: 解码选项（位标志）.
             max_buffer_size: 允许的最大缓冲区大小（字节），防止 DoS 攻击.
             length_type: 长度前缀的字节大小（1、2 或 4）.
@@ -68,14 +68,14 @@ class LengthPrefixedReader:
         """迭代缓冲区中的完整数据包.
 
         Returns:
-            从缓冲区解码的对象（JceStruct 实例或 dict）.
+            从缓冲区解码的对象（Struct 实例或 dict）.
 
         Raises:
             StopIteration: 当没有完整数据包可用时.
         """
 
 class LengthPrefixedWriter:
-    """写入带长度前缀的 JCE 数据包.
+    """写入带长度前缀的 Tarsio 数据包.
 
     辅助类，用于将数据打包成带长度头的流传输格式.
 
@@ -112,7 +112,7 @@ class LengthPrefixedWriter:
         使用 JCE 编码对象并将数据包追加到缓冲区.
 
         Args:
-            obj: 要打包的对象（JceStruct 实例或 dict/JceDict）.
+            obj: 要打包的对象（Struct 实例或 dict/StructDict）.
 
         Raises:
             TypeError: 如果对象类型不支持序列化.
@@ -166,11 +166,11 @@ def dumps(
     options: int = 0,
     context: dict[str, Any] | None = None,
 ) -> bytes:
-    """将 JceStruct 序列化为字节.
+    """将 Struct 序列化为字节.
 
     Args:
-        obj: 要序列化的 JceStruct 实例.
-        schema: 从 JceStruct 派生的 schema 列表 (jce_id, field_info) 或 JceStruct 类.
+        obj: 要序列化的 Struct 实例.
+        schema: 从 Struct 派生的 schema 列表 (id, field_info) 或 Struct 类.
         options: 序列化选项（位标志）.
         context: 用于序列化钩子的可选上下文字典.
 
@@ -191,7 +191,7 @@ def dumps_generic(
     """将通用对象序列化为字节，无需 schema.
 
     Args:
-        obj: 要序列化的对象（键为整数 tag 的 dict 或 JceDict）.
+        obj: 要序列化的对象（键为整数 tag 的 dict 或 StructDict）.
         options: 序列化选项（位标志）.
         context: 可选的上下文字典.
 
@@ -207,16 +207,16 @@ def loads(
     schema: list[tuple[int, Any]] | type[Any],
     options: int = 0,
 ) -> dict[str, Any]:
-    """将字节反序列化为字段值字典（用于构造 JceStruct）.
+    """将字节反序列化为字段值字典（用于构造 Struct）.
 
     Args:
         data: 要反序列化的 JCE 字节数据.
-        schema: 目标 JceStruct 的 schema 列表 (jce_id, field_info) 或 JceStruct 类.
+        schema: 目标 Struct 的 schema 列表 (id, field_info) 或 Struct 类.
         options: 反序列化选项（位标志）.
 
 
     Returns:
-        用于构造 JceStruct 的字段值字典 (字段名 -> 值).
+        用于构造 Struct 的字段值字典 (字段名 -> 值).
 
     Raises:
         ValueError: 如果数据格式无效或解码失败.
@@ -227,7 +227,7 @@ def loads_generic(
     options: int = 0,
     bytes_mode: int = 2,
 ) -> dict[int, Any]:
-    """将字节反序列化为通用字典（JceDict），无需 schema.
+    """将字节反序列化为通用字典（StructDict），无需 schema.
 
     Args:
         data: 要反序列化的 JCE 字节数据.
@@ -235,7 +235,7 @@ def loads_generic(
         bytes_mode: 处理字节的模式 (0: Raw, 1: String, 2: Auto).
 
     Returns:
-        包含反序列化数据的字典 (tag -> 值，兼容 JceDict).
+        包含反序列化数据的字典 (tag -> 值，兼容 StructDict).
 
     Raises:
         ValueError: 如果数据格式无效或解码失败.

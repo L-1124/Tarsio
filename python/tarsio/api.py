@@ -1,24 +1,24 @@
 """JCE API模块.
 
-提供用于 JCE 序列化和反序列化的高级接口 `dumps`, `loads`, `dump`, `load`.
-支持 JceStruct 对象、JceDict 以及普通 Python 类型的编解码。
+提供用于 Tarsio 序列化和反序列化的高级接口 `dumps`, `loads`, `dump`, `load`.
+支持 Struct 对象、StructDict 以及普通 Python 类型的编解码。
 """
 
 from typing import IO, Any, Literal, TypeVar, cast, overload
 
-from . import _jce_core as jce_core
-from .config import JceConfig
-from .options import JceOption
-from .struct import JceDict, JceStruct
+from . import _core as core
+from .config import Config
+from .options import Option
+from .struct import Struct, StructDict
 
-T = TypeVar("T", bound=JceStruct)
+T = TypeVar("T", bound=Struct)
 BytesMode = Literal["raw", "string", "auto"]
 
 
 @overload
 def dumps(
-    obj: JceStruct,
-    option: JceOption = JceOption.NONE,
+    obj: Struct,
+    option: Option = Option.NONE,
     context: dict[str, Any] | None = None,
     exclude_unset: bool = False,
 ) -> bytes: ...
@@ -27,7 +27,7 @@ def dumps(
 @overload
 def dumps(
     obj: Any,
-    option: JceOption = JceOption.NONE,
+    option: Option = Option.NONE,
     context: dict[str, Any] | None = None,
     exclude_unset: bool = False,
 ) -> bytes: ...
@@ -35,55 +35,55 @@ def dumps(
 
 def dumps(
     obj: Any,
-    option: JceOption = JceOption.NONE,
+    option: Option = Option.NONE,
     context: dict[str, Any] | None = None,
     exclude_unset: bool = False,
 ) -> bytes:
     """序列化对象为 JCE 字节数据.
 
     Args:
-        obj: 要序列化的 Python 对象. 支持 `JceStruct` 实例, `JceDict`, `dict`, `list` 等.
-        option: 序列化选项 (如 `JceOption.LITTLE_ENDIAN`).
+        obj: 要序列化的 Python 对象. 支持 `Struct` 实例, `StructDict`, `dict`, `list` 等.
+        option: 序列化选项 (如 `Option.LITTLE_ENDIAN`).
         context: 序列化上下文字典.
-            这个字典会传递给字段的自定义序列化器 (`@jce_field_serializer`)，
+            这个字典会传递给字段的自定义序列化器 (`@field_serializer`)，
             用于传递外部状态（如数据库连接、配置等）。
         exclude_unset: 是否排除未显式设置的字段.
-            仅对 JceStruct (Pydantic 模型) 有效. 默认为 False.
+            仅对 Struct (Pydantic 模型) 有效. 默认为 False.
 
     Returns:
         bytes: 序列化后的二进制数据.
 
     Examples:
-        >>> from jce import dumps, JceStruct, JceField
-        >>> class User(JceStruct):
-        ...     uid: int = JceField(jce_id=0)
+        >>> from tarsio import dumps, Struct, Field
+        >>> class User(Struct):
+        ...     uid: int = Field(id=0)
         >>> user = User(uid=123)
         >>> dumps(user).hex()
         '02007b'
     """
-    config = JceConfig.from_params(
+    config = Config.from_params(
         option=option,
         context=context,
         exclude_unset=exclude_unset,
     )
 
-    if isinstance(obj, JceStruct):
+    if isinstance(obj, Struct):
         # 使用 Rust 核心进行序列化
         # 内部使用的 EXCLUDE_UNSET 标志位 (64)
         raw_options = int(config.option)
         if config.exclude_unset:
             raw_options |= 64
 
-        return jce_core.dumps(
+        return core.dumps(
             obj,
-            obj.__get_jce_core_schema__(),
+            obj.__get_core_schema__(),
             raw_options,
             config.context if config.context is not None else {},
         )
 
     # 使用 Rust 核心进行通用序列化
-    # Rust 核心会自动处理 JceDict (作为 Struct) 和 其他类型 (包装在 Tag 0 中)
-    return jce_core.dumps_generic(
+    # Rust 核心会自动处理 StructDict (作为 Struct) 和 其他类型 (包装在 Tag 0 中)
+    return core.dumps_generic(
         obj,
         int(config.option),
         config.context if config.context is not None else {},
@@ -92,9 +92,9 @@ def dumps(
 
 @overload
 def dump(
-    obj: JceStruct,
+    obj: Struct,
     fp: IO[bytes],
-    option: JceOption = JceOption.NONE,
+    option: Option = Option.NONE,
     context: dict[str, Any] | None = None,
     exclude_unset: bool = False,
 ) -> None: ...
@@ -104,7 +104,7 @@ def dump(
 def dump(
     obj: Any,
     fp: IO[bytes],
-    option: JceOption = JceOption.NONE,
+    option: Option = Option.NONE,
     context: dict[str, Any] | None = None,
     exclude_unset: bool = False,
 ) -> None: ...
@@ -113,7 +113,7 @@ def dump(
 def dump(
     obj: Any,
     fp: IO[bytes],
-    option: JceOption = JceOption.NONE,
+    option: Option = Option.NONE,
     context: dict[str, Any] | None = None,
     exclude_unset: bool = False,
 ) -> None:
@@ -124,7 +124,7 @@ def dump(
         fp: 文件类对象, 必须实现 `write(bytes)` 方法.
         option: 序列化选项.
         context: 序列化上下文.
-        exclude_unset: 是否排除未设置的字段 (仅 JceStruct).
+        exclude_unset: 是否排除未设置的字段 (仅 Struct).
     """
     fp.write(
         dumps(
@@ -140,7 +140,7 @@ def dump(
 def loads(
     data: bytes | bytearray | memoryview,
     target: type[T],
-    option: JceOption = JceOption.NONE,
+    option: Option = Option.NONE,
     *,
     bytes_mode: BytesMode = "auto",
     context: dict[str, Any] | None = None,
@@ -150,19 +150,19 @@ def loads(
 @overload
 def loads(
     data: bytes | bytearray | memoryview,
-    target: type[JceDict] = JceDict,
-    option: JceOption = JceOption.NONE,
+    target: type[StructDict] = StructDict,
+    option: Option = Option.NONE,
     *,
     bytes_mode: BytesMode = "auto",
     context: dict[str, Any] | None = None,
-) -> JceDict: ...
+) -> StructDict: ...
 
 
 @overload
 def loads(
     data: bytes | bytearray | memoryview,
     target: type[dict],
-    option: JceOption = JceOption.NONE,
+    option: Option = Option.NONE,
     *,
     bytes_mode: BytesMode = "auto",
     context: dict[str, Any] | None = None,
@@ -171,22 +171,22 @@ def loads(
 
 def loads(
     data: bytes | bytearray | memoryview,
-    target: type[T] | type[JceDict] | type[dict] = JceDict,
-    option: JceOption = JceOption.NONE,
+    target: type[T] | type[StructDict] | type[dict] = StructDict,
+    option: Option = Option.NONE,
     *,
     bytes_mode: BytesMode = "auto",
     context: dict[str, Any] | None = None,
-) -> T | JceDict | dict[int, Any]:
+) -> T | StructDict | dict[int, Any]:
     """反序列化 JCE 字节为 Python 对象.
 
     Args:
         data: 输入的二进制数据 (bytes, bytearray 或 memoryview).
         target: 目标类型.
-            - `JceStruct` 子类: 尝试解析并验证为该结构体实例.
-            - `JceDict` (默认): 解析为 JceDict 实例 (Struct 语义).
-            - `dict`: 解析为普通 dict（将 JceDict 递归转换为 dict）。
-        option: 反序列化选项 (如 `JceOption.LITTLE_ENDIAN`).
-        bytes_mode: 字节数据的处理模式 (仅对通用解析 target=JceDict/dict 有效).
+            - `Struct` 子类: 尝试解析并验证为该结构体实例.
+            - `StructDict` (默认): 解析为 StructDict 实例 (Struct 语义).
+            - `dict`: 解析为普通 dict（将 StructDict 递归转换为 dict）。
+        option: 反序列化选项 (如 `Option.LITTLE_ENDIAN`).
+        bytes_mode: 字节数据的处理模式 (仅对通用解析 target=StructDict/dict 有效).
             - `'raw'`: 保持所有 bytes 类型不变.
             - `'string'`: 尝试将 **所有** bytes 解码为 UTF-8 字符串.
             - `'auto'`: 智能模式 (推荐).
@@ -196,16 +196,16 @@ def loads(
         context: Pydantic 验证器上下文.
 
     Returns:
-        T: 目标类型实例 (如果 target=JceStruct).
-        JceDict: 结构体数据 (如果 target=JceDict).
+        T: 目标类型实例 (如果 target=Struct).
+        StructDict: 结构体数据 (如果 target=StructDict).
         dict: 字典数据 (如果 target=dict).
 
     Raises:
-        JceDecodeError: 数据格式错误.
-        JcePartialDataError: 数据不完整.
+        DecodeError: 数据格式错误.
+        PartialDataError: 数据不完整.
     """
     # 通用解码
-    if target is JceDict or target is dict:
+    if target is StructDict or target is dict:
         # Map BytesMode string to integer for Rust
         mode_int = 2  # default auto
         if bytes_mode == "raw":
@@ -214,7 +214,7 @@ def loads(
             mode_int = 1
 
         # 使用 Rust 核心进行通用反序列化
-        result = jce_core.loads_generic(
+        result = core.loads_generic(
             bytes(data),
             int(option),
             mode_int,
@@ -224,30 +224,30 @@ def loads(
         if target is dict:
             return cast(dict[int, Any], result)
 
-        # 4. 默认目标为 JceDict，需要将顶层转换为 JceDict
-        if not isinstance(result, JceDict):
-            result = JceDict(result)
-        return cast(JceDict, result)
+        # 4. 默认目标为 StructDict，需要将顶层转换为 StructDict
+        if not isinstance(result, StructDict):
+            result = StructDict(result)
+        return cast(StructDict, result)
 
     # Schema 模式
-    if issubclass(target, JceStruct):
+    if issubclass(target, Struct):
         # 使用 Rust 核心进行反序列化
-        raw_dict = jce_core.loads(
+        raw_dict = core.loads(
             bytes(data),
-            target.__get_jce_core_schema__(),
+            target.__get_core_schema__(),
             int(option),
         )
         # Rust 返回的是 dict, 需要通过 Pydantic 验证
         return target.model_validate(raw_dict, context=context)
 
-    raise NotImplementedError("Please use JceStruct or supported types.")
+    raise NotImplementedError("Please use Struct or supported types.")
 
 
 @overload
 def load(
     fp: IO[bytes],
     target: type[T],
-    option: JceOption = JceOption.NONE,
+    option: Option = Option.NONE,
     *,
     bytes_mode: BytesMode = "auto",
     context: dict[str, Any] | None = None,
@@ -257,19 +257,19 @@ def load(
 @overload
 def load(
     fp: IO[bytes],
-    target: type[JceDict] = JceDict,
-    option: JceOption = JceOption.NONE,
+    target: type[StructDict] = StructDict,
+    option: Option = Option.NONE,
     *,
     bytes_mode: BytesMode = "auto",
     context: dict[str, Any] | None = None,
-) -> JceDict: ...
+) -> StructDict: ...
 
 
 @overload
 def load(
     fp: IO[bytes],
     target: type[dict],
-    option: JceOption = JceOption.NONE,
+    option: Option = Option.NONE,
     *,
     bytes_mode: BytesMode = "auto",
     context: dict[str, Any] | None = None,
@@ -278,13 +278,13 @@ def load(
 
 def load(
     fp: IO[bytes],
-    target: type[T] | type[JceDict] | type[dict] = JceDict,
-    option: JceOption = JceOption.NONE,
+    target: type[T] | type[StructDict] | type[dict] = StructDict,
+    option: Option = Option.NONE,
     *,
     bytes_mode: BytesMode = "auto",
     context: dict[str, Any] | None = None,
-) -> T | JceDict | dict[int, Any]:
-    """从文件读取并反序列化 JCE 数据.
+) -> T | StructDict | dict[int, Any]:
+    """从文件读取并反序列化 Tarsio 数据.
 
     封装了 `read()` 和 `loads()`.
 

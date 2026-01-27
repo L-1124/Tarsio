@@ -26,7 +26,7 @@ impl LengthPrefixedReader {
     /// 初始化读取器.
     ///
     /// Args:
-    ///     target: 用于解码的目标类（JceStruct 子类）或通用结构.
+    ///     target: 用于解码的目标类（Struct 子类）或通用结构.
     ///     option: 解码选项.
     ///     max_buffer_size: 允许的最大缓冲区大小（字节），防止 DoS 攻击.
     ///     length_type: 长度前缀的字节大小（1、2 或 4）.
@@ -52,13 +52,13 @@ impl LengthPrefixedReader {
             ));
         }
 
-        // Try to get schema if target is JceStruct
+        // Try to get schema if target is Struct
         let mut target_schema = None;
         #[allow(clippy::collapsible_if)]
-        if let Ok(schema_method) = target.getattr("__get_jce_core_schema__") {
+        if let Ok(schema_method) = target.getattr("__get_core_schema__") {
             if let Ok(schema) = schema_method.call0() {
-                if let Ok(schema_list) = schema.cast::<PyList>() {
-                    target_schema = Some(schema_list.clone().unbind());
+                if let Ok(schema) = schema.cast::<PyList>() {
+                    target_schema = Some(schema.clone().unbind());
                 }
             }
         }
@@ -86,7 +86,7 @@ impl LengthPrefixedReader {
         let data = data.as_bytes();
         if self.buffer.len() + data.len() > self.max_buffer_size {
             return Err(pyo3::exceptions::PyBufferError::new_err(
-                "JceStreamReader buffer exceeded max size",
+                "Reader buffer exceeded max size",
             ));
         }
         self.buffer.extend_from_slice(data);
@@ -100,7 +100,7 @@ impl LengthPrefixedReader {
     /// 迭代缓冲区中的完整数据包.
     ///
     /// Yields:
-    ///     从缓冲区解码的对象（JceStruct 或 dict）.
+    ///     从缓冲区解码的对象（Struct 或 dict）.
     fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<Py<PyAny>>> {
         let length_type = slf.length_type as usize;
         let inclusive = slf.inclusive_length;
@@ -220,7 +220,7 @@ impl LengthPrefixedWriter {
     /// 使用 JCE 编码对象并将数据包追加到缓冲区.
     ///
     /// Args:
-    ///     obj: 要打包的对象（JceStruct 或 dict）.
+    ///     obj: 要打包的对象（Struct 或 dict）.
     #[pyo3(signature = (obj))]
     fn pack(&mut self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<()> {
         self.write(py, obj)
@@ -239,8 +239,8 @@ impl LengthPrefixedWriter {
         };
 
         // Determine how to encode
-        // 1. Try JceStruct (has __get_jce_core_schema__)
-        if let Ok(schema_method) = obj.getattr("__get_jce_core_schema__") {
+        // 1. Try Struct (has __get_core_schema__)
+        if let Ok(schema_method) = obj.getattr("__get_core_schema__") {
             let schema = schema_method.call0()?.cast_into::<PyList>()?;
             encode_struct(
                 py,
@@ -252,14 +252,14 @@ impl LengthPrefixedWriter {
                 0,
             )?;
         }
-        // 2. Try JceDict (generic struct)
+        // 2. Try StructDict (generic struct)
         else if let Ok(type_name) = obj.get_type().name() {
-            if type_name == "JceDict" {
+            if type_name == "StructDict" {
                 if let Ok(dict) = obj.cast::<PyDict>() {
                     encode_generic_struct(py, &mut writer, dict, self.options, &context_bound, 0)?;
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
-                        "JceDict must be a dict-like object",
+                        "StructDict must be a dict-like object",
                     ));
                 }
             } else {

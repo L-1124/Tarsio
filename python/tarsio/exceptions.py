@@ -4,17 +4,17 @@
 """
 
 
-class JceError(Exception):
+class Error(Exception):
     """所有 JCE 异常的基类."""
 
     pass
 
 
-class JceEncodeError(JceError):
+class EncodeError(Error):
     """序列化失败时抛出.
 
     Case:
-        - 对象不匹配 `JceStruct` 定义.
+        - 对象不匹配 `Struct` 定义.
         - 值超出指定 JCE 类型的范围 (如 `INT1` 存了 300).
         - 循环引用.
     """
@@ -22,7 +22,7 @@ class JceEncodeError(JceError):
     pass
 
 
-class JceDecodeError(JceError):
+class DecodeError(Error):
     """反序列化失败时抛出.
 
     Case:
@@ -54,7 +54,7 @@ class JceDecodeError(JceError):
         return base_msg
 
 
-class JcePartialDataError(JceDecodeError):
+class PartialDataError(DecodeError):
     """输入数据不完整时抛出.
 
     通常在使用非阻塞 I/O 或流式解析时抛出，表示需要更多数据才能完成解析。
@@ -63,13 +63,13 @@ class JcePartialDataError(JceDecodeError):
     pass
 
 
-class JceTypeError(JceEncodeError, TypeError):
+class TypeError(EncodeError, TypeError):
     """类型不匹配时抛出."""
 
     pass
 
 
-class JceValueError(JceEncodeError, ValueError):
+class TarsioValueError(EncodeError, ValueError):
     """值无效时抛出 (如超出范围)."""
 
     pass

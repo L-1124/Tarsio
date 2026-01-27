@@ -1,13 +1,13 @@
-# JceStruct
+# Tarsio (formerly JceStruct)
 
-基于 Pydantic v2 的 JCE 协议实现。Rust 核心 (PyO3/maturin) + Python API。混合 Python/Rust 单体仓库。
+基于 Pydantic v2 的 Tars/JCE 协议实现。Rust 核心 (PyO3/maturin) + Python API。混合 Python/Rust 单体仓库。
 
 ## 项目结构
 
 ```tree
-JceStruct/
-├── python/jce/        # Python 包 (公开 API) → 见 python/jce/AGENTS.md
-├── python/tests/      # Pytest 测试套件 → 见 python/tests/AGENTS.md
+Tarsio/
+├── python/tarsio/     # Python 包 (公开 API) → 见 python/AGENTS.md
+├── python/tests/      # Pytest 测试套件 → 见 python/AGENTS.md
 ├── src/               # Rust 核心 (PyO3) → 见 src/AGENTS.md
 ├── docs/              # MkDocs 文档 (api/, usage/)
 ├── Cargo.toml         # 根 Rust crate
@@ -19,9 +19,9 @@ JceStruct/
 
 | 领域           | 指南入口                                         | 关键内容                                  |
 |----------------|--------------------------------------------------|-------------------------------------------|
-| **Python API** | [python/jce/AGENTS.md](python/jce/AGENTS.md)     | `JceStruct`, `dumps`/`loads`, 建模规范    |
+| **Python API** | [python/AGENTS.md](python/AGENTS.md)     | `Struct`, `dumps`/`loads`, 建模规范    |
 | **Rust 核心**  | [src/AGENTS.md](src/AGENTS.md)                   | `serde.rs`, `reader/writer`, 性能关键代码 |
-| **测试套件**   | [python/tests/AGENTS.md](python/tests/AGENTS.md) | `test_protocol.py`, pytest 策略           |
+| **测试套件**   | [python/AGENTS.md](python/AGENTS.md)             | `test_protocol.py`, pytest 策略           |
 | **项目文档**   | `docs/`                                          | MkDocs Material, 使用手册                 |
 
 ## 全局命令

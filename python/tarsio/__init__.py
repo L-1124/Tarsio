@@ -1,29 +1,29 @@
-"""JCE协议序列化库.
+"""Tarsio协议序列化库.
 
-提供了JceStruct定义、序列化(dumps)和反序列化(loads)功能.
+提供了Struct定义、序列化(dumps)和反序列化(loads)功能.
 """
 
-from .adapter import JceTypeAdapter
+from .adapter import TarsTypeAdapter
 from .api import BytesMode, dump, dumps, load, loads
-from .config import JceConfig
+from .config import Config
 from .context import (
     SerializationInfo,
-    jce_field_serializer,
+    field_serializer,
 )
 from .exceptions import (
-    JceDecodeError,
-    JceEncodeError,
-    JceError,
-    JcePartialDataError,
-    JceTypeError,
-    JceValueError,
+    DecodeError,
+    EncodeError,
+    Error,
+    PartialDataError,
+    TarsioValueError,
+    TypeError,
 )
-from .options import JceOption
+from .options import Option
 from .stream import (
     LengthPrefixedReader,
     LengthPrefixedWriter,
 )
-from .struct import JceDict, JceField, JceStruct
+from .struct import Field, Struct, StructDict
 from .types import (
     BOOL,
     BYTE,
@@ -40,10 +40,10 @@ from .types import (
     STRING,
     STRING1,
     STRING4,
+    STRUCT_BEGIN,
     STRUCT_END,
-    STRUCT_START,
     ZERO_TAG,
-    JceType,
+    Type,
 )
 
 __all__ = [
@@ -62,29 +62,29 @@ __all__ = [
     "STRING",
     "STRING1",
     "STRING4",
+    "STRUCT_BEGIN",
     "STRUCT_END",
-    "STRUCT_START",
     "ZERO_TAG",
     "BytesMode",
-    "JceConfig",
-    "JceDecodeError",
-    "JceDict",
-    "JceEncodeError",
-    "JceError",
-    "JceField",
-    "JceOption",
-    "JcePartialDataError",
-    "JceStruct",
-    "JceType",
-    "JceTypeAdapter",
-    "JceTypeError",
-    "JceValueError",
+    "Config",
+    "DecodeError",
+    "EncodeError",
+    "Error",
+    "Field",
     "LengthPrefixedReader",
     "LengthPrefixedWriter",
+    "Option",
+    "PartialDataError",
     "SerializationInfo",
+    "Struct",
+    "StructDict",
+    "TarsTypeAdapter",
+    "TarsioValueError",
+    "Type",
+    "TypeError",
     "dump",
     "dumps",
-    "jce_field_serializer",
+    "field_serializer",
     "load",
     "loads",
 ]

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 pub struct FieldDef {
     pub name: String,
     pub tag: u8,
-    pub jce_type: u8,
+    pub tars_type: u8,
     pub default_val: Py<PyAny>,
     pub has_serializer: bool,
 }
@@ -42,7 +42,7 @@ pub fn compile_schema(py: Python<'_>, schema_list: &Bound<'_, PyList>) -> PyResu
 
         let name: String = tuple.get_item(0)?.extract()?;
         let tag: u8 = tuple.get_item(1)?.extract()?;
-        let jce_type_code: u8 = tuple.get_item(2)?.extract()?;
+        let tars_type_code: u8 = tuple.get_item(2)?.extract()?;
         let default_val = tuple.get_item(3)?.unbind();
         let has_serializer: bool = tuple.get_item(4)?.extract()?;
 
@@ -57,14 +57,14 @@ pub fn compile_schema(py: Python<'_>, schema_list: &Bound<'_, PyList>) -> PyResu
         fields.push(FieldDef {
             name,
             tag,
-            jce_type: jce_type_code,
+            tars_type: tars_type_code,
             default_val,
             has_serializer,
         });
     }
 
     let compiled = CompiledSchema { fields, tag_map };
-    // let name = CString::new("jce._jce_core.CompiledSchema").unwrap();
+    // let name = CString::new("tarsio._core.CompiledSchema").unwrap();
 
     // PyCapsule::new 自动处理析构函数，确保 Box 被释放。
     // 该名称用于在检索 capsule 时进行类型检查。

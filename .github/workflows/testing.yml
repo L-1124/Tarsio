@@ -49,16 +49,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups
 
-      # 6. Install Project (triggers maturin build)
-      - name: Install project
-        run: uv pip install -e .
-        env:
-          RUST_BACKTRACE: 1
-
       - name: Show installed packages
         run: uv pip freeze
 
-      # 7. Python Linting
+      # 6. Python Linting
       - name: Python Ruff Check
         run: uv run ruff check .
 
@@ -68,10 +62,10 @@ jobs:
       - name: Python Type Check
         run: uv run basedpyright
 
-      # 8. Python Tests
+      # 7. Python Tests
       - name: Run Python tests
         run: uv run pytest
 
-      # 9. Verify Docs Build
+      # 8. Verify Docs Build
       - name: Verify Docs Build
         run: uv run mkdocs build --strict

@@ -2,12 +2,12 @@
 
 import logging
 
-from jce.log import get_hexdump, logger
+from tarsio.log import get_hexdump, logger
 
 
 def test_logger_config() -> None:
     """验证 Logger 默认配置不包含 Handler 且名称正确."""
-    assert logger.name == "jce"
+    assert logger.name == "tarsio"
     assert not logger.handlers
     assert logger.level == logging.NOTSET
 

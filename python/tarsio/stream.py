@@ -6,14 +6,14 @@
 
 from typing import Any
 
-from ._jce_core import (
+from ._core import (
     LengthPrefixedReader as _RustLengthPrefixedReader,
 )
-from ._jce_core import (
+from ._core import (
     LengthPrefixedWriter as _RustLengthPrefixedWriter,
 )
-from .options import JceOption
-from .struct import JceDict, JceStruct
+from .options import Option
+from .struct import Struct, StructDict
 
 
 class LengthPrefixedWriter(_RustLengthPrefixedWriter):
@@ -39,7 +39,7 @@ class LengthPrefixedWriter(_RustLengthPrefixedWriter):
 
     def __new__(
         cls,
-        option: JceOption = JceOption.NONE,
+        option: Option = Option.NONE,
         context: dict[str, Any] | None = None,
         length_type: int = 4,
         inclusive_length: bool = True,
@@ -57,7 +57,7 @@ class LengthPrefixedWriter(_RustLengthPrefixedWriter):
 
     def __init__(
         self,
-        option: JceOption = JceOption.NONE,
+        option: Option = Option.NONE,
         context: dict[str, Any] | None = None,
         length_type: int = 4,  # 1, 2, 或 4 字节
         inclusive_length: bool = True,  # 长度包含头部本身
@@ -72,7 +72,7 @@ class LengthPrefixedWriter(_RustLengthPrefixedWriter):
         使用 JCE 编码对象并将数据包追加到缓冲区。
 
         Args:
-            obj: 要打包的对象 (JceStruct 子类或 JceDict/dict).
+            obj: 要打包的对象 (Struct 子类或 StructDict/dict).
         """
         super().pack(obj)
 
@@ -104,7 +104,7 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
     该类使用 Rust 核心实现以获得高性能。
 
     Args:
-        target: 目标类型 (JceStruct 子类, JceDict, 或 dict).
+        target: 目标类型 (Struct 子类, StructDict, 或 dict).
         option: JCE 选项.
         max_buffer_size: 内部缓冲区的最大大小 (默认 10MB).
         context: 反序列化上下文.
@@ -121,13 +121,13 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
 
     _target: Any
     _context: dict[str, Any] | None
-    _option: JceOption
+    _option: Option
     _bytes_mode: str
 
     def __new__(
         cls,
         target: Any,
-        option: JceOption = JceOption.NONE,
+        option: Option = Option.NONE,
         max_buffer_size: int = 10 * 1024 * 1024,
         length_type: int = 4,
         inclusive_length: bool = True,
@@ -158,7 +158,7 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
     def __init__(
         self,
         target: Any,
-        option: JceOption = JceOption.NONE,
+        option: Option = Option.NONE,
         max_buffer_size: int = 10 * 1024 * 1024,  # noqa: ARG002
         context: dict[str, Any] | None = None,
         length_type: int = 4,  # noqa: ARG002
@@ -192,11 +192,17 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
         """
         obj = super().__next__()
 
-        # 后处理逻辑: 支持 Pydantic 验证和 JceDict 包装
-        if isinstance(self._target, type) and issubclass(self._target, JceStruct):
-            return self._target.model_validate(obj, context=self._context)
-        if self._target is JceDict:
-            return JceDict(obj)
+        # 后处理逻辑: 支持 Pydantic 验证和 StructDict 包装
+        if isinstance(self._target, type) and issubclass(self._target, Struct):
+            # Rust 返回 tag-keyed dict {0: val, 1: val}, 需转换为 field-name dict
+            tars_fields = self._target.__tars_fields__
+            # 构建 tag -> field_name 反向映射
+            tag_to_name = {mf.id: name for name, mf in tars_fields.items()}
+            # 转换 dict 键
+            named_obj = {tag_to_name.get(k, k): v for k, v in obj.items()}
+            return self._target.model_validate(named_obj, context=self._context)
+        if self._target is StructDict:
+            return StructDict(obj)
         return obj
 
     def feed(self, data: bytes) -> None:

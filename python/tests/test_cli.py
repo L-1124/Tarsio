@@ -6,28 +6,28 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from jce import JceField, JceStruct, dumps, types
+from tarsio import Field, Struct, dumps, types
 
 try:
-    from jce.__main__ import cli
+    from tarsio.__main__ import cli
 except ImportError:
     pytest.skip("click not installed", allow_module_level=True)
 
 
-class SimpleCliStruct(JceStruct):
+class SimpleCliStruct(Struct):
     """CLI 测试用简单结构体."""
 
-    name: str = JceField(jce_id=1, jce_type=types.STRING1)
-    val: int = JceField(jce_id=2, jce_type=types.INT32)
+    name: str = Field(id=1, tars_type=types.STRING1)
+    val: int = Field(id=2, tars_type=types.INT32)
 
 
-class ComplexCliStruct(JceStruct):
+class ComplexCliStruct(Struct):
     """CLI 测试用复杂结构体."""
 
-    id: int = JceField(jce_id=0, jce_type=types.INT32)
-    data: bytes = JceField(jce_id=1, jce_type=types.BYTES)
-    items: list[int] = JceField(jce_id=2, jce_type=types.LIST)
-    mapping: dict[str, str] = JceField(jce_id=3, jce_type=types.MAP)
+    id: int = Field(id=0, tars_type=types.INT32)
+    data: bytes = Field(id=1, tars_type=types.BYTES)
+    items: list[int] = Field(id=2, tars_type=types.LIST)
+    mapping: dict[str, str] = Field(id=3, tars_type=types.MAP)
 
 
 @pytest.fixture
@@ -182,9 +182,9 @@ def test_cli_tree_recursive_simplelist(runner: CliRunner) -> None:
     clean_output = strip_ansi(result.output)
 
     assert "[0] int: 100" in clean_output
-    assert "[1] JceStruct" in clean_output or "[1] Map" in clean_output
+    assert "[1] Struct" in clean_output or "[1] Map" in clean_output
 
-    if "[1] JceStruct" in clean_output:
+    if "[1] Struct" in clean_output:
         assert "[1] String: 'inner'" in clean_output
         assert "[2] int: 999" in clean_output
     else:

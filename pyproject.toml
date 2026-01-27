@@ -1,6 +1,6 @@
 [project]
-name = "jce-python"
-description = "基于 Pydantic v2 的现代化 JCE (Tars) 协议 Python 实现"
+name = "tarsio"
+description = "Fast Tars/JCE protocol implementation for Python, powered by Rust"
 readme = { file = "README.md", content-type = "text/markdown" }
 version = "0.3.1"
 requires-python = ">=3.10"
@@ -39,7 +39,7 @@ Issues = "https://github.com/L-1124/JceStruct/issues"
 Repository = "https://github.com/L-1124/JceStruct"
 
 [project.scripts]
-jce = "jce.__main__:main"
+tarsio = "tarsio.__main__:main"
 
 [project.optional-dependencies]
 cli = ["click>=8.0", "rich>=14.2.0"]
@@ -78,11 +78,11 @@ build-backend = "maturin"
 
 [tool.maturin]
 features = ["pyo3/extension-module", "pyo3/generate-import-lib"]
-module-name = "jce._jce_core"
+module-name = "tarsio._core"
 # manifest-path not needed as it is in root
 python-source = "python"
 include = [
-    "python/jce/**/*",
+    "python/tarsio/**/*",
     "README.md",
     "LICENSE",
     "src/**/*",
@@ -98,7 +98,7 @@ typeCheckingMode = "standard"
 include = [ "python/tests"]
 
 [tool.pytest]
-addopts = ["--cov-report=term-missing", "--cov=jce", "-v"]
+addopts = ["--cov-report=term-missing", "--cov=tarsio", "-v"]
 minversion = "6.0"
 python_files = ["test_*.py"]
 testpaths = ["python/tests"]
@@ -107,7 +107,6 @@ pythonpath = ["python"]
 [tool.ruff]
 line-length = 88
 target-version = "py310"
-extend-exclude = ["jce-core/python/"]
 
 [tool.ruff.lint]
 select = [

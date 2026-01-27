@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from . import BytesMode, JceDict, loads
+from . import BytesMode, StructDict, loads
 
 if TYPE_CHECKING:
     import click as click_module
@@ -41,9 +41,9 @@ if not click:
         print("错误: 未检测到 'click' 模块,无法运行 CLI 工具。", file=sys.stderr)
         print(
             "\n该功能属于可选组件,请通过以下命令安装依赖:\n"
-            "  pip install 'git+https://github.com/L-1124/JceStruct.git[cli]'\n"
+            "  pip install 'git+https://github.com/L-1124/Struct.git[cli]'\n"
             "\n或者如果您使用 uv:\n"
-            "  uv add 'git+https://github.com/L-1124/JceStruct.git[cli]'",
+            "  uv add 'git+https://github.com/L-1124/Struct.git[cli]'",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -120,11 +120,11 @@ else:
         style_value_str = "green"
         style_value_num = "magenta"
 
-        if isinstance(obj, JceDict):
+        if isinstance(obj, StructDict):
             label = Text()
             if label_prefix:
                 label.append(f"{label_prefix} ", style=style_tag)
-            label.append("JceStruct", style="bold yellow")
+            label.append("Struct", style="bold yellow")
             branch = tree.add(label)
             # 排序以保证输出稳定性
             for tag, val in sorted(obj.items()):
@@ -189,7 +189,7 @@ else:
             return
 
         console = Console(file=file, force_terminal=file is None)
-        root = Tree("JceStruct Root", style="bold white")
+        root = Tree("Struct Root", style="bold white")
 
         _build_rich_tree(result, root)
 
@@ -217,7 +217,7 @@ else:
             _validate_bytes_mode(bytes_mode)
             result = loads(
                 data,
-                target=JceDict,
+                target=StructDict,
                 bytes_mode=cast(BytesMode, bytes_mode),
             )
         except Exception as e:
@@ -279,7 +279,7 @@ else:
             assert output_text is not None
             click.echo(output_text)
 
-    @click.command(help="JCE 编解码命令行工具")
+    @click.command(help="Tarsio 编解码命令行工具")
     @click.argument("encoded", required=False)
     @click.option(
         "-f",
@@ -328,16 +328,16 @@ else:
 
         Examples:
           # 直接解码十六进制数据
-          jce "0a0b0c"
+          tarsio "0a0b0c"
 
           # 从文件读取十六进制数据
-          jce -f input.hex
+          tarsio -f input.hex
 
           # 以 JSON 格式输出结果
-          jce -f input.hex --format json
+          tarsio -f input.hex --format json
 
           # 以 Tree 格式输出 (需要 rich)
-          jce "0C" --format tree
+          tarsio "0C" --format tree
         """
         # 互斥参数检查
         if encoded and file_path:

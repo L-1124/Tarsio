@@ -3,32 +3,32 @@
 from typing import Generic, TypeVar
 
 import pytest
-from jce import JceField, JceStruct, dumps, loads, types
 from pydantic import ValidationError
+from tarsio import Field, Struct, dumps, loads, types
 
 T = TypeVar("T")
 K = TypeVar("K")
 V = TypeVar("V")
 
 
-class Box(JceStruct, Generic[T]):
+class Box(Struct, Generic[T]):
     """基础泛型容器."""
 
-    value: T = JceField(jce_id=0)
+    value: T = Field(id=0)
 
 
-class Pair(JceStruct, Generic[K, V]):
+class Pair(Struct, Generic[K, V]):
     """双类型泛型容器."""
 
-    key: K = JceField(jce_id=0)
-    value: V = JceField(jce_id=1)
+    key: K = Field(id=0)
+    value: V = Field(id=1)
 
 
-class User(JceStruct):
+class User(Struct):
     """测试用的普通结构体."""
 
-    uid: int = JceField(jce_id=0)
-    name: str = JceField(jce_id=1)
+    uid: int = Field(id=0)
+    name: str = Field(id=1)
 
 
 def test_generic_primitive() -> None:
@@ -108,8 +108,8 @@ def test_generic_list_field() -> None:
 def test_generic_base_fields_discovery() -> None:
     """从泛型基类发现字段 (覆盖 SchemaDecoder.__init__ 中的逻辑)."""
 
-    class Base(JceStruct, Generic[T]):
-        base_field: int = JceField(jce_id=0, jce_type=types.INT32)
+    class Base(Struct, Generic[T]):
+        base_field: int = Field(id=0, tars_type=types.INT32)
 
     class Derived(Base[int]):
         pass

@@ -1,4 +1,4 @@
-"""JCE 协议兼容性测试.
+"""Tarsio 协议兼容性测试.
 
 该文件包含确定的输入和预期的十六进制输出。
 注意：
@@ -8,31 +8,31 @@
 """
 
 import pytest
-from jce import JceField, JceOption, JceStruct, dumps
+from tarsio import Field, Option, Struct, dumps
 
 # --- 辅助结构体定义 ---
 
 
-class User(JceStruct):
+class User(Struct):
     """基础用户结构体."""
 
-    uid: int = JceField(jce_id=0)
-    name: str = JceField(jce_id=1)
+    uid: int = Field(id=0)
+    name: str = Field(id=1)
 
 
-class ComplexStruct(JceStruct):
+class ComplexStruct(Struct):
     """包含嵌套和默认值的复杂结构体."""
 
-    flag: bool = JceField(jce_id=0)
-    nums: list[int] = JceField(jce_id=1)
-    extra: dict[str, str] | None = JceField(jce_id=2, default=None)
+    flag: bool = Field(id=0)
+    nums: list[int] = Field(id=1)
+    extra: dict[str, str] | None = Field(id=2, default=None)
 
 
-class MapContainer(JceStruct):
+class MapContainer(Struct):
     """专门用于测试 Map 编码的容器."""
 
     # 使用 Tag 0，类型为 Map
-    data: dict[int, list[int]] = JceField(jce_id=0)
+    data: dict[int, list[int]] = Field(id=0)
 
 
 # --- 测试数据 ---
@@ -85,7 +85,7 @@ STRUCT_CASES = [
 OPTION_CASES = [
     # 小端序 (Little Endian)
     # 256 -> 00 01 (Tag 0, Type 1 INT2) -> 01 0001
-    (256, "010001", JceOption.LITTLE_ENDIAN, "小端序选项"),
+    (256, "010001", Option.LITTLE_ENDIAN, "小端序选项"),
 ]
 
 # --- 测试函数 ---
@@ -115,17 +115,17 @@ def test_protocol_options(value, expected, option, desc):
 def test_protocol_omit_default():
     """开启 OMIT_DEFAULT 选项时应省略与默认值相等的字段."""
 
-    class DefaultConfig(JceStruct):
-        a: int = JceField(jce_id=0, default=1)
-        b: int = JceField(jce_id=1, default=2)
+    class DefaultConfig(Struct):
+        a: int = Field(id=0, default=1)
+        b: int = Field(id=1, default=2)
 
     # 全是默认值 -> 空
     obj1 = DefaultConfig(a=1, b=2)
-    assert len(dumps(obj1, option=JceOption.OMIT_DEFAULT)) == 0
+    assert len(dumps(obj1, option=Option.OMIT_DEFAULT)) == 0
 
     # 部分默认值 -> 10 03 (Tag 1, Val 3)
     obj2 = DefaultConfig(a=1, b=3)
-    assert dumps(obj2, option=JceOption.OMIT_DEFAULT).hex().upper() == "1003"
+    assert dumps(obj2, option=Option.OMIT_DEFAULT).hex().upper() == "1003"
 
 
 def test_protocol_nested_map():

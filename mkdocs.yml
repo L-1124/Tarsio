@@ -1,11 +1,11 @@
-site_name: JceStruct
-site_description: Modern JCE/Tars serialization library for Python, built on Pydantic v2.
-repo_url: https://github.com/l-1124/JceStruct
-repo_name: JceStruct
+site_name: Tarsio
+site_description: Modern Tars/JCE serialization library for Python, built on Pydantic v2.
+repo_url: https://github.com/l-1124/Tarsio
+repo_name: Tarsio
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/l-1124/JceStruct
+      link: https://github.com/l-1124/Tarsio
 
 watch:
   - docs

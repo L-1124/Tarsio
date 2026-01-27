@@ -61,24 +61,24 @@ fn get_or_compile_schema(
     if let Ok(cls) = schema_or_type.cast::<PyType>() {
         // 1. Check cache
         #[allow(clippy::collapsible_if)]
-        if let Ok(cached) = cls.getattr("__jce_compiled_schema__") {
+        if let Ok(cached) = cls.getattr("__tars_compiled_schema__") {
             if let Ok(capsule) = cached.cast::<PyCapsule>() {
                 return Ok(Some(capsule.clone().unbind()));
             }
         }
 
         // 2. Compile if missing
-        // Calling obj.__get_jce_core_schema__() or cls.__get_jce_core_schema__()
-        let schema_list_method = cls.getattr("__get_jce_core_schema__")?;
+        // Calling obj.__get_core_schema__() or cls.__get_core_schema__()
+        let schema_list_method = cls.getattr("__get_core_schema__")?;
         let schema_list = schema_list_method.call0()?;
         let list = schema_list
             .cast::<PyList>()
-            .map_err(|_| PyTypeError::new_err("__get_jce_core_schema__ must return a list"))?;
+            .map_err(|_| PyTypeError::new_err("__get_core_schema__ must return a list"))?;
 
         let capsule = compile_schema(py, list)?;
 
         // 3. Update cache
-        cls.setattr("__jce_compiled_schema__", &capsule)?;
+        cls.setattr("__tars_compiled_schema__", &capsule)?;
 
         return Ok(Some(capsule));
     }
@@ -127,10 +127,10 @@ pub fn dumps(
     Ok(PyBytes::new(py, writer.get_buffer()).into())
 }
 
-/// 将通用对象（dict 或 JceDict）序列化为字节，无需 schema.
+/// 将通用对象（dict 或 StructDict）序列化为字节，无需 schema.
 ///
 /// Args:
-///     obj: 要序列化的对象（带有整数 tag 的 dict 或 JceDict）.
+///     obj: 要序列化的对象（带有整数 tag 的 dict 或 StructDict）.
 ///     options: 序列化选项.
 ///     context: 可选的上下文字典.
 ///
@@ -155,11 +155,13 @@ pub fn dumps_generic(
     let obj_bound = obj.bind(py);
 
     let type_name = obj_bound.get_type().name()?.to_string();
-    if type_name == "JceDict" {
+    if type_name == "StructDict" {
         if let Ok(dict) = obj_bound.cast::<PyDict>() {
             encode_generic_struct(py, &mut writer, dict, options, &context_bound, 0)?;
         } else {
-            return Err(PyTypeError::new_err("JceDict must be a dict-like object"));
+            return Err(PyTypeError::new_err(
+                "StructDict must be a dict-like object",
+            ));
         }
     } else {
         // Always wrap in Tag 0 for generic dumps to match legacy behavior
@@ -192,7 +194,7 @@ pub fn loads(
     decode_struct(py, &mut reader, schema, options, 0)
 }
 
-/// 将字节反序列化为通用字典 (JceDict)，无需 schema.
+/// 将字节反序列化为通用字典 (StructDict)，无需 schema.
 ///
 /// Args:
 ///     data: 要反序列化的 JCE 字节数据.
@@ -200,7 +202,7 @@ pub fn loads(
 ///     bytes_mode: 处理字节的模式 (0: Raw, 1: String, 2: Auto).
 ///
 /// Returns:
-///     dict: 包含反序列化数据的字典 (兼容 JceDict).
+///     dict: 包含反序列化数据的字典 (兼容 StructDict).
 #[pyfunction]
 #[pyo3(signature = (data, options=0, bytes_mode=2))]
 pub fn loads_generic(
@@ -279,7 +281,7 @@ pub(crate) fn encode_struct(
 
         // Call serializer hook if present
         if has_serializer {
-            let serializers = obj.getattr("__jce_serializers__")?;
+            let serializers = obj.getattr("__tars_serializers__")?;
             let serializer_name: String = serializers.get_item(&name)?.extract()?;
             let serializer_func = obj.getattr(&serializer_name)?;
             value = serializer_func.call1((value, context))?;
@@ -342,18 +344,18 @@ fn encode_struct_compiled(
 
         // Call serializer hook if present
         if field.has_serializer {
-            let serializers = obj.getattr("__jce_serializers__")?;
+            let serializers = obj.getattr("__tars_serializers__")?;
             let serializer_name: String = serializers.get_item(&field.name)?.extract()?;
             let serializer_func = obj.getattr(&serializer_name)?;
             value = serializer_func.call1((value, context))?;
         }
 
-        if field.jce_type == 255 {
+        if field.tars_type == 255 {
             encode_generic_field(py, writer, field.tag, &value, options, context, depth + 1)?;
             continue;
         }
 
-        let jce_type = JceType::try_from(field.jce_type)
+        let jce_type = JceType::try_from(field.tars_type)
             .map_err(|id| PyValueError::new_err(format!("Invalid JCE type code: {}", id)))?;
 
         encode_field(
@@ -384,7 +386,7 @@ pub(crate) fn encode_generic_struct(
 
     for (key, value) in dict.iter() {
         let tag: u8 = key.extract().map_err(|_| {
-            PyTypeError::new_err("JceDict keys must be int tags for struct encoding")
+            PyTypeError::new_err("StructDict keys must be int tags for struct encoding")
         })?;
         encode_generic_field(py, writer, tag, &value, options, context, depth + 1)?;
     }
@@ -423,7 +425,7 @@ pub(crate) fn encode_generic_field(
         }
     } else if let Ok(val) = value.cast::<PyDict>() {
         let type_name = value.get_type().name()?.to_string();
-        if type_name == "JceDict" {
+        if type_name == "StructDict" {
             writer.write_tag(tag, JceType::StructBegin);
             encode_generic_struct(py, writer, val, options, context, depth + 1)?;
             writer.write_tag(0, JceType::StructEnd);
@@ -435,12 +437,12 @@ pub(crate) fn encode_generic_field(
                 encode_generic_field(py, writer, 1, &v, options, context, depth + 1)?;
             }
         }
-    } else if value.getattr("__get_jce_core_schema__").is_ok() {
+    } else if value.getattr("__get_core_schema__").is_ok() {
         let type_obj = value.get_type();
         writer.write_tag(tag, JceType::StructBegin);
         encode_struct(py, writer, value, &type_obj, options, context, depth + 1)?;
         writer.write_tag(0, JceType::StructEnd);
-    } else if let Ok(schema) = value.getattr("__jce_schema__") {
+    } else if let Ok(schema) = value.getattr("__tars_schema__") {
         writer.write_tag(tag, JceType::StructBegin);
         encode_struct(py, writer, value, &schema, options, context, depth + 1)?;
         writer.write_tag(0, JceType::StructEnd);
@@ -521,14 +523,16 @@ fn encode_field(
         JceType::StructBegin => {
             writer.write_tag(tag, JceType::StructBegin);
             let type_name = value.get_type().name()?.to_string();
-            if type_name == "JceDict" {
+            if type_name == "StructDict" {
                 if let Ok(dict) = value.cast::<PyDict>() {
                     encode_generic_struct(py, writer, dict, options, context, depth + 1)?;
                 } else {
-                    return Err(PyTypeError::new_err("JceDict must be a dict-like object"));
+                    return Err(PyTypeError::new_err(
+                        "StructDict must be a dict-like object",
+                    ));
                 }
             } else {
-                let nested_schema = value.getattr("__jce_schema__")?.cast_into::<PyList>()?;
+                let nested_schema = value.getattr("__tars_schema__")?.cast_into::<PyList>()?;
                 encode_struct(py, writer, value, &nested_schema, options, context, depth)?;
             }
             writer.write_tag(0, JceType::StructEnd);
@@ -650,11 +654,11 @@ fn decode_struct_compiled(
         if let Some(&idx) = schema.tag_map.get(&tag) {
             let field = &schema.fields[idx];
 
-            let value = if field.jce_type == 255 {
+            let value = if field.tars_type == 255 {
                 // Generic field in struct, use default BytesMode::Auto (2)
                 decode_generic_field(py, reader, jce_type, options, BytesMode::Auto, depth + 1)?
             } else {
-                let expected_type = JceType::try_from(field.jce_type).map_err(|id| {
+                let expected_type = JceType::try_from(field.tars_type).map_err(|id| {
                     PyValueError::new_err(format!("Invalid JCE type code in schema: {}", id))
                 })?;
 
@@ -788,8 +792,7 @@ fn decode_generic_field(
             }
         }
         JceType::List => {
-            let (_, t) = reader.read_head().map_err(map_decode_error)?;
-            let len = reader.read_int(t).map_err(map_decode_error)? as usize;
+            let len = reader.read_size().map_err(map_decode_error)? as usize;
             let list = PyList::empty(py);
             for _ in 0..len {
                 let (_, it) = reader.read_head().map_err(map_decode_error)?;
@@ -799,8 +802,7 @@ fn decode_generic_field(
             Ok(list.into())
         }
         JceType::Map => {
-            let (_, t) = reader.read_head().map_err(map_decode_error)?;
-            let len = reader.read_int(t).map_err(map_decode_error)? as usize;
+            let len = reader.read_size().map_err(map_decode_error)? as usize;
             let dict = PyDict::new(py);
             for _ in 0..len {
                 let (_, kt) = reader.read_head().map_err(map_decode_error)?;
@@ -895,8 +897,8 @@ fn decode_field(
 fn map_decode_error(err: JceDecodeError) -> PyErr {
     Python::attach(|py| {
         #[allow(clippy::collapsible_if)]
-        if let Ok(module) = py.import("jce.exceptions") {
-            if let Ok(cls) = module.getattr("JceDecodeError") {
+        if let Ok(module) = py.import("tarsio.exceptions") {
+            if let Ok(cls) = module.getattr("DecodeError") {
                 if let Ok(err_obj) = cls.call1((err.to_string(),)) {
                     return PyErr::from_value(err_obj);
                 }

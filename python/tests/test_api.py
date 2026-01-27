@@ -5,15 +5,15 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from jce.api import BytesMode
+    from tarsio.api import BytesMode
 
 import pytest
-from jce import (
-    JceDecodeError,
-    JceDict,
-    JceField,
-    JceOption,
-    JceStruct,
+from tarsio import (
+    DecodeError,
+    Field,
+    Option,
+    Struct,
+    StructDict,
     dump,
     dumps,
     load,
@@ -21,11 +21,11 @@ from jce import (
 )
 
 
-class SimpleUser(JceStruct):
+class SimpleUser(Struct):
     """测试用的 JCE Struct."""
 
-    uid: int = JceField(jce_id=0)
-    name: str = JceField(jce_id=1, default="unknown")
+    uid: int = Field(id=0)
+    name: str = Field(id=1, default="unknown")
 
 
 def test_dumps_basic() -> None:
@@ -48,20 +48,20 @@ def test_loads_basic() -> None:
 
 
 def test_loads_map_behavior() -> None:
-    """loads() 默认应将 Map 数据解析为 JceDict."""
+    """loads() 默认应将 Map 数据解析为 StructDict."""
     data = {1: "a", 2: "b"}
     encoded = dumps(data)
 
     decoded = loads(encoded)
 
-    assert isinstance(decoded, JceDict)
+    assert isinstance(decoded, StructDict)
     assert decoded[0] == data
     assert isinstance(decoded[0][1], str)
 
 
 def test_jce_dict_struct_behavior() -> None:
-    """JceDict 对象应被序列化为 Struct 格式而非 Map."""
-    data = JceDict({0: 100})
+    """StructDict 对象应被序列化为 Struct 格式而非 Map."""
+    data = StructDict({0: 100})
 
     encoded = dumps(data)
 
@@ -91,14 +91,14 @@ def test_file_io_round_trip() -> None:
     f.seek(0)
     loaded_data = load(f)
 
-    assert isinstance(loaded_data, JceDict)
+    assert isinstance(loaded_data, StructDict)
     assert loaded_data[0] == data
     assert loaded_data[0][2] == "test"
 
 
 def test_file_io_load_target_dict() -> None:
     """load(target=dict) 应返回普通 dict 类型."""
-    data = JceDict({0: 100, 1: "abc"})
+    data = StructDict({0: 100, 1: "abc"})
     f = io.BytesIO()
     dump(data, f)
     f.seek(0)
@@ -106,7 +106,7 @@ def test_file_io_load_target_dict() -> None:
     loaded_data = load(f, target=dict)
 
     assert isinstance(loaded_data, dict)
-    assert not isinstance(loaded_data, JceDict)
+    assert not isinstance(loaded_data, StructDict)
     assert loaded_data[0] == 100
     assert loaded_data[1] == "abc"
 
@@ -123,32 +123,32 @@ def test_auto_bytes_conversion() -> None:
 
 
 def test_loads_returns_jcedict() -> None:
-    """loads() 默认应返回 JceDict 类型."""
-    struct_data = JceDict({0: 100, 1: "test"})
+    """loads() 默认应返回 StructDict 类型."""
+    struct_data = StructDict({0: 100, 1: "test"})
     encoded = dumps(struct_data)
 
     decoded = loads(encoded)
 
-    assert isinstance(decoded, JceDict)
+    assert isinstance(decoded, StructDict)
     assert decoded[0] == 100
     assert decoded[1] == "test"
 
 
 def test_loads_target_dict_returns_dict() -> None:
     """loads(target=dict) 应返回普通 dict 类型."""
-    struct_data = JceDict({0: 100})
+    struct_data = StructDict({0: 100})
     encoded = dumps(struct_data)
 
     decoded = loads(encoded, target=dict)
 
     assert isinstance(decoded, dict)
-    assert not isinstance(decoded, JceDict)
+    assert not isinstance(decoded, StructDict)
     assert decoded[0] == 100
 
 
 def test_jcedict_vs_dict_encoding_difference() -> None:
-    """JceDict 和 dict 应有不同的编码表现 (Struct vs Map)."""
-    jce_data = JceDict({0: 100})
+    """StructDict 和 dict 应有不同的编码表现 (Struct vs Map)."""
+    jce_data = StructDict({0: 100})
     jce_encoded = dumps(jce_data)
     assert jce_encoded == b"\x00\x64"
 
@@ -159,13 +159,13 @@ def test_jcedict_vs_dict_encoding_difference() -> None:
 
 
 def test_jcedict_as_nested_struct() -> None:
-    """JceDict 应支持嵌套使用."""
-    outer = JceDict({0: JceDict({1: "inner"})})
+    """StructDict 应支持嵌套使用."""
+    outer = StructDict({0: StructDict({1: "inner"})})
     encoded = dumps(outer)
 
     decoded = loads(encoded)
 
-    assert isinstance(decoded, JceDict)
+    assert isinstance(decoded, StructDict)
     # 嵌套的结构体现在是普通的 dict (性能优化: Rust 直接返回 dict)
     assert isinstance(decoded[0], dict)
     assert decoded[0][1] == "inner"
@@ -234,33 +234,33 @@ def test_convert_bytes_dict_key() -> None:
 
 JCEDICT_TO_DICT_CASES: list[tuple[Any, Callable[[Any], bool], str]] = [
     (
-        JceDict({0: JceDict({1: "inner"})}),
+        StructDict({0: StructDict({1: "inner"})}),
         lambda r: (
             isinstance(r, dict)
-            and not isinstance(r, JceDict)
+            and not isinstance(r, StructDict)
             and isinstance(r[0], dict)
-            and not isinstance(r[0], JceDict)
+            and not isinstance(r[0], StructDict)
             and r[0][1] == "inner"
         ),
-        "嵌套JceDict转换",
+        "嵌套StructDict转换",
     ),
     (
-        JceDict({0: [JceDict({1: "item"})]}),
+        StructDict({0: [StructDict({1: "item"})]}),
         lambda r: (
             isinstance(r[0], list)
             and isinstance(r[0][0], dict)
-            and not isinstance(r[0][0], JceDict)
+            and not isinstance(r[0][0], StructDict)
         ),
-        "列表中的JceDict转换",
+        "列表中的StructDict转换",
     ),
     (
-        (JceDict({0: "test"}),),
+        (StructDict({0: "test"}),),
         lambda r: (
             isinstance(r, tuple)
             and isinstance(r[0], dict)
-            and not isinstance(r[0], JceDict)
+            and not isinstance(r[0], StructDict)
         ),
-        "元组中的JceDict转换",
+        "元组中的StructDict转换",
     ),
 ]
 
@@ -269,7 +269,7 @@ def test_dumps_with_option() -> None:
     """dumps() 应支持传入 option 参数控制编码行为."""
     data = {1: 100}
 
-    encoded_le = dumps(data, option=JceOption.LITTLE_ENDIAN)
+    encoded_le = dumps(data, option=Option.LITTLE_ENDIAN)
     encoded_be = dumps(data)
 
     assert isinstance(encoded_le, bytes)
@@ -289,9 +289,9 @@ def test_dumps_with_exclude_unset() -> None:
 def test_dumps_with_context() -> None:
     """dumps() 应能将 context 传递给序列化过程."""
 
-    class ContextUser(JceStruct):
-        uid: int = JceField(jce_id=0)
-        name: str = JceField(jce_id=1)
+    class ContextUser(Struct):
+        uid: int = Field(id=0)
+        name: str = Field(id=1)
 
     user = ContextUser(uid=1, name="test")
     context = {"version": "1.0"}
@@ -322,7 +322,7 @@ def test_dump_with_options() -> None:
     dump(
         user,
         buffer,
-        option=JceOption.LITTLE_ENDIAN,
+        option=Option.LITTLE_ENDIAN,
         exclude_unset=False,
         context={"key": "value"},
     )
@@ -348,8 +348,8 @@ def test_load_with_bytes_mode() -> None:
 def test_load_with_context() -> None:
     """load() 应能将 context 传递给反序列化过程."""
 
-    class ContextStruct(JceStruct):
-        value: int = JceField(jce_id=0)
+    class ContextStruct(Struct):
+        value: int = Field(id=0)
 
     obj = ContextStruct(value=42)
     buffer = io.BytesIO()
@@ -387,8 +387,8 @@ def test_loads_with_different_input_types(
 
 
 def test_convert_bytes_nested_jcedict() -> None:
-    """loads(bytes_mode='auto') 应递归转换嵌套 JceDict 中的字节."""
-    data = JceDict({0: JceDict({1: b"nested_text"})})
+    """loads(bytes_mode='auto') 应递归转换嵌套 StructDict 中的字节."""
+    data = StructDict({0: StructDict({1: b"nested_text"})})
     encoded = dumps(data)
 
     decoded = loads(encoded, bytes_mode="auto")
@@ -398,18 +398,18 @@ def test_convert_bytes_nested_jcedict() -> None:
 
 
 def test_convert_bytes_preserves_jcedict_type() -> None:
-    """字节转换过程应保持 JceDict 类型不变."""
-    data = JceDict({0: b"test"})
+    """字节转换过程应保持 StructDict 类型不变."""
+    data = StructDict({0: b"test"})
     encoded = dumps(data)
 
     decoded = loads(encoded, bytes_mode="auto")
 
-    assert isinstance(decoded, JceDict)
+    assert isinstance(decoded, StructDict)
 
 
 def test_error_handling_invalid_data() -> None:
-    """loads() 应在数据无效时抛出 JceDecodeError."""
+    """loads() 应在数据无效时抛出 DecodeError."""
     invalid_data = b"\xff\xff\xff\xff"
 
-    with pytest.raises(JceDecodeError):
+    with pytest.raises(DecodeError):
         loads(invalid_data)

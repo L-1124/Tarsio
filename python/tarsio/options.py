@@ -6,11 +6,11 @@
 from enum import IntFlag
 
 
-class JceOption(IntFlag):
+class Option(IntFlag):
     """JCE 配置选项标志.
 
     可以使用位运算组合多个选项:
-        option = JceOption.LITTLE_ENDIAN | JceOption.ZERO_COPY
+        option = Option.LITTLE_ENDIAN | Option.ZERO_COPY
     """
 
     # 默认行为: 网络字节序(大端模式)

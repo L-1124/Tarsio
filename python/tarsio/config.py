@@ -3,14 +3,14 @@
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .options import JceOption
+from .options import Option
 
 BytesMode = Literal["raw", "string", "auto"]
 
 
 @dataclass(frozen=True)
-class JceConfig:
-    """JCE 序列化/反序列化配置 (不可变).
+class Config:
+    """Tarsio 序列化/反序列化配置 (不可变).
 
     这是所有配置的统一容器, 在 API 入口层创建,
     然后传递给 Encoder/Decoder 内核.
@@ -22,7 +22,7 @@ class JceConfig:
         bytes_mode: 反序列化时字节数据的处理模式.
     """
 
-    flags: JceOption = JceOption.NONE
+    flags: Option = Option.NONE
     context: dict[str, Any] = field(default_factory=dict)
     exclude_unset: bool = False
     bytes_mode: BytesMode = "auto"
@@ -30,21 +30,21 @@ class JceConfig:
     @classmethod
     def from_params(
         cls,
-        option: JceOption = JceOption.NONE,
+        option: Option = Option.NONE,
         context: dict[str, Any] | None = None,
         exclude_unset: bool = False,
         bytes_mode: BytesMode = "auto",
-    ) -> "JceConfig":
+    ) -> "Config":
         """从参数构建配置对象.
 
         Args:
-            option: JceOption 枚举.
+            option: Option 枚举.
             context: 用户提供的上下文数据.
             exclude_unset: 是否排除未设置的字段.
             bytes_mode: 反序列化时字节数据的处理模式.
 
         Returns:
-            JceConfig: 配置对象.
+            Config: 配置对象.
         """
         # 处理 context None
         ctx = context if context is not None else {}
@@ -59,27 +59,27 @@ class JceConfig:
     @property
     def is_little_endian(self) -> bool:
         """是否使用小端字节序."""
-        return bool(self.flags & JceOption.LITTLE_ENDIAN)
+        return bool(self.flags & Option.LITTLE_ENDIAN)
 
     @property
     def is_strict_map(self) -> bool:
         """是否强制严格的 Map 标签."""
-        return bool(self.flags & JceOption.STRICT_MAP)
+        return bool(self.flags & Option.STRICT_MAP)
 
     @property
     def serialize_none(self) -> bool:
         """是否序列化 None 值."""
-        return bool(self.flags & JceOption.SERIALIZE_NONE)
+        return bool(self.flags & Option.SERIALIZE_NONE)
 
     @property
     def zero_copy(self) -> bool:
         """是否使用零复制模式."""
-        return bool(self.flags & JceOption.ZERO_COPY)
+        return bool(self.flags & Option.ZERO_COPY)
 
     @property
     def omit_default(self) -> bool:
         """是否省略默认值."""
-        return bool(self.flags & JceOption.OMIT_DEFAULT)
+        return bool(self.flags & Option.OMIT_DEFAULT)
 
     @property
     def option(self) -> int:

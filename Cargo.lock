@@ -46,16 +46,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jce-core"
-version = "0.3.1"
-dependencies = [
- "byteorder",
- "pyo3",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.180"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -229,6 +219,16 @@ name = "target-lexicon"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1dd07eb858a2067e2f3c7155d54e929265c264e6f37efe3ee7a8d1b5a1dd0ba"
+
+[[package]]
+name = "tarsio-core"
+version = "0.3.1"
+dependencies = [
+ "byteorder",
+ "pyo3",
+ "serde",
+ "thiserror",
+]
 
 [[package]]
 name = "thiserror"

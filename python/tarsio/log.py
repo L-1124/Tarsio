@@ -3,7 +3,7 @@
 import binascii
 import logging
 
-logger = logging.getLogger("jce")
+logger = logging.getLogger("tarsio")
 
 
 def get_hexdump(
