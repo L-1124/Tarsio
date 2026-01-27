@@ -162,7 +162,7 @@ def decode_safe_text(data: bytes) -> str | None:
 
 def dumps(
     obj: Any,
-    schema: list[tuple[int, Any]],
+    schema: list[tuple[int, Any]] | type[Any],
     options: int = 0,
     context: dict[str, Any] | None = None,
 ) -> bytes:
@@ -170,9 +170,10 @@ def dumps(
 
     Args:
         obj: 要序列化的 JceStruct 实例.
-        schema: 从 JceStruct 派生的 schema 列表 (jce_id, field_info).
+        schema: 从 JceStruct 派生的 schema 列表 (jce_id, field_info) 或 JceStruct 类.
         options: 序列化选项（位标志）.
         context: 用于序列化钩子的可选上下文字典.
+
 
     Returns:
         序列化后的 JCE 字节数据.
@@ -203,15 +204,16 @@ def dumps_generic(
 
 def loads(
     data: bytes,
-    schema: list[tuple[int, Any]],
+    schema: list[tuple[int, Any]] | type[Any],
     options: int = 0,
 ) -> dict[str, Any]:
     """将字节反序列化为字段值字典（用于构造 JceStruct）.
 
     Args:
         data: 要反序列化的 JCE 字节数据.
-        schema: 目标 JceStruct 的 schema 列表 (jce_id, field_info).
+        schema: 目标 JceStruct 的 schema 列表 (jce_id, field_info) 或 JceStruct 类.
         options: 反序列化选项（位标志）.
+
 
     Returns:
         用于构造 JceStruct 的字段值字典 (字段名 -> 值).

@@ -171,40 +171,6 @@ def test_jcedict_as_nested_struct() -> None:
     assert decoded[0][1] == "inner"
 
 
-IS_SAFE_TEXT_CASES = [
-    ("hello world", True, "基本可打印字符"),
-    ("ABC123", True, "字母数字"),
-    ("test\nline", True, "换行符"),
-    ("tab\there", True, "制表符"),
-    ("return\rcarriage", True, "回车符"),
-    ("null\x00char", False, "空字符"),
-    ("\x01\x02\x03", False, "控制字符"),
-    ("bell\x07", False, "响铃符"),
-    ("", True, "空字符串"),
-    ("你好世界", True, "中文字符"),
-    ("Hello 👋 World 🌍", True, "Emoji"),
-    ("Test 测试 123", True, "混合字符"),
-]
-
-
-@pytest.mark.parametrize(
-    ("text", "expected", "desc"),
-    IS_SAFE_TEXT_CASES,
-    ids=[c[2] for c in IS_SAFE_TEXT_CASES],
-)
-def test_is_safe_text(text: str, expected: bool, desc: str) -> None:
-    """jce_core.decode_safe_text() 应正确判断文本是否安全可打印."""
-    import jce._jce_core as jce_core
-
-    data = text.encode("utf-8")
-    result = jce_core.decode_safe_text(data)
-
-    if expected:
-        assert result == text, f"失败: {desc}"
-    else:
-        assert result is None, f"失败: {desc}"
-
-
 BYTES_MODE_CASES = [
     ({1: b"test"}, "raw", bytes, b"test", "raw模式保持原始字节"),
     ({1: b"test"}, "string", str, "test", "string模式转换为字符串"),

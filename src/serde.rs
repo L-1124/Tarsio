@@ -1,10 +1,11 @@
 use crate::consts::JceType;
 use crate::error::JceDecodeError;
 use crate::reader::JceReader;
+use crate::schema::{CompiledSchema, compile_schema};
 use crate::writer::JceWriter;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
+use pyo3::types::{PyBytes, PyCapsule, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
 
 /// 递归深度限制
 const MAX_DEPTH: usize = 100;
@@ -49,6 +50,42 @@ fn check_safe_text(data: &[u8]) -> bool {
     std::str::from_utf8(data).is_ok()
 }
 
+fn get_or_compile_schema(
+    py: Python<'_>,
+    schema_or_type: &Bound<'_, PyAny>,
+) -> PyResult<Option<Py<PyCapsule>>> {
+    if let Ok(capsule) = schema_or_type.cast::<PyCapsule>() {
+        return Ok(Some(capsule.clone().unbind()));
+    }
+
+    if let Ok(cls) = schema_or_type.cast::<PyType>() {
+        // 1. Check cache
+        #[allow(clippy::collapsible_if)]
+        if let Ok(cached) = cls.getattr("__jce_compiled_schema__") {
+            if let Ok(capsule) = cached.cast::<PyCapsule>() {
+                return Ok(Some(capsule.clone().unbind()));
+            }
+        }
+
+        // 2. Compile if missing
+        // Calling obj.__get_jce_core_schema__() or cls.__get_jce_core_schema__()
+        let schema_list_method = cls.getattr("__get_jce_core_schema__")?;
+        let schema_list = schema_list_method.call0()?;
+        let list = schema_list
+            .cast::<PyList>()
+            .map_err(|_| PyTypeError::new_err("__get_jce_core_schema__ must return a list"))?;
+
+        let capsule = compile_schema(py, list)?;
+
+        // 3. Update cache
+        cls.setattr("__jce_compiled_schema__", &capsule)?;
+
+        return Ok(Some(capsule));
+    }
+
+    Ok(None)
+}
+
 /// 将 JceStruct 序列化为字节.
 ///
 /// Args:
@@ -64,7 +101,7 @@ fn check_safe_text(data: &[u8]) -> bool {
 pub fn dumps(
     py: Python<'_>,
     obj: Py<PyAny>,
-    schema: &Bound<'_, PyList>,
+    schema: &Bound<'_, PyAny>,
     options: i32,
     context: Option<Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
@@ -147,7 +184,7 @@ pub fn dumps_generic(
 pub fn loads(
     py: Python<'_>,
     data: &Bound<'_, PyBytes>,
-    schema: &Bound<'_, PyList>,
+    schema: &Bound<'_, PyAny>,
     options: i32,
 ) -> PyResult<Py<PyAny>> {
     let mut reader = JceReader::new(data.as_bytes(), options);
@@ -182,7 +219,7 @@ pub(crate) fn encode_struct(
     py: Python<'_>,
     writer: &mut JceWriter,
     obj: &Bound<'_, PyAny>,
-    schema: &Bound<'_, PyList>,
+    schema: &Bound<'_, PyAny>,
     options: i32,
     context: &Bound<'_, PyAny>,
     depth: usize,
@@ -191,7 +228,24 @@ pub(crate) fn encode_struct(
         return Err(PyValueError::new_err("Max recursion depth exceeded"));
     }
 
-    for item in schema.iter() {
+    if let Some(capsule_py) = get_or_compile_schema(py, schema)? {
+        let capsule = capsule_py.bind(py);
+        #[allow(deprecated)]
+        let ptr = capsule.pointer();
+        if ptr.is_null() {
+            return Err(PyValueError::new_err(
+                "Invalid CompiledSchema capsule (pointer is null)",
+            ));
+        }
+        let compiled = unsafe { &*(ptr as *mut CompiledSchema) };
+        return encode_struct_compiled(py, writer, obj, compiled, options, context, depth);
+    }
+
+    let schema_list = schema
+        .cast::<PyList>()
+        .map_err(|_| PyTypeError::new_err("Schema must be a list or JceStruct class"))?;
+
+    for item in schema_list.iter() {
         let tuple = item
             .cast::<PyTuple>()
             .map_err(|_| PyTypeError::new_err("Schema item must be a tuple"))?;
@@ -243,6 +297,69 @@ pub(crate) fn encode_struct(
             py,
             writer,
             tag,
+            &value,
+            jce_type,
+            options,
+            context,
+            depth + 1,
+        )?;
+    }
+    Ok(())
+}
+
+fn encode_struct_compiled(
+    py: Python<'_>,
+    writer: &mut JceWriter,
+    obj: &Bound<'_, PyAny>,
+    schema: &CompiledSchema,
+    options: i32,
+    context: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<()> {
+    for field in &schema.fields {
+        let mut value = obj.getattr(&field.name)?;
+
+        // Check if field is set (for exclude_unset)
+        if (options & OPT_EXCLUDE_UNSET) != 0 {
+            #[allow(clippy::collapsible_if)]
+            if let Ok(model_fields_set) = obj.getattr("model_fields_set") {
+                let is_set: bool = model_fields_set
+                    .call_method1("__contains__", (&field.name,))?
+                    .extract()?;
+                if !is_set {
+                    continue;
+                }
+            }
+        }
+
+        // Check OMIT_DEFAULT
+        if (options & OPT_OMIT_DEFAULT) != 0 {
+            let default_bound = field.default_val.bind(py);
+            if value.eq(default_bound)? {
+                continue;
+            }
+        }
+
+        // Call serializer hook if present
+        if field.has_serializer {
+            let serializers = obj.getattr("__jce_serializers__")?;
+            let serializer_name: String = serializers.get_item(&field.name)?.extract()?;
+            let serializer_func = obj.getattr(&serializer_name)?;
+            value = serializer_func.call1((value, context))?;
+        }
+
+        if field.jce_type == 255 {
+            encode_generic_field(py, writer, field.tag, &value, options, context, depth + 1)?;
+            continue;
+        }
+
+        let jce_type = JceType::try_from(field.jce_type)
+            .map_err(|id| PyValueError::new_err(format!("Invalid JCE type code: {}", id)))?;
+
+        encode_field(
+            py,
+            writer,
+            field.tag,
             &value,
             jce_type,
             options,
@@ -318,21 +435,15 @@ pub(crate) fn encode_generic_field(
                 encode_generic_field(py, writer, 1, &v, options, context, depth + 1)?;
             }
         }
-    } else if let Ok(schema_method) = value.getattr("__get_jce_core_schema__") {
-        let schema = schema_method.call0()?.cast_into::<PyList>()?;
+    } else if value.getattr("__get_jce_core_schema__").is_ok() {
+        let type_obj = value.get_type();
+        writer.write_tag(tag, JceType::StructBegin);
+        encode_struct(py, writer, value, &type_obj, options, context, depth + 1)?;
+        writer.write_tag(0, JceType::StructEnd);
+    } else if let Ok(schema) = value.getattr("__jce_schema__") {
         writer.write_tag(tag, JceType::StructBegin);
         encode_struct(py, writer, value, &schema, options, context, depth + 1)?;
         writer.write_tag(0, JceType::StructEnd);
-    } else if let Ok(schema) = value.getattr("__jce_schema__") {
-        if let Ok(schema_list) = schema.cast::<PyList>() {
-            writer.write_tag(tag, JceType::StructBegin);
-            encode_struct(py, writer, value, schema_list, options, context, depth + 1)?;
-            writer.write_tag(0, JceType::StructEnd);
-        } else {
-            return Err(PyTypeError::new_err(
-                "JceStruct __jce_schema__ must be a list",
-            ));
-        }
     } else {
         return Err(PyTypeError::new_err(format!(
             "Unsupported type for generic encoding: {}",
@@ -435,7 +546,7 @@ fn encode_field(
 pub(crate) fn decode_struct(
     py: Python<'_>,
     reader: &mut JceReader,
-    schema: &Bound<'_, PyList>,
+    schema: &Bound<'_, PyAny>,
     options: i32,
     depth: usize,
 ) -> PyResult<Py<PyAny>> {
@@ -443,11 +554,28 @@ pub(crate) fn decode_struct(
         return Err(PyValueError::new_err("Max recursion depth exceeded"));
     }
 
+    if let Some(capsule_py) = get_or_compile_schema(py, schema)? {
+        let capsule = capsule_py.bind(py);
+        #[allow(deprecated)]
+        let ptr = capsule.pointer();
+        if ptr.is_null() {
+            return Err(PyValueError::new_err(
+                "Invalid CompiledSchema capsule (pointer is null)",
+            ));
+        }
+        let compiled = unsafe { &*(ptr as *mut CompiledSchema) };
+        return decode_struct_compiled(py, reader, compiled, options, depth);
+    }
+
+    let schema_list = schema
+        .cast::<PyList>()
+        .map_err(|_| PyTypeError::new_err("Schema must be a list or JceStruct class"))?;
+
     let result_dict = PyDict::new(py);
 
     // Map tag to schema item for quick lookup
     let mut tag_map = std::collections::HashMap::new();
-    let schema_items: Vec<Bound<'_, PyTuple>> = schema
+    let schema_items: Vec<Bound<'_, PyTuple>> = schema_list
         .iter()
         .map(|item| item.cast_into::<PyTuple>())
         .collect::<Result<Vec<_>, _>>()?;
@@ -493,6 +621,56 @@ pub(crate) fn decode_struct(
         if !result_dict.contains(&name)? {
             let default_val = tuple.get_item(3)?;
             result_dict.set_item(name, default_val)?;
+        }
+    }
+
+    Ok(result_dict.into())
+}
+
+fn decode_struct_compiled(
+    py: Python<'_>,
+    reader: &mut JceReader,
+    schema: &CompiledSchema,
+    options: i32,
+    depth: usize,
+) -> PyResult<Py<PyAny>> {
+    let result_dict = PyDict::new(py);
+
+    while !reader.is_end() {
+        let (tag, jce_type) = match reader.read_head() {
+            Ok(h) => h,
+            Err(e) => return Err(map_decode_error(e)),
+        };
+
+        if jce_type == JceType::StructEnd {
+            break;
+        }
+
+        // 使用 CompiledSchema 的 HashMap 进行快速查找
+        if let Some(&idx) = schema.tag_map.get(&tag) {
+            let field = &schema.fields[idx];
+
+            let value = if field.jce_type == 255 {
+                // Generic field in struct, use default BytesMode::Auto (2)
+                decode_generic_field(py, reader, jce_type, options, BytesMode::Auto, depth + 1)?
+            } else {
+                let expected_type = JceType::try_from(field.jce_type).map_err(|id| {
+                    PyValueError::new_err(format!("Invalid JCE type code in schema: {}", id))
+                })?;
+
+                decode_field(py, reader, jce_type, expected_type, options, depth + 1)?
+            };
+            result_dict.set_item(&field.name, value)?;
+        } else if let Err(e) = reader.skip_field(jce_type) {
+            return Err(map_decode_error(e));
+        }
+    }
+
+    // Fill defaults for missing fields
+    for field in &schema.fields {
+        if !result_dict.contains(&field.name)? {
+            // default_val is Py<PyAny>, bind it
+            result_dict.set_item(&field.name, &field.default_val)?;
         }
     }
 

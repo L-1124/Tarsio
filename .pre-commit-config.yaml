@@ -36,7 +36,7 @@ repos:
         types: [rust]
         files: ^src/
         pass_filenames: false
-        args: ["--manifest-path", "Cargo.toml"]
+        args: ["--all"]
 
       - id: cargo-clippy
         name: cargo clippy
@@ -45,7 +45,7 @@ repos:
         types: [rust]
         files: ^src/
         pass_filenames: false
-        args: ["--manifest-path", "Cargo.toml", "--", "-D", "warnings"]
+        args: ["--tests", "--", "-D", "warnings"]
 
       - id: pytest
         language: system

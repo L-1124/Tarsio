@@ -1,12 +1,12 @@
 pub mod consts;
 pub mod error;
 pub mod reader;
+pub mod schema;
 pub mod serde;
 pub mod stream;
 pub mod writer;
 
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
 
 #[pymodule]
 fn _jce_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -14,7 +14,6 @@ fn _jce_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(serde::loads, m)?)?;
     m.add_function(wrap_pyfunction!(serde::dumps_generic, m)?)?;
     m.add_function(wrap_pyfunction!(serde::loads_generic, m)?)?;
-    m.add_function(wrap_pyfunction!(decode_safe_text, m)?)?;
     m.add_class::<stream::LengthPrefixedReader>()?;
     m.add_class::<stream::LengthPrefixedWriter>()?;
     Ok(())
@@ -30,9 +29,8 @@ fn _jce_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 ///
 /// Returns:
 ///     Optional[str]: 解码后的字符串，如果无效则返回 None.
-#[pyfunction]
-fn decode_safe_text(data: &Bound<'_, PyBytes>) -> Option<String> {
-    let data = data.as_bytes();
+#[allow(dead_code)]
+pub(crate) fn decode_safe_text(data: &[u8]) -> Option<String> {
     // 1. Check for illegal ASCII control characters first (fastest rejection)
     for &b in data {
         if b < 32 {
