@@ -443,6 +443,10 @@ class StructMeta(type(BaseModel)):
         cls = super().__new__(mcs, name, bases, namespace, **kwargs)
         if name != "Struct":
             cls.__tars_fields__ = prepare_fields(cls.model_fields)
+            # 预计算 Tag 到字段名的映射，加速 _tars_pre_validate
+            cls.__tars_tag_map__ = {
+                f.id: field_name for field_name, f in cls.__tars_fields__.items()
+            }
 
             # 收集自定义序列化器/反序列化器
             cls.__tars_serializers__ = {}
@@ -496,6 +500,7 @@ class Struct(BaseModel, Type, metaclass=StructMeta):
     """
 
     __tars_fields__: ClassVar[dict[str, "ModelField"]] = {}
+    __tars_tag_map__: ClassVar[dict[int, str]] = {}
     __tars_serializers__: ClassVar[dict[str, str]] = {}
     __core_schema_cache__: ClassVar[list[tuple] | None] = None
 
@@ -795,7 +800,7 @@ class Struct(BaseModel, Type, metaclass=StructMeta):
         if isinstance(value, dict) and not isinstance(value, Struct):
             # 如果字典包含整数键, 说明它可能是一个 JCE 结构体数据 (Tag-Value 映射)
             # 我们检查是否存在任何在模型中定义的 Tag
-            tag_map = {f.id: name for name, f in cls.__tars_fields__.items()}
+            tag_map = cls.__tars_tag_map__
 
             # 判断是否需要进行 Tag -> Name 映射
             # 只要发现有一个整数键对应模型中的 Tag，我们就认为需要映射
