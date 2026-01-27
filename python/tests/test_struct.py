@@ -122,38 +122,6 @@ def test_validation_error() -> None:
         SimpleUser()  # type: ignore[call-arg]
 
 
-def test_jcedict_key_validation_init() -> None:
-    """StructDict 初始化时应拒绝非 int 类型的键."""
-    # 正常情况: 所有键都是 int
-    d1 = StructDict({0: 100, 1: "test"})
-    assert d1[0] == 100
-    assert d1[1] == "test"
-
-    # 异常情况: 包含非 int 键
-    with pytest.raises(TypeError, match="keys must be int"):
-        StructDict({"name": "value"})
-
-    with pytest.raises(TypeError, match="keys must be int"):
-        StructDict({0: 100, "key": "value"})
-
-
-def test_jcedict_key_validation_setitem() -> None:
-    """StructDict 赋值时应拒绝非 int 类型的键."""
-    d = StructDict()
-
-    # 正常: int 键
-    d[0] = 100
-    assert d[0] == 100
-
-    # 异常: str 键
-    with pytest.raises(TypeError, match="keys must be int"):
-        d["name"] = "value"  # type: ignore[arg]
-
-    # 异常: float 键
-    with pytest.raises(TypeError, match="keys must be int"):
-        d[1.5] = "value"  # type: ignore[arg]
-
-
 # --- 字段编码模式测试 ---
 
 

@@ -31,6 +31,7 @@ class LengthPrefixedReader:
         target: type | None,
         option: int = 0,
         max_buffer_size: int = 10485760,
+        context: dict[str, Any] | None = None,
         length_type: int = 4,
         inclusive_length: bool = True,
         little_endian_length: bool = False,
@@ -42,6 +43,7 @@ class LengthPrefixedReader:
             target: 用于解码的目标类（Struct 子类）或 None（通用解码）.
             option: 解码选项（位标志）.
             max_buffer_size: 允许的最大缓冲区大小（字节），防止 DoS 攻击.
+            context: 反序列化上下文.
             length_type: 长度前缀的字节大小（1、2 或 4）.
             inclusive_length: 长度值是否包含长度前缀本身.
             little_endian_length: 长度前缀是否为小端序.

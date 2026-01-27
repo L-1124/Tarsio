@@ -45,6 +45,7 @@ class StructDict(dict[int, Any]):
         - 键 (Key): 必须是 `int` 类型，代表 JCE 的 Tag ID (0-255)。
         - 值 (Value): 可以是任意可序列化的 JCE 类型。
 
+
     Examples:
         >>> from tarsio import dumps, StructDict
         >>> # 编码为 Struct (Tag 0: 100) -> Hex: 00 64
@@ -55,25 +56,6 @@ class StructDict(dict[int, Any]):
         >>> dumps({0: 100})
         b'\x08\x01\x00d...'
     """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """初始化 StructDict 并验证所有键为 int 类型."""
-        super().__init__(*args, **kwargs)
-        for key in self.keys():
-            if not isinstance(key, int):
-                raise TypeError(
-                    f"StructDict keys must be int (Tag ID), got {type(key).__name__}. "
-                    f"Use regular dict for Map encoding."
-                )
-
-    def __setitem__(self, key: int, value: Any) -> None:
-        """设置键值对时验证键为 int 类型."""
-        if not isinstance(key, int):
-            raise TypeError(
-                f"StructDict keys must be int (Tag ID), got {type(key).__name__}. "
-                f"Use regular dict for Map encoding."
-            )
-        super().__setitem__(key, value)
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: Any):
@@ -798,6 +780,18 @@ class Struct(BaseModel, Type, metaclass=StructMeta):
 
         # 处理 dict 类型 (包括 StructDict 和由 Rust 返回的普通 dict)
         if isinstance(value, dict) and not isinstance(value, Struct):
+            # 优化: 如果字典为空，直接返回
+            if not value:
+                return value
+
+            # 优化: 快速检查第一个键。如果第一个键是 str，我们假设它可能已经是映射过的字典
+            # Rust 端的 loads 现在会直接返回 name-key 的字典 (String HashMap)
+            # 只有当数据源是原始 Tag-Value (例如用户手动构造的 {0: 1}) 才需要映射
+            first_key = next(iter(value))
+            if isinstance(first_key, str):
+                # 已经是 name-keyed dict，通常不需要再做 tag scanning
+                return value
+
             # 如果字典包含整数键, 说明它可能是一个 JCE 结构体数据 (Tag-Value 映射)
             # 我们检查是否存在任何在模型中定义的 Tag
             tag_map = cls.__tars_tag_map__

@@ -18,6 +18,8 @@ pub struct LengthPrefixedReader {
     options: i32,
     bytes_mode: BytesMode,
     target_schema: Option<Py<PyList>>,
+    target_cls: Option<Py<PyAny>>,
+    context: Option<Py<PyAny>>,
     max_buffer_size: usize,
 }
 
@@ -29,18 +31,20 @@ impl LengthPrefixedReader {
     ///     target: 用于解码的目标类（Struct 子类）或通用结构.
     ///     option: 解码选项.
     ///     max_buffer_size: 允许的最大缓冲区大小（字节），防止 DoS 攻击.
+    ///     context: 反序列化上下文.
     ///     length_type: 长度前缀的字节大小（1、2 或 4）.
     ///     inclusive_length: 长度值是否包含长度前缀本身.
     ///     little_endian_length: 长度前缀是否为小端序.
     ///     bytes_mode: 通用解码的字节处理模式（0: Raw, 1: String, 2: Auto）.
     #[new]
-    #[pyo3(signature = (target, option=0, max_buffer_size=10485760, length_type=4, inclusive_length=true, little_endian_length=false, bytes_mode=2))]
+    #[pyo3(signature = (target, option=0, max_buffer_size=10485760, context=None, length_type=4, inclusive_length=true, little_endian_length=false, bytes_mode=2))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         _py: Python<'_>,
         target: &Bound<'_, PyAny>,
         option: i32,
         max_buffer_size: usize,
+        context: Option<Py<PyAny>>,
         length_type: u8,
         inclusive_length: bool,
         little_endian_length: bool,
@@ -54,6 +58,10 @@ impl LengthPrefixedReader {
 
         // Try to get schema if target is Struct
         let mut target_schema = None;
+
+        // Always store target class
+        let target_cls = Some(target.clone().unbind());
+
         #[allow(clippy::collapsible_if)]
         if let Ok(schema_method) = target.getattr("__get_core_schema__") {
             if let Ok(schema) = schema_method.call0() {
@@ -71,6 +79,8 @@ impl LengthPrefixedReader {
             options: option,
             bytes_mode: BytesMode::from(bytes_mode),
             target_schema,
+            target_cls,
+            context,
             max_buffer_size,
         })
     }
@@ -152,15 +162,41 @@ impl LengthPrefixedReader {
 
         // Decode
         let reader = &mut crate::reader::JceReader::new(body_data, slf.options);
-        let result = if let Some(schema) = &slf.target_schema {
-            decode_struct(py, reader, schema.bind(py), slf.options, 0)
-        } else {
-            decode_generic_struct(py, reader, slf.options, slf.bytes_mode, 0)
-        };
+
+        // Case 1: Target is Struct (has schema)
+        if let Some(schema) = &slf.target_schema {
+            let dict = decode_struct(py, reader, schema.bind(py), slf.options, 0)?;
+
+            // Call target.model_validate(dict, context=context)
+            let kwargs = PyDict::new(py);
+            if let Some(ctx) = &slf.context {
+                kwargs.set_item("context", ctx.bind(py))?;
+            }
+
+            if let Some(target_cls) = &slf.target_cls {
+                let instance =
+                    target_cls
+                        .bind(py)
+                        .call_method("model_validate", (dict,), Some(&kwargs))?;
+                slf.buffer.drain(..packet_size);
+                return Ok(Some(instance.unbind()));
+            } else {
+                // Should not happen if target_schema is set, but fallback
+                slf.buffer.drain(..packet_size);
+                return Ok(Some(dict));
+            }
+        }
+
+        // Case 2: Generic
+        let result = decode_generic_struct(py, reader, slf.options, slf.bytes_mode, 0);
 
         match result {
             Ok(obj) => {
                 slf.buffer.drain(..packet_size);
+                if let Some(target_cls) = &slf.target_cls {
+                    let instance = target_cls.bind(py).call1((obj,))?;
+                    return Ok(Some(instance.unbind()));
+                }
                 Ok(Some(obj))
             }
             Err(e) => Err(e),

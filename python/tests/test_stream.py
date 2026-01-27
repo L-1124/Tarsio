@@ -63,15 +63,6 @@ def test_stream_reader_basic() -> None:
         small_reader.feed(b"456")
 
 
-def test_stream_reader_with_jcedict_target() -> None:
-    """LengthPrefixedReader 应支持 StructDict 作为 target."""
-    reader = LengthPrefixedReader(target=StructDict)
-
-    reader.feed(b"\x00\x64")
-
-    assert reader._target == StructDict  # type: ignore
-
-
 # --- 长度前缀协议测试 ---
 
 

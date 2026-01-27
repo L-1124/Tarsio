@@ -4,7 +4,12 @@
 用于处理泛型类型和基础类型的 Tarsio 序列化/反序列化.
 """
 
-from typing import Any, Generic, TypeVar
+from typing import (
+    Any,
+    Generic,
+    TypeVar,
+    cast,
+)
 
 from pydantic import BaseModel, TypeAdapter
 
@@ -95,6 +100,10 @@ class TarsTypeAdapter(Generic[T]):
             value = parsed_dict[id]
 
         # 3. 使用 Pydantic TypeAdapter 进行转换
+        # 优化: 如果 Rust 已经返回了正确的实例 (Struct/StructDict), 则跳过 Pydantic 验证
+        if self._is_struct and type(value) is self._type:
+            return cast(T, value)
+
         return self._pydantic_adapter.validate_python(value)
 
     def dump_tars(self, obj: T, *, option: Option = Option.NONE) -> bytes:

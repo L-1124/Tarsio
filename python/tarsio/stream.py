@@ -13,7 +13,6 @@ from ._core import (
     LengthPrefixedWriter as _RustLengthPrefixedWriter,
 )
 from .options import Option
-from .struct import Struct, StructDict
 
 
 class LengthPrefixedWriter(_RustLengthPrefixedWriter):
@@ -129,6 +128,7 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
         target: Any,
         option: Option = Option.NONE,
         max_buffer_size: int = 10 * 1024 * 1024,
+        context: dict[str, Any] | None = None,
         length_type: int = 4,
         inclusive_length: bool = True,
         little_endian_length: bool = False,
@@ -149,6 +149,7 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
             target=target,
             option=int(option),
             max_buffer_size=max_buffer_size,
+            context=context,
             length_type=length_type,
             inclusive_length=inclusive_length,
             little_endian_length=little_endian_length,
@@ -159,11 +160,11 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
         self,
         target: Any,
         option: Option = Option.NONE,
-        max_buffer_size: int = 10 * 1024 * 1024,  # noqa: ARG002
+        max_buffer_size: int = 10 * 1024 * 1024,
         context: dict[str, Any] | None = None,
-        length_type: int = 4,  # noqa: ARG002
-        inclusive_length: bool = True,  # noqa: ARG002
-        little_endian_length: bool = False,  # noqa: ARG002
+        length_type: int = 4,
+        inclusive_length: bool = True,
+        little_endian_length: bool = False,
         bytes_mode: str = "auto",
     ):
         """初始化带长度前缀的读取器.
@@ -179,31 +180,16 @@ class LengthPrefixedReader(_RustLengthPrefixedReader):
             bytes_mode: 字节处理模式.
         """
         # 注意：基类初始化已在 __new__ 中由 Rust 核心完成
-        self._target = target
-        self._context = context
-        self._option = option
-        self._bytes_mode = bytes_mode
+        # Rust 侧已经负责了验证逻辑，Python 侧不再需要 _target 等状态
+        pass
 
     def __next__(self) -> Any:
         """获取下一个解析出的对象.
 
         Returns:
-            Any: 解析出的对象实例.
+            Any: 解析出的对象实例 (已经由 Rust 完成验证).
         """
-        obj = super().__next__()
-
-        # 后处理逻辑: 支持 Pydantic 验证和 StructDict 包装
-        if isinstance(self._target, type) and issubclass(self._target, Struct):
-            # Rust 返回 tag-keyed dict {0: val, 1: val}, 需转换为 field-name dict
-            tars_fields = self._target.__tars_fields__
-            # 构建 tag -> field_name 反向映射
-            tag_to_name = {mf.id: name for name, mf in tars_fields.items()}
-            # 转换 dict 键
-            named_obj = {tag_to_name.get(k, k): v for k, v in obj.items()}
-            return self._target.model_validate(named_obj, context=self._context)
-        if self._target is StructDict:
-            return StructDict(obj)
-        return obj
+        return super().__next__()
 
     def feed(self, data: bytes) -> None:
         """将数据追加到内部缓冲区.
