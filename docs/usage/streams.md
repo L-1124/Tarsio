@@ -1,20 +1,20 @@
 # 流式处理
 
-在网络编程（如 TCP 通信）中，常常需要处理**粘包**（多个数据包合并接收）和**拆包**（一个数据包分多次接收）的问题。JceStruct 提供了专门的流式读写器来解决这些问题。
+在网络编程（如 TCP 通信）中，常常需要处理**粘包**（多个数据包合并接收）和**拆包**（一个数据包分多次接收）的问题。Tarsio 提供了专门的流式读写器来解决这些问题。
 
 ## 长度前缀协议
 
-JceStruct 实现了 `LengthPrefixedReader` 和 `LengthPrefixedWriter`，支持处理带有长度头部的 JCE 数据流。
+Tarsio 实现了 `LengthPrefixedReader` 和 `LengthPrefixedWriter`，支持处理带有长度头部的 JCE 数据流。
 
 ### 写入 (Writer)
 
 `LengthPrefixedWriter` 会自动在数据前添加长度头。
 
 !!! note "前提条件"
-    本节示例假设你已经定义了 `User` 结构体。详见 [定义模型](models.md)。
+    本节示例假设你已经定义了 `Struct` 结构体。详见 [定义模型](models.md)。
 
 ```python title="writer.py"
-from jce.stream import LengthPrefixedWriter
+from tarsio.stream import LengthPrefixedWriter
 # from my_models import User
 
 # 初始化 Writer
@@ -43,7 +43,7 @@ buffer = writer.get_buffer()
 `LengthPrefixedReader` 是一个迭代器，它维护内部缓冲区，自动处理分片数据，仅当接收到完整的数据包时才产出对象。
 
 ```python title="reader.py"
-from jce.stream import LengthPrefixedReader
+from tarsio.stream import LengthPrefixedReader
 
 reader = LengthPrefixedReader(
     target=User,  # 目标结构体

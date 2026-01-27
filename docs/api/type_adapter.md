@@ -1,8 +1,8 @@
 # TypeAdapter
 
-::: jce.adapter.JceTypeAdapter
+::: tarsio.adapter.TarsTypeAdapter
     options:
       members:
         - __init__
-        - validate_jce
-        - dump_jce
+        - validate_tars
+        - dump_tars

@@ -1,6 +1,6 @@
 # Streams
 
-::: jce.stream.LengthPrefixedWriter
+::: tarsio.stream.LengthPrefixedWriter
     options:
       members:
         - __init__
@@ -8,7 +8,7 @@
         - get_buffer
         - clear
 
-::: jce.stream.LengthPrefixedReader
+::: tarsio.stream.LengthPrefixedReader
     options:
       members:
         - __init__

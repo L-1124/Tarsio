@@ -1,23 +1,23 @@
 # Serialization
 
-::: jce.dumps
+::: tarsio.dumps
 
 
-::: jce.loads
+::: tarsio.loads
 
 
-::: jce.dump
+::: tarsio.dump
 
 
-::: jce.load
+::: tarsio.load
 
 
 ## Configuration
 
-::: jce.JceOption
+::: tarsio.Option
 
 
-::: jce.JceConfig
+::: tarsio.Config
 
 
-::: jce.BytesMode
+::: tarsio.BytesMode

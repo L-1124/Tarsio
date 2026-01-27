@@ -1,61 +1,61 @@
 # Types
 
-::: jce.types.JceType
+::: tarsio.types.Type
 
 
-::: jce.types.INT
+::: tarsio.types.INT
 
 
-::: jce.types.STRING
+::: tarsio.types.STRING
 
 
-::: jce.types.FLOAT
+::: tarsio.types.FLOAT
 
 
-::: jce.types.DOUBLE
+::: tarsio.types.DOUBLE
 
 
-::: jce.types.BOOL
+::: tarsio.types.BOOL
 
 
-::: jce.types.LIST
+::: tarsio.types.LIST
 
 
-::: jce.types.MAP
+::: tarsio.types.MAP
 
 
 ## Primitives
 
-::: jce.types.BYTE
+::: tarsio.types.BYTE
 
 
-::: jce.types.INT8
+::: tarsio.types.INT8
 
 
-::: jce.types.INT16
+::: tarsio.types.INT16
 
 
-::: jce.types.INT32
+::: tarsio.types.INT32
 
 
-::: jce.types.INT64
+::: tarsio.types.INT64
 
 
-::: jce.types.STRING1
+::: tarsio.types.STRING1
 
 
-::: jce.types.STRING4
+::: tarsio.types.STRING4
 
 
-::: jce.types.BYTES
+::: tarsio.types.BYTES
 
 
 ## Constants
 
-::: jce.types.STRUCT_START
+::: tarsio.types.STRUCT_BEGIN
 
 
-::: jce.types.STRUCT_END
+::: tarsio.types.STRUCT_END
 
 
-::: jce.types.ZERO_TAG
+::: tarsio.types.ZERO_TAG

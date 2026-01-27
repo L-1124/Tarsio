@@ -1,70 +1,70 @@
 # 序列化与 API
 
-JceStruct 提供了简单直观的 API 用于数据的序列化和反序列化，API 设计灵感来源于 Python 标准库的 `json` 模块。
+Tarsio 提供了简单直观的 API 用于数据的序列化和反序列化，API 设计灵感来源于 Python 标准库的 `json` 模块。
 
 ## 核心函数
 
 ### `dumps` (Serialize)
 
-将 `JceStruct` 对象、字典、列表或基础类型序列化为 `bytes`。
+将 `Struct` 对象、字典、列表或基础类型序列化为 `bytes`。
 
 ```python title="serialize.py"
-from jce import dumps
+from tarsio import dumps
 
 data = dumps(user)
 # 或者序列化字典 (会被编码为 JCE Map)
 map_data = dumps({"key": "value"})
-# 序列化 JceDict (会被编码为 JCE Struct)
-struct_data = dumps(JceDict({0: 100}))
+# 序列化 StructDict (会被编码为 JCE Struct)
+struct_data = dumps(StructDict({0: 100}))
 ```
 
 **参数**:
 
-* `obj`: 要序列化的对象。支持 `JceStruct`, `dict`, `list`, `int`, `str` 等。
-* `option`: 序列化选项（如 `JceOption.LITTLE_ENDIAN`）。
-* `context`: 序列化上下文。传递给自定义序列化器 (`@jce_field_serializer`) 的字典。
-* `exclude_unset`: 是否排除未显式设置的字段（默认为 `False`）。仅对 `JceStruct` 有效。
+* `obj`: 要序列化的对象。支持 `Struct`, `dict`, `list`, `int`, `str` 等。
+* `option`: 序列化选项（如 `Option.LITTLE_ENDIAN`）。
+* `context`: 序列化上下文。传递给自定义序列化器 (`@field_serializer`) 的字典。
+* `exclude_unset`: 是否排除未显式设置的字段（默认为 `False`）。仅对 `Struct` 有效。
 
 ### `loads` (Deserialize)
 
 将 `bytes` 反序列化为 Python 对象。
 
 ```python title="deserialize.py"
-from jce import loads
+from tarsio import loads
 
 # 反序列化为特定的结构体
 user = loads(data, User, context={"db": db_connection})
 
-# 反序列化为通用字典 (默认为 JceDict)
+# 反序列化为通用字典 (默认为 StructDict)
 raw_data = loads(data)
 ```
 
 **参数**:
 
 * `data`: 输入的字节数据 (`bytes`, `bytearray` 或 `memoryview`)。
-* `target`: 目标类型。可以是 `JceStruct` 子类、`JceDict` (默认) 或 `dict`。
-* `option`: 反序列化选项（如 `JceOption.LITTLE_ENDIAN`）。
+* `target`: 目标类型。可以是 `Struct` 子类、`StructDict` (默认) 或 `dict`。
+* `option`: 反序列化选项（如 `Option.LITTLE_ENDIAN`）。
 * `bytes_mode`: 控制如何处理二进制数据（见下文）。
 * `context`: Pydantic 验证上下文。传递给验证器及 `computed_field` 的字典。
 
 ## 动态类型 (`Any`) {#dynamic-types}
 
-虽然推荐显式定义所有字段类型，但 JceStruct 也支持使用 `Any` 注解。在这种情况下，库会根据运行时行为进行处理。
+虽然推荐显式定义所有字段类型，但 Tarsio 也支持使用 `Any` 注解。在这种情况下，库会根据运行时行为进行处理。
 
 ### 编码（运行时推断）
 
-如果 `JceField` 没有指定 `jce_type`，编码器会根据**运行时值的类型**来推断 JCE 类型：
+如果 `Field` 没有指定 `tars_type`，编码器会根据**运行时值的类型**来推断 JCE 类型：
 
 | Python 运行时类型 | 推断的 JCE 类型 | 说明 |
 | :--- | :--- | :--- |
 | `int` | `INT (0-3)` | 根据大小自动选择 |
 | `str` | `STRING (6/7)` | |
-| `JceDict` | **STRUCT (10)** | **注意：作为结构体编码 (Tag 序列)** |
+| `StructDict` | **STRUCT (10)** | **注意：作为结构体编码 (Tag 序列)** |
 | `dict` | **MAP (8)** | **注意：作为键值对编码** |
 | `bytes` | `SIMPLE_LIST (13)` | |
 
-!!! warning "JceDict vs dict"
-    这是最常见的 Bug 来源：将一个普通的 `dict` 传给 `Any` 字段会生成 JCE Map，而传一个 `JceDict` 则会生成 JCE Struct。如果接收方期望的是 Struct，使用 `dict` 将导致解码失败。
+!!! warning "StructDict vs dict"
+    这是最常见的 Bug 来源：将一个普通的 `dict` 传给 `Any` 字段会生成 JCE Map，而传一个 `StructDict` 则会生成 JCE Struct。如果接收方期望的是 Struct，使用 `dict` 将导致解码失败。
 
 ### 解码（通用解码）
 
@@ -73,18 +73,18 @@ raw_data = loads(data)
 * Type 0-3 (`INT`) -> `int`
 * Type 6-7 (`STRING`) -> `str`
 * Type 8 (`MAP`) -> `dict`
-* Type 10 (`STRUCT`) -> `JceDict`
+* Type 10 (`STRUCT`) -> `StructDict`
 * Type 13 (`SIMPLE_LIST`) -> `bytes`
 
 !!! info "无法恢复自定义类"
-    解码 `Any` 字段时，解码器无法自动恢复成你定义的自定义类（如 `User` 对象），因为它在二进制流中只看到了一个“结构体”。它会返回一个 `JceDict`，你可以随后通过 `User.model_validate(jce_dict)` 手动转换。
+    解码 `Any` 字段时，解码器无法自动恢复成你定义的自定义类（如 `User` 对象），因为它在二进制流中只看到了一个“结构体”。它会返回一个 `StructDict`，你可以随后通过 `User.model_validate(struct_dict)` 手动转换。
 
 ## 文件 I/O
 
 如果你需要直接读写文件，可以使用 `dump` 和 `load`。
 
 ```python title="file_io.py"
-from jce import dump, load
+from tarsio import dump, load
 
 # 写入文件
 with open("data.bin", "wb") as f:
@@ -98,7 +98,7 @@ with open("data.bin", "rb") as f:
 ## Bytes 处理模式
 
 JCE 协议没有原生的 String 类型，只有 `String1` (长度<256) 和 `String4`。它们本质上都是带长度的 buffer。
-`loads` 函数提供 `bytes_mode` 参数来控制如何将这些 buffer 解析为 Python 类型。
+`loads` 函数提供 `bytes_mode` 参数来控制如何将这些缓冲区解析为 Python 类型。
 
 * `"auto"` (**默认**): 智能模式。尝试将 buffer 解码为 UTF-8 字符串；如果失败，则尝试递归解码为嵌套 JCE 结构；如果都失败，则保留为 `bytes`。
 * `"string"`: 强制尝试解码为 UTF-8 字符串。
@@ -117,26 +117,26 @@ print(loads(data, bytes_mode="raw"))    # > b"hello"
 JCE 协议默认使用**大端序 (Big Endian)**。如果你的对端系统使用小端序，可以通过选项指定：
 
 ```python title="endian.py"
-from jce import JceOption
+from tarsio import Option
 
-data = dumps(user, option=JceOption.LITTLE_ENDIAN)
+data = dumps(user, option=Option.LITTLE_ENDIAN)
 ```
 
-### JceDict (动态结构)
+### StructDict (动态结构)
 
-如果你不知道数据的具体结构，或者只是想查看原始 Tag-Value 对，可以使用 `JceDict`。
+如果你不知道数据的具体结构，或者只是想查看原始 Tag-Value 对，可以使用 `StructDict`。
 
-```python title="jcedict.py"
-from jce import JceDict, loads
+```python title="structdict.py"
+from tarsio import StructDict, loads
 
 # 解码为通用字典结构 (Struct 语义)
-raw_struct = loads(data, target=JceDict)
+raw_struct = loads(data, target=StructDict)
 print(raw_struct)
 # > {0: 10086, 1: 'Alice', ...}
 ```
 
-!!! note "JceDict vs dict"
-    - `JceDict`: 代表一个 **Struct**，编码时按 Tag 顺序拼接字段。
+!!! note "StructDict vs dict"
+    - `StructDict`: 代表一个 **Struct**，编码时按 Tag 顺序拼接字段。
     - `dict`: 代表一个 **Map**，编码时包含 Map 长度和键值对信息。
 
 ## 延伸阅读

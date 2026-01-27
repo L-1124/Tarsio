@@ -1,18 +1,18 @@
 # Exceptions
 
-::: jce.exceptions.JceError
+::: tarsio.exceptions.Error
 
 
-::: jce.exceptions.JceEncodeError
+::: tarsio.exceptions.EncodeError
 
 
-::: jce.exceptions.JceDecodeError
+::: tarsio.exceptions.DecodeError
 
 
-::: jce.exceptions.JcePartialDataError
+::: tarsio.exceptions.PartialDataError
 
 
-::: jce.exceptions.JceTypeError
+::: tarsio.exceptions.TypeError
 
 
-::: jce.exceptions.JceValueError
+::: tarsio.exceptions.TarsioValueError
