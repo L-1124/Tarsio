@@ -38,9 +38,9 @@ tarsio -f payload.bin
 
 默认输出为 Python `pprint` 格式。你可以通过 `--format` 参数选择不同的输出风格：
 
-- **pretty**: (默认) Python 字典格式。
-- **json**: 标准 JSON 格式
-- **tree**: 层次化树状视图
+* **pretty**: (默认) Python 字典格式。
+* **json**: 标准 JSON 格式
+* **tree**: 层次化树状视图
 
 ### 4. 详细模式
 

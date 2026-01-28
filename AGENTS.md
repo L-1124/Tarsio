@@ -1,4 +1,4 @@
-# Tarsio (formerly JceStruct)
+# Tarsio
 
 基于 Pydantic v2 的 Tars/JCE 协议实现。
 Rust 核心 (PyO3/maturin) + Python API。混合 Python/Rust 单体仓库。
@@ -47,9 +47,6 @@ uv run --group docs mkdocs serve  # 本地实时预览
 ```bash
 # 环境同步 (安装 Python 依赖并编译 Rust 核心)
 uv sync
-
-# 可编辑安装
-uv pip install -e .[cli]
 
 # 代码质量
 uv run --group linting ruff check .

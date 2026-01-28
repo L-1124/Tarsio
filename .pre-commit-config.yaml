@@ -62,7 +62,7 @@ repos:
 
       - id: docs-build
         name: docs build
-        entry: uv run mkdocs build
+        entry: uv run --group docs mkdocs build
         files: ^docs/
         pass_filenames: false
         language: system
