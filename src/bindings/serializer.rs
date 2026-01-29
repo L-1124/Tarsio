@@ -138,17 +138,31 @@ fn encode_infer(
 }
 
 #[pyfunction]
-#[pyo3(signature = (obj, schema, options=0))]
+#[pyo3(signature = (obj, schema=None, options=0))]
 /// 序列化 Python 对象为 JCE 二进制格式 (基于 Schema)。
 pub fn dumps(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
-    schema: &Bound<'_, PyAny>,
+    schema: Option<&Bound<'_, PyAny>>,
     options: i32,
 ) -> PyResult<Py<PyBytes>> {
     let mut error_context = ErrorContext::new();
     let result = with_writer(options, |writer| {
-        encode_struct(py, writer, obj, schema, options, &mut error_context, 0)
+        if let Some(s) = schema {
+            encode_struct(py, writer, obj, s, options, &mut error_context, 0)
+        } else if let Ok(schema_list) = obj.getattr("__tars_schema__") {
+            encode_struct(
+                py,
+                writer,
+                obj,
+                &schema_list,
+                options,
+                &mut error_context,
+                0,
+            )
+        } else {
+            encode_infer(py, writer, obj, options, &mut error_context, 0)
+        }
     });
     let bytes = result.map_err(|e| PyValueError::new_err(format!("{} at {}", e, error_context)))?;
     Ok(PyBytes::new(py, &bytes).into())

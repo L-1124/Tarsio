@@ -44,6 +44,13 @@ impl ErrorContext {
     pub fn pop(&mut self) {
         self.stack.pop();
     }
+
+    pub fn current_field(&self) -> Option<&str> {
+        match self.stack.last() {
+            Some(PathItem::Field(name)) => Some(name),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for ErrorContext {

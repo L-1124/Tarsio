@@ -1,7 +1,7 @@
 use crate::bindings::error::ErrorContext;
 use crate::bindings::generics::resolve_concrete_type;
-use crate::bindings::schema::{CompiledSchema, compile_schema, resolve_jce_type};
-use crate::bindings::validator::validate;
+use crate::bindings::schema::{CompiledSchema, Validators, compile_schema, resolve_jce_type};
+use crate::bindings::validator::{validate, validate_f64, validate_len};
 use crate::codec::consts::{JCE_TYPE_GENERIC, JceType};
 use crate::codec::reader::JceReader;
 use byteorder::{BigEndian, LittleEndian};
@@ -227,6 +227,7 @@ pub(crate) fn decode_struct_dict<'a, E: crate::codec::endian::Endianness>(
                     jce_type,
                     JceType::try_from(jce_type_code).unwrap(),
                     None,
+                    None, // No validation for struct dict fallback
                     options,
                     depth + 1,
                     context,
@@ -284,6 +285,7 @@ fn decode_struct_dict_compiled<'a, E: crate::codec::endian::Endianness>(
                     jce_type,
                     JceType::try_from(field.jce_type).unwrap(),
                     Some(field.type_ref.bind(py)),
+                    None, // No validation here to match legacy behavior, or we could add field.validators.as_ref()
                     options,
                     depth + 1,
                     context,
@@ -386,13 +388,14 @@ fn decode_struct_instance_compiled<'a, E: crate::codec::endian::Endianness>(
                         jce_type,
                         expected_type,
                         Some(&resolved),
+                        field.validators.as_ref(), // Pass validators
                         options,
                         depth + 1,
                         context,
                     )?
                 } else {
                     // 无法推断，使用通用解码
-                    decode_generic_field(
+                    let v = decode_generic_field(
                         py,
                         reader,
                         jce_type,
@@ -400,7 +403,12 @@ fn decode_struct_instance_compiled<'a, E: crate::codec::endian::Endianness>(
                         BytesMode::Auto,
                         depth + 1,
                         context,
-                    )?
+                    )?;
+                    // Fallback validation for generic fields
+                    if let Some(rules) = &field.validators {
+                        validate(py, v.bind(py), rules, &field.name)?;
+                    }
+                    v
                 }
             } else {
                 // 处理标准字段 (可能包含嵌套泛型)
@@ -412,19 +420,14 @@ fn decode_struct_instance_compiled<'a, E: crate::codec::endian::Endianness>(
                     jce_type,
                     JceType::try_from(field.jce_type).unwrap(),
                     Some(&resolved_type),
+                    field.validators.as_ref(), // Pass validators
                     options,
                     depth + 1,
                     context,
                 )?
             };
 
-            // 执行校验
-            // 注意: 数值校验使用 f64，超大整数 (>53 bits) 可能会有精度损失。
-            // 大多数场景可接受，但需留意。
-            if let Some(rules) = &field.validators {
-                validate(py, value.bind(py), rules, &field.name)?;
-            }
-
+            // Remove separate validate call since it's now inline/handled
             instance.setattr(field.py_name.bind(py), value)?;
             context.pop();
         } else {
@@ -448,6 +451,7 @@ fn decode_field<'a, E: crate::codec::endian::Endianness>(
     actual_type: JceType,
     expected_type: JceType,
     expected_py_type: Option<&Bound<'_, PyAny>>,
+    validators: Option<&Validators>,
     options: i32,
     depth: usize,
     context: &mut ErrorContext,
@@ -465,6 +469,7 @@ fn decode_field<'a, E: crate::codec::endian::Endianness>(
         _ => actual_type == expected_type,
     };
     if !is_compatible && actual_type != JceType::StructEnd {
+        // Generic field fallback (no in-place validation here, relies on caller)
         return decode_generic_field(
             py,
             reader,
@@ -476,18 +481,34 @@ fn decode_field<'a, E: crate::codec::endian::Endianness>(
         );
     }
     match expected_type {
-        JceType::Int1 | JceType::Int2 | JceType::Int4 | JceType::Int8 => Ok(reader
-            .read_int(actual_type)?
-            .into_pyobject(py)?
-            .unbind()
-            .into_any()),
-        JceType::Float => Ok(reader.read_float()?.into_pyobject(py)?.unbind().into_any()),
-        JceType::Double => Ok(reader.read_double()?.into_pyobject(py)?.unbind().into_any()),
-        JceType::String1 | JceType::String4 => Ok(reader
-            .read_string(actual_type)?
-            .into_pyobject(py)?
-            .unbind()
-            .into_any()),
+        JceType::Int1 | JceType::Int2 | JceType::Int4 | JceType::Int8 => {
+            let val = reader.read_int(actual_type)?;
+            if let Some(rules) = validators {
+                validate_f64(context.current_field().unwrap_or("?"), val as f64, rules)?;
+            }
+            Ok(val.into_pyobject(py)?.unbind().into_any())
+        }
+        JceType::Float => {
+            let val = reader.read_float()?;
+            if let Some(rules) = validators {
+                validate_f64(context.current_field().unwrap_or("?"), val as f64, rules)?;
+            }
+            Ok(val.into_pyobject(py)?.unbind().into_any())
+        }
+        JceType::Double => {
+            let val = reader.read_double()?;
+            if let Some(rules) = validators {
+                validate_f64(context.current_field().unwrap_or("?"), val, rules)?;
+            }
+            Ok(val.into_pyobject(py)?.unbind().into_any())
+        }
+        JceType::String1 | JceType::String4 => {
+            let val = reader.read_string(actual_type)?;
+            if let Some(rules) = validators {
+                validate_len(context.current_field().unwrap_or("?"), val.len(), rules)?;
+            }
+            Ok(val.into_pyobject(py)?.unbind().into_any())
+        }
         JceType::Map => decode_map(py, reader, options, BytesMode::Auto, depth, context),
         JceType::List => decode_list(py, reader, options, BytesMode::Auto, depth, context),
         JceType::SimpleList => {
@@ -497,6 +518,9 @@ fn decode_field<'a, E: crate::codec::endian::Endianness>(
                 return Ok(py.None());
             }
             let size = reader.read_size()?;
+            if let Some(rules) = validators {
+                validate_len(context.current_field().unwrap_or("?"), size as usize, rules)?;
+            }
             Ok(PyBytes::new(py, reader.read_bytes(size as usize)?).into())
         }
         JceType::StructBegin => {

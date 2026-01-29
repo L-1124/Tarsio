@@ -3,6 +3,7 @@
 import copy
 import keyword
 import sys
+from collections.abc import Callable
 from typing import (
     Annotated,
     Any,
@@ -105,35 +106,62 @@ class StructDict(dict[int, Any]):
 class FieldInfo:
     """统一的元数据容器.
 
-    包含了 JCE Tag、默认值以及所有的校验参数。
+    包含了 JCE Tag、默认值、默认工厂以及所有的校验参数。
+    Rust 内核将直接读取此对象的属性来生成 CompiledSchema。
     """
 
-    __slots__ = ("default", "gt", "lt", "max_len", "tag", "tars_type")
+    __slots__ = (
+        "default",
+        "default_factory",
+        "ge",
+        "gt",
+        "le",
+        "lt",
+        "max_len",
+        "min_len",
+        "tag",
+        "tars_type",
+    )
 
     def __init__(
         self,
         tag: int | None = None,
-        tars_type: types | None = None,
+        tars_type: Any | None = None,
         default: Any = Undefined,
+        default_factory: Callable[[], Any] | None = None,
         *,
-        gt=None,
-        lt=None,
-        max_len=None,
+        gt: float | None = None,
+        lt: float | None = None,
+        ge: float | None = None,
+        le: float | None = None,
+        min_len: int | None = None,
+        max_len: int | None = None,
     ):
         self.tag = tag
         self.tars_type = tars_type
         self.default = default
-        # 校验参数直接作为属性存储
+        self.default_factory = default_factory
+        # 校验参数
         self.gt = gt
         self.lt = lt
+        self.ge = ge
+        self.le = le
+        self.min_len = min_len
         self.max_len = max_len
 
 
 def Field(
     default: Any = Undefined,
-    *,
     id: int | None = None,
     tars_type: types | None = None,
+    *,
+    default_factory: Callable[[], Any] | None = None,
+    gt: float | None = None,
+    lt: float | None = None,
+    ge: float | None = None,
+    le: float | None = None,
+    min_len: int | None = None,
+    max_len: int | None = None,
 ) -> Any:
     """创建 JCE 结构体字段的配置元数据.
 
@@ -154,6 +182,15 @@ def Field(
         tars_type (type[types.Type] | None, optional): 显式指定 JCE 底层类型。
             通常情况下 Tarsio 会根据 Python 类型注解自动推断 (例如 `int` -> `JCE_INT`)。
             仅在需要强制指定特殊类型（如强制使用 `short` 而非 `int`）时使用。
+        default_factory (Callable[[], Any] | None, optional): 默认值工厂函数。
+            用于动态生成默认值（如 `list`），与 `default` 互斥。
+        gt (float | None, optional): 数值验证，大于 (`>`)。
+        lt (float | None, optional): 数值验证，小于 (`<`)。
+        ge (float | None, optional): 数值验证，大于等于 (`>=`)。
+        le (float | None, optional): 数值验证，小于等于 (`<=`)。
+        min_len (int | None, optional): 长度验证，最小长度。
+        max_len (int | None, optional): 长度验证，最大长度。
+
 
     Returns:
         Any: 返回一个 `FieldInfo` 实例，包含了字段的所有元数据配置。
@@ -194,7 +231,18 @@ def Field(
     """
     if id is not None and id < 0:
         raise ValueError(f"Invalid JCE ID: {id}")
-    return FieldInfo(tag=id, default=default, tars_type=tars_type)
+    return FieldInfo(
+        tag=id,
+        default=default,
+        tars_type=tars_type,
+        default_factory=default_factory,
+        gt=gt,
+        lt=lt,
+        ge=ge,
+        le=le,
+        min_len=min_len,
+        max_len=max_len,
+    )
 
 
 @dataclass_transform(field_specifiers=(Field,))
@@ -301,6 +349,17 @@ class Struct:
             if field_info.default is Undefined:
                 # Case 1: 必填参数
                 args_required.append(name)
+            elif field_info.default_factory is not None:
+                injection_key = f"__tars_default_fac_{name}"
+                namespace[injection_key] = field_info.default_factory
+                # 使用 Undefined 作为哨兵
+                k_undef = "__Undefined"
+                namespace[k_undef] = Undefined
+                args_optional.append(f"{name}={k_undef}")
+                body_lines.pop()
+                body_lines.append(
+                    f"self.{name} = {injection_key}() if {name} is {k_undef} else {name}"
+                )
             else:
                 injection_key = f"__tars_default_{name}"
 
