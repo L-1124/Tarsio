@@ -1,7 +1,6 @@
-use crate::bindings::serde::{
-    BytesMode, decode_generic_struct, decode_struct, encode_generic_field, encode_generic_struct,
-    encode_struct,
-};
+use crate::bindings::deserializer::{BytesMode, decode_generic_struct, decode_struct_dict};
+use crate::bindings::error::ErrorContext;
+use crate::bindings::serializer::{encode_generic_field, encode_generic_struct, encode_struct};
 use crate::codec::endian::Endianness;
 use crate::codec::framing::JceFramer;
 use crate::codec::reader::JceReader;
@@ -155,8 +154,10 @@ impl LengthPrefixedReader {
         slf: &mut LengthPrefixedReader,
         reader: &mut JceReader<E>,
     ) -> PyResult<Option<Py<PyAny>>> {
+        let mut context = ErrorContext::new();
         if let Some(schema) = &slf.target_schema {
-            let dict = decode_struct(py, reader, schema.bind(py), slf.options, 0)?;
+            let dict =
+                decode_struct_dict(py, reader, schema.bind(py), slf.options, 0, &mut context)?;
             let kwargs = PyDict::new(py);
             if let Some(ctx) = &slf.context {
                 kwargs.set_item("context", ctx.bind(py))?;
@@ -171,7 +172,8 @@ impl LengthPrefixedReader {
             return Ok(Some(dict));
         }
 
-        let result = decode_generic_struct(py, reader, slf.options, slf.bytes_mode, 0);
+        let result =
+            decode_generic_struct(py, reader, slf.options, slf.bytes_mode, 0, &mut context);
         match result {
             Ok(obj) => {
                 if let Some(target_cls) = &slf.target_cls {
