@@ -1,11 +1,17 @@
-use crate::codec::consts::JceType;
 use std::fmt;
 
-/// 错误上下文，用于跟踪反序列化路径以提供有用的错误信息。
+#[derive(Debug, Clone)]
+enum PathItem {
+    Field(String),
+    Index(usize),
+    Key(String),
+    Tag(u8),
+}
+
+/// 错误上下文，用于跟踪序列化/反序列化路径以提供精确的错误信息 (JSONPath 风格)。
 #[derive(Debug, Clone, Default)]
 pub struct ErrorContext {
-    /// 栈结构: (字段名, Tag, TarsType)
-    stack: Vec<(String, u8, u8)>,
+    stack: Vec<PathItem>,
 }
 
 impl ErrorContext {
@@ -15,12 +21,24 @@ impl ErrorContext {
         }
     }
 
-    pub fn push_field(&mut self, name: &str, tag: u8, tars_type: u8) {
-        self.stack.push((name.to_string(), tag, tars_type));
+    /// 进入结构体字段
+    pub fn push_field(&mut self, name: &str) {
+        self.stack.push(PathItem::Field(name.to_string()));
     }
 
-    pub fn push_tag(&mut self, tag: u8, tars_type: u8) {
-        self.stack.push((tag.to_string(), tag, tars_type));
+    /// 进入列表索引
+    pub fn push_index(&mut self, index: usize) {
+        self.stack.push(PathItem::Index(index));
+    }
+
+    /// 进入字典键
+    pub fn push_key(&mut self, key: &str) {
+        self.stack.push(PathItem::Key(key.to_string()));
+    }
+
+    /// 进入未知字段 (仅 Tag)
+    pub fn push_tag(&mut self, tag: u8) {
+        self.stack.push(PathItem::Tag(tag));
     }
 
     pub fn pop(&mut self) {
@@ -30,28 +48,14 @@ impl ErrorContext {
 
 impl fmt::Display for ErrorContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut first = true;
-        for (name, tag, tars_type) in &self.stack {
-            if !first {
-                write!(f, " -> ")?;
+        write!(f, "$")?;
+        for item in &self.stack {
+            match item {
+                PathItem::Field(name) => write!(f, ".{}", name)?,
+                PathItem::Index(idx) => write!(f, "[{}]", idx)?,
+                PathItem::Key(key) => write!(f, "[\"{}\"]", key)?,
+                PathItem::Tag(tag) => write!(f, "<tag:{}>", tag)?,
             }
-            first = false;
-
-            let type_name = match JceType::try_from(*tars_type) {
-                Ok(JceType::Int1) | Ok(JceType::Int2) | Ok(JceType::Int4) | Ok(JceType::Int8) => {
-                    "Int"
-                }
-                Ok(JceType::Float) => "Float",
-                Ok(JceType::Double) => "Double",
-                Ok(JceType::String1) | Ok(JceType::String4) => "String",
-                Ok(JceType::Map) => "Map",
-                Ok(JceType::List) | Ok(JceType::SimpleList) => "List",
-                Ok(JceType::StructBegin) | Ok(JceType::StructEnd) => "Struct",
-                Ok(JceType::ZeroTag) => "ZeroTag",
-                Err(_) => "Unknown",
-            };
-
-            write!(f, "{}[{}]({})", name, tag, type_name)?;
         }
         Ok(())
     }

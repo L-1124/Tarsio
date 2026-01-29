@@ -207,7 +207,7 @@ pub(crate) fn decode_struct_dict<'a, E: crate::codec::endian::Endianness>(
         if let Some(tuple) = tag_map.get(&tag) {
             let name: String = tuple.get_item(0)?.extract()?;
             let jce_type_code: u8 = tuple.get_item(2)?.extract()?;
-            context.push_field(&name, tag, jce_type_code);
+            context.push_field(&name);
 
             // 递归解码字段
             let value = if jce_type_code == JCE_TYPE_GENERIC {
@@ -266,7 +266,7 @@ fn decode_struct_dict_compiled<'a, E: crate::codec::endian::Endianness>(
         }
         if let Some(field_idx) = schema.tag_lookup[tag as usize] {
             let field = &schema.fields[field_idx];
-            context.push_field(&field.name, tag, field.jce_type);
+            context.push_field(&field.name);
             let value = if field.jce_type == JCE_TYPE_GENERIC {
                 decode_generic_field(
                     py,
@@ -369,7 +369,7 @@ fn decode_struct_instance_compiled<'a, E: crate::codec::endian::Endianness>(
         }
         if let Some(field_idx) = schema.tag_lookup[tag as usize] {
             let field = &schema.fields[field_idx];
-            context.push_field(&field.name, tag, field.jce_type);
+            context.push_field(&field.name);
 
             let value = if field.jce_type == JCE_TYPE_GENERIC {
                 // 尝试解析泛型字段的具体类型
@@ -576,7 +576,7 @@ pub(crate) fn decode_generic_struct<'a, E: crate::codec::endian::Endianness>(
         if jce_type == JceType::StructEnd {
             break;
         }
-        context.push_tag(tag, jce_type as u8);
+        context.push_tag(tag);
         dict.set_item(
             tag,
             decode_generic_field(

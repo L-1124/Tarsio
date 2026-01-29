@@ -7,6 +7,7 @@ use crate::codec::reader::JceReader;
 use crate::codec::writer::JceWriter;
 use byteorder::{BigEndian, LittleEndian};
 use bytes::{BufMut, BytesMut};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
@@ -194,13 +195,12 @@ pub struct LengthPrefixedWriter {
     inclusive_length: bool,
     little_endian: bool,
     options: i32,
-    context: Option<Py<PyAny>>,
 }
 
 #[pymethods]
 impl LengthPrefixedWriter {
     #[new]
-    #[pyo3(signature = (length_type=4, inclusive_length=true, little_endian_length=false, options=0, context=None))]
+    #[pyo3(signature = (length_type=4, inclusive_length=true, little_endian_length=false, options=0))]
     /// 创建一个新的 LengthPrefixedWriter.
     ///
     /// Args:
@@ -208,13 +208,11 @@ impl LengthPrefixedWriter {
     ///     inclusive_length (bool): 长度是否包含头部本身.
     ///     little_endian_length (bool): 长度头是否为小端序.
     ///     options (int): JCE 选项.
-    ///     context (dict | None): 序列化上下文.
     fn new(
         length_type: u8,
         inclusive_length: bool,
         little_endian_length: bool,
         options: i32,
-        context: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         if ![1, 2, 4].contains(&length_type) {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -227,7 +225,6 @@ impl LengthPrefixedWriter {
             inclusive_length,
             little_endian: little_endian_length,
             options,
-            context,
         })
     }
 
@@ -242,19 +239,15 @@ impl LengthPrefixedWriter {
 
     fn write(&mut self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<()> {
         let options = self.options;
-        let context_bound = match &self.context {
-            Some(ctx) => ctx.bind(py).clone(),
-            None => PyDict::new(py).into_any(),
-        };
 
         let payload = if options & 1 == 0 {
             let mut writer = JceWriter::<Vec<u8>, BigEndian>::new();
-            Self::encode_obj(py, &mut writer, obj, options, &context_bound)?;
+            Self::encode_obj(py, &mut writer, obj, options)?;
             writer.get_buffer().to_vec()
         } else {
             let mut writer =
                 JceWriter::<Vec<u8>, LittleEndian>::with_buffer(Vec::with_capacity(128));
-            Self::encode_obj(py, &mut writer, obj, options, &context_bound)?;
+            Self::encode_obj(py, &mut writer, obj, options)?;
             writer.get_buffer().to_vec()
         };
 
@@ -292,21 +285,22 @@ impl LengthPrefixedWriter {
         writer: &mut JceWriter<B, E>,
         obj: &Bound<'_, PyAny>,
         options: i32,
-        context: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        if let Ok(schema_method) = obj.getattr("__get_core_schema__") {
+        let mut error_context = ErrorContext::new();
+        let result = if let Ok(schema_method) = obj.getattr("__get_core_schema__") {
             let schema = schema_method.call0()?.cast_into::<PyList>()?;
-            encode_struct(py, writer, obj, &schema, options, context, 0)
+            encode_struct(py, writer, obj, &schema, options, &mut error_context, 0)
         } else if let Ok(type_name) = obj.get_type().name() {
             if type_name == "StructDict" {
                 let dict = obj.cast::<PyDict>()?;
-                encode_generic_struct(py, writer, dict, options, context, 0)
+                encode_generic_struct(py, writer, dict, options, &mut error_context, 0)
             } else {
-                encode_generic_field(py, writer, 0, obj, options, context, 0)
+                encode_generic_field(py, writer, 0, obj, options, &mut error_context, 0)
             }
         } else {
-            encode_generic_field(py, writer, 0, obj, options, context, 0)
-        }
+            encode_generic_field(py, writer, 0, obj, options, &mut error_context, 0)
+        };
+        result.map_err(|e| PyValueError::new_err(format!("{} at {}", e, error_context)))
     }
 
     /// 为 Payload 添加长度前缀并写入缓冲区.

@@ -1,3 +1,4 @@
+use crate::bindings::error::ErrorContext;
 use crate::bindings::schema::{CompiledSchema, compile_schema, resolve_jce_type};
 use crate::codec::consts::{JCE_TYPE_GENERIC, JceType};
 use crate::codec::writer::JceWriter;
@@ -116,54 +117,56 @@ fn encode_infer(
     writer: &mut dyn JceWriterTrait,
     value: &Bound<'_, PyAny>,
     options: i32,
-    context: &Bound<'_, PyAny>,
+    error_context: &mut ErrorContext,
     depth: usize,
 ) -> PyResult<()> {
     if let Ok(dict) = value.cast::<PyDict>() {
-        encode_generic_struct(py, writer, dict, options, context, depth)
+        encode_generic_struct(py, writer, dict, options, error_context, depth)
     } else if let Ok(schema_list) = value.getattr("__tars_schema__") {
-        encode_struct(py, writer, value, &schema_list, options, context, depth)
+        encode_struct(
+            py,
+            writer,
+            value,
+            &schema_list,
+            options,
+            error_context,
+            depth,
+        )
     } else {
-        encode_generic_field(py, writer, 0, value, options, context, depth)
+        encode_generic_field(py, writer, 0, value, options, error_context, depth)
     }
 }
 
 #[pyfunction]
-#[pyo3(signature = (obj, schema, options=0, context=None))]
+#[pyo3(signature = (obj, schema, options=0))]
 /// 序列化 Python 对象为 JCE 二进制格式 (基于 Schema)。
 pub fn dumps(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
     schema: &Bound<'_, PyAny>,
     options: i32,
-    context: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyBytes>> {
-    let context_bound = match context {
-        Some(ctx) => ctx.clone(),
-        None => PyDict::new(py).into_any(),
-    };
-    let bytes = with_writer(options, |writer| {
-        encode_struct(py, writer, obj, schema, options, &context_bound, 0)
-    })?;
+    let mut error_context = ErrorContext::new();
+    let result = with_writer(options, |writer| {
+        encode_struct(py, writer, obj, schema, options, &mut error_context, 0)
+    });
+    let bytes = result.map_err(|e| PyValueError::new_err(format!("{} at {}", e, error_context)))?;
     Ok(PyBytes::new(py, &bytes).into())
 }
 
 #[pyfunction]
-#[pyo3(signature = (data, options=0, context=None))]
+#[pyo3(signature = (data, options=0))]
 /// 序列化 Python 对象为 JCE 二进制格式 (自动探测类型)。
 pub fn dumps_generic(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
     options: i32,
-    context: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyBytes>> {
-    let context_bound = match context {
-        Some(ctx) => ctx.clone(),
-        None => PyDict::new(py).into_any(),
-    };
-    let bytes = with_writer(options, |writer| {
-        encode_infer(py, writer, data, options, &context_bound, 0)
-    })?;
+    let mut error_context = ErrorContext::new();
+    let result = with_writer(options, |writer| {
+        encode_infer(py, writer, data, options, &mut error_context, 0)
+    });
+    let bytes = result.map_err(|e| PyValueError::new_err(format!("{} at {}", e, error_context)))?;
     Ok(PyBytes::new(py, &bytes).into())
 }
 
@@ -174,7 +177,7 @@ pub(crate) fn encode_struct(
     obj: &Bound<'_, PyAny>,
     schema: &Bound<'_, PyAny>,
     options: i32,
-    context: &Bound<'_, PyAny>,
+    error_context: &mut ErrorContext,
     depth: usize,
 ) -> PyResult<()> {
     if depth > MAX_DEPTH {
@@ -186,12 +189,13 @@ pub(crate) fn encode_struct(
             .pointer_checked(None)
             .map_err(|_| PyValueError::new_err("Invalid capsule"))?;
         let compiled = unsafe { &*(ptr.as_ptr() as *mut CompiledSchema) };
-        return encode_struct_compiled(py, writer, obj, compiled, options, context, depth);
+        return encode_struct_compiled(py, writer, obj, compiled, options, error_context, depth);
     }
     let schema_list = schema.cast::<PyList>()?;
     for item in schema_list.iter() {
         let tuple = item.cast::<PyTuple>()?;
         let name: String = tuple.get_item(0)?.extract()?;
+        error_context.push_field(&name);
         let (tag, jce_type_code, default_val) = if tuple.len() == 3 {
             let info = tuple.get_item(1)?;
             let tag: u8 = info.getattr("tag")?.extract()?;
@@ -206,8 +210,15 @@ pub(crate) fn encode_struct(
             (tag, jce_type_code, default_val)
         };
 
-        let value = obj.getattr(&name)?;
+        let value = match obj.getattr(&name) {
+            Ok(v) => v,
+            Err(e) => {
+                error_context.pop();
+                return Err(e);
+            }
+        };
         if value.is_none() {
+            error_context.pop();
             continue;
         }
         if (options & OPT_EXCLUDE_UNSET) != 0
@@ -216,13 +227,15 @@ pub(crate) fn encode_struct(
                 .call_method1("__contains__", (&name,))?
                 .extract::<bool>()?
         {
+            error_context.pop();
             continue;
         }
         if (options & OPT_OMIT_DEFAULT) != 0 && value.eq(&default_val)? {
+            error_context.pop();
             continue;
         }
         if jce_type_code == JCE_TYPE_GENERIC {
-            encode_generic_field(py, writer, tag, &value, options, context, depth + 1)?;
+            encode_generic_field(py, writer, tag, &value, options, error_context, depth + 1)?;
         } else {
             let jce_type = JceType::try_from(jce_type_code).unwrap();
             encode_field(
@@ -232,10 +245,11 @@ pub(crate) fn encode_struct(
                 jce_type,
                 &value,
                 options,
-                context,
+                error_context,
                 depth + 1,
             )?;
         }
+        error_context.pop();
     }
     Ok(())
 }
@@ -249,7 +263,7 @@ fn encode_struct_compiled(
     obj: &Bound<'_, PyAny>,
     schema: &CompiledSchema,
     options: i32,
-    context: &Bound<'_, PyAny>,
+    error_context: &mut ErrorContext,
     depth: usize,
 ) -> PyResult<()> {
     // 预先获取 model_fields_set 集合 (如果需要)
@@ -259,22 +273,40 @@ fn encode_struct_compiled(
         None
     };
     for field in &schema.fields {
+        error_context.push_field(&field.name);
         // 检查字段是否被设置
         if let Some(fs) = &fields_set
             && !fs.contains(field.py_name.bind(py))?
         {
+            error_context.pop();
             continue;
         }
-        let value = obj.getattr(field.py_name.bind(py))?;
+        let value = match obj.getattr(field.py_name.bind(py)) {
+            Ok(v) => v,
+            Err(e) => {
+                error_context.pop();
+                return Err(e);
+            }
+        };
         if value.is_none() {
+            error_context.pop();
             continue;
         }
         // 检查默认值
         if (options & OPT_OMIT_DEFAULT) != 0 && value.eq(field.default_val.bind(py))? {
+            error_context.pop();
             continue;
         }
         if field.jce_type == JCE_TYPE_GENERIC {
-            encode_generic_field(py, writer, field.tag, &value, options, context, depth + 1)?;
+            encode_generic_field(
+                py,
+                writer,
+                field.tag,
+                &value,
+                options,
+                error_context,
+                depth + 1,
+            )?;
         } else {
             let jce_type = JceType::try_from(field.jce_type).unwrap_or(JceType::ZeroTag);
             encode_field(
@@ -284,10 +316,11 @@ fn encode_struct_compiled(
                 jce_type,
                 &value,
                 options,
-                context,
+                error_context,
                 depth + 1,
             )?;
         }
+        error_context.pop();
     }
     Ok(())
 }
@@ -301,7 +334,7 @@ fn encode_field(
     jce_type: JceType,
     value: &Bound<'_, PyAny>,
     options: i32,
-    context: &Bound<'_, PyAny>,
+    error_context: &mut ErrorContext,
     depth: usize,
 ) -> PyResult<()> {
     match jce_type {
@@ -318,16 +351,24 @@ fn encode_field(
             writer.write_tag(tag, JceType::Map);
             writer.write_int(0, dict.len() as i64);
             for (k, v) in dict {
-                encode_generic_field(py, writer, 0, &k, options, context, depth + 1)?;
-                encode_generic_field(py, writer, 1, &v, options, context, depth + 1)?;
+                error_context.push_key("?");
+                encode_generic_field(py, writer, 0, &k, options, error_context, depth + 1)?;
+                error_context.pop();
+
+                let key_str = k.str()?.to_str()?.to_string();
+                error_context.push_key(&key_str);
+                encode_generic_field(py, writer, 1, &v, options, error_context, depth + 1)?;
+                error_context.pop();
             }
         }
         JceType::List => {
             let list = value.cast::<PyList>()?;
             writer.write_tag(tag, JceType::List);
             writer.write_int(0, list.len() as i64);
-            for item in list {
-                encode_generic_field(py, writer, 0, &item, options, context, depth + 1)?;
+            for (i, item) in list.iter().enumerate() {
+                error_context.push_index(i);
+                encode_generic_field(py, writer, 0, &item, options, error_context, depth + 1)?;
+                error_context.pop();
             }
         }
         JceType::SimpleList => {
@@ -335,7 +376,7 @@ fn encode_field(
                 writer.write_bytes(tag, bytes.as_bytes());
             } else {
                 let inner_bytes = with_writer(options, |w| {
-                    encode_infer(py, w, value, options, context, depth + 1)
+                    encode_infer(py, w, value, options, error_context, depth + 1)
                 })?;
                 writer.write_bytes(tag, &inner_bytes);
             }
@@ -343,9 +384,17 @@ fn encode_field(
         JceType::StructBegin => {
             writer.write_tag(tag, JceType::StructBegin);
             if let Ok(schema_list) = value.getattr("__tars_schema__") {
-                encode_struct(py, writer, value, &schema_list, options, context, depth + 1)?;
+                encode_struct(
+                    py,
+                    writer,
+                    value,
+                    &schema_list,
+                    options,
+                    error_context,
+                    depth + 1,
+                )?;
             } else if let Ok(dict) = value.cast::<PyDict>() {
-                encode_generic_struct(py, writer, dict, options, context, depth + 1)?;
+                encode_generic_struct(py, writer, dict, options, error_context, depth + 1)?;
             } else {
                 return Err(PyTypeError::new_err("Cannot encode as struct"));
             }
@@ -362,7 +411,7 @@ pub(crate) fn encode_generic_struct(
     writer: &mut dyn JceWriterTrait,
     data: &Bound<'_, PyDict>,
     options: i32,
-    context: &Bound<'_, PyAny>,
+    error_context: &mut ErrorContext,
     depth: usize,
 ) -> PyResult<()> {
     if depth > MAX_DEPTH {
@@ -386,7 +435,9 @@ pub(crate) fn encode_generic_struct(
     }
     items.sort_by_key(|(t, _)| *t);
     for (tag, value) in items {
-        encode_generic_field(py, writer, tag, &value, options, context, depth + 1)?;
+        error_context.push_tag(tag);
+        encode_generic_field(py, writer, tag, &value, options, error_context, depth + 1)?;
+        error_context.pop();
     }
     Ok(())
 }
@@ -398,7 +449,7 @@ pub(crate) fn encode_generic_field(
     tag: u8,
     value: &Bound<'_, PyAny>,
     options: i32,
-    context: &Bound<'_, PyAny>,
+    error_context: &mut ErrorContext,
     depth: usize,
 ) -> PyResult<()> {
     if let Ok(v) = value.extract::<i64>() {
@@ -412,25 +463,41 @@ pub(crate) fn encode_generic_field(
     } else if let Ok(l) = value.cast::<PyList>() {
         writer.write_tag(tag, JceType::List);
         writer.write_int(0, l.len() as i64);
-        for item in l {
-            encode_generic_field(py, writer, 0, &item, options, context, depth + 1)?;
+        for (i, item) in l.iter().enumerate() {
+            error_context.push_index(i);
+            encode_generic_field(py, writer, 0, &item, options, error_context, depth + 1)?;
+            error_context.pop();
         }
     } else if let Ok(d) = value.cast::<PyDict>() {
         if value.get_type().name()?.to_str()? == "StructDict" {
             writer.write_tag(tag, JceType::StructBegin);
-            encode_generic_struct(py, writer, d, options, context, depth + 1)?;
+            encode_generic_struct(py, writer, d, options, error_context, depth + 1)?;
             writer.write_tag(0, JceType::StructEnd);
         } else {
             writer.write_tag(tag, JceType::Map);
             writer.write_int(0, d.len() as i64);
             for (k, v) in d {
-                encode_generic_field(py, writer, 0, &k, options, context, depth + 1)?;
-                encode_generic_field(py, writer, 1, &v, options, context, depth + 1)?;
+                error_context.push_key("?");
+                encode_generic_field(py, writer, 0, &k, options, error_context, depth + 1)?;
+                error_context.pop();
+
+                let key_str = k.str()?.to_str()?.to_string();
+                error_context.push_key(&key_str);
+                encode_generic_field(py, writer, 1, &v, options, error_context, depth + 1)?;
+                error_context.pop();
             }
         }
     } else if let Ok(schema_list) = value.getattr("__tars_schema__") {
         writer.write_tag(tag, JceType::StructBegin);
-        encode_struct(py, writer, value, &schema_list, options, context, depth + 1)?;
+        encode_struct(
+            py,
+            writer,
+            value,
+            &schema_list,
+            options,
+            error_context,
+            depth + 1,
+        )?;
         writer.write_tag(0, JceType::StructEnd);
     } else {
         return Err(PyTypeError::new_err("Cannot infer type"));
