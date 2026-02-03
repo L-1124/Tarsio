@@ -50,18 +50,6 @@
 > 但必须全部位于 `python/tests/` 根目录，
 > **禁止镜像 Rust 模块结构或创建子目录**。
 
-#### 推荐文件职责（用于减少重复）
-
-| 文件 | 职责（只测这一类） |
-|---|---|
-| `test_protocol.py` | 字节级协议基线（hex/布局/skip_field 相关） |
-| `test_struct.py` | Struct 构造器与 Python API 行为（encode/decode 路由、异常模型） |
-| `test_invariants.py` | 综合不变量（跨 WireType 组合的 round-trip + 错误路径） |
-| `test_generics.py` | 泛型具体化/模板限制/泛型场景行为 |
-| `test_evolution.py`（可选） | schema 演进（forward/back compatibility） |
-
----
-
 ### 3.2 测试函数
 
 * 命名规则：`test_<被测函数>_<预期行为>`

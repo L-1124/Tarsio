@@ -1,35 +1,14 @@
 """测试 Struct 基类的构造器和类行为."""
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 import pytest
 from tarsio import Struct
+from tarsio._core import encode_raw
 
 # ==========================================
 # 测试专用结构体
 # ==========================================
-
-
-class BasicUser(Struct):
-    """基础用户结构体."""
-
-    id: Annotated[int, 0]
-    name: Annotated[str, 1]
-
-
-class OptionalFields(Struct):
-    """带可选字段的结构体."""
-
-    required_id: Annotated[int, 0]
-    optional_name: Annotated[str | None, 1] = None
-    optional_age: Annotated[int | None, 2] = None
-
-
-class RecursiveNode(Struct):
-    """递归链表节点."""
-
-    val: Annotated[int, 0]
-    next: Annotated[Optional["RecursiveNode"], 1] = None
 
 
 class OptionalOnly(Struct):
@@ -38,35 +17,46 @@ class OptionalOnly(Struct):
     optional: Annotated[int | None, 0] = None
 
 
+class UserWithDefaults(Struct):
+    """带默认值字段的结构体."""
+
+    email: Annotated[str, 2]
+    name: Annotated[str, 0] = "unknown"
+    age: Annotated[int, 1] = 0
+
+
 # ==========================================
 # 构造器测试 - 位置参数
 # ==========================================
 
 
-def test_init_with_positional_args() -> None:
+def test_init_with_positional_args(sample_user) -> None:
     """位置参数应该按照字段顺序正确赋值."""
     # Act
-    user = BasicUser(42, "Alice")
+    cls = type(sample_user)
+    user = cls(42, "Alice")
 
     # Assert
     assert user.id == 42
     assert user.name == "Alice"
 
 
-def test_init_with_keyword_args() -> None:
+def test_init_with_keyword_args(sample_user) -> None:
     """关键字参数应该正确赋值."""
     # Act
-    user = BasicUser(id=100, name="Bob")
+    cls = type(sample_user)
+    user = cls(id=100, name="Bob")
 
     # Assert
     assert user.id == 100
     assert user.name == "Bob"
 
 
-def test_init_with_mixed_args() -> None:
+def test_init_with_mixed_args(sample_user) -> None:
     """混合位置和关键字参数应该正确赋值."""
     # Act
-    user = BasicUser(200, name="Charlie")
+    cls = type(sample_user)
+    user = cls(200, name="Charlie")
 
     # Assert
     assert user.id == 200
@@ -78,22 +68,25 @@ def test_init_with_mixed_args() -> None:
 # ==========================================
 
 
-def test_init_missing_required_arg_raises_type_error() -> None:
+def test_init_missing_required_arg_raises_type_error(sample_user) -> None:
     """缺少必需参数时应该抛出 TypeError."""
+    cls = type(sample_user)
     with pytest.raises(TypeError, match="missing 1 required"):
-        BasicUser(1)  # type: ignore
+        cls(1)  # type: ignore
 
 
-def test_init_duplicate_arg_raises_type_error() -> None:
+def test_init_duplicate_arg_raises_type_error(sample_user) -> None:
     """参数重复赋值时应该抛出 TypeError."""
+    cls = type(sample_user)
     with pytest.raises(TypeError, match="got multiple values"):
-        BasicUser(1, id=2)  # type: ignore
+        cls(1, id=2)  # type: ignore
 
 
-def test_init_extra_positional_arg_raises_type_error() -> None:
+def test_init_extra_positional_arg_raises_type_error(sample_user) -> None:
     """多余的位置参数应该抛出 TypeError."""
+    cls = type(sample_user)
     with pytest.raises(TypeError, match="takes"):
-        BasicUser(1, "Alice", "Extra")  # type: ignore
+        cls(1, "Alice", "Extra")  # type: ignore
 
 
 # ==========================================
@@ -101,37 +94,61 @@ def test_init_extra_positional_arg_raises_type_error() -> None:
 # ==========================================
 
 
-def test_optional_field_defaults_to_none() -> None:
+def test_optional_field_defaults_to_none(sample_optional_user) -> None:
     """可选字段未提供时应该默认为 None."""
     # Act
-    obj = OptionalFields(1, "Name")
+    cls = type(sample_optional_user)
+    obj = cls(1, "Name")
 
     # Assert
-    assert obj.required_id == 1
-    assert obj.optional_name == "Name"
-    assert obj.optional_age is None
+    assert obj.id == 1
+    assert obj.name == "Name"
+    assert obj.age is None
 
 
-def test_optional_field_accepts_none() -> None:
+def test_optional_field_accepts_none(sample_optional_user) -> None:
     """可选字段应该接受显式 None."""
     # Act
-    obj = OptionalFields(1, None, None)
+    cls = type(sample_optional_user)
+    obj = cls(1, None, None)
 
     # Assert
-    assert obj.required_id == 1
-    assert obj.optional_name is None
-    assert obj.optional_age is None
+    assert obj.id == 1
+    assert obj.name is None
+    assert obj.age is None
 
 
-def test_optional_field_accepts_value() -> None:
+def test_optional_field_accepts_value(sample_optional_user) -> None:
     """可选字段应该接受有效值."""
     # Act
-    obj = OptionalFields(1, "Name", 25)
+    cls = type(sample_optional_user)
+    obj = cls(1, "Name", 25)
 
     # Assert
-    assert obj.required_id == 1
-    assert obj.optional_name == "Name"
-    assert obj.optional_age == 25
+    assert obj.id == 1
+    assert obj.name == "Name"
+    assert obj.age == 25
+
+
+# ==========================================
+# 默认值反序列化测试
+# ==========================================
+
+
+def test_default_value_used_when_field_missing() -> None:
+    """Wire 缺失字段时应使用模型默认值."""
+    data = encode_raw({2: "a@b.com"})
+    obj = UserWithDefaults.decode(data)
+    assert obj.name == "unknown"
+    assert obj.age == 0
+    assert obj.email == "a@b.com"
+
+
+def test_missing_non_optional_field_without_default_raises() -> None:
+    """非 Optional 且无默认值的字段缺失应抛错."""
+    data = encode_raw({})
+    with pytest.raises(ValueError, match="Missing required field 'email'"):
+        UserWithDefaults.decode(data)
 
 
 # ==========================================
@@ -139,23 +156,25 @@ def test_optional_field_accepts_value() -> None:
 # ==========================================
 
 
-def test_recursive_struct_leaf_node() -> None:
+def test_recursive_struct_leaf_node(sample_node) -> None:
     """叶子节点的 next 应该为 None."""
     # Act
-    node = RecursiveNode(1)
+    cls = type(sample_node)
+    node = cls(1)
 
     # Assert
     assert node.val == 1
     assert node.next is None
 
 
-def test_recursive_struct_linked_nodes() -> None:
+def test_recursive_struct_linked_nodes(sample_node) -> None:
     """链表节点应该正确链接."""
     # Arrange
-    leaf = RecursiveNode(2)
+    cls = type(sample_node)
+    leaf = cls(2)
 
     # Act
-    root = RecursiveNode(1, leaf)
+    root = cls(1, leaf)
 
     # Assert
     assert root.val == 1
@@ -164,10 +183,11 @@ def test_recursive_struct_linked_nodes() -> None:
     assert root.next.val == 2
 
 
-def test_recursive_struct_deep_nesting() -> None:
+def test_recursive_struct_deep_nesting(sample_node) -> None:
     """深层嵌套结构应该正确构造."""
     # Act
-    node = RecursiveNode(1, RecursiveNode(2, RecursiveNode(3, None)))
+    cls = type(sample_node)
+    node = cls(1, cls(2, cls(3, None)))
 
     # Assert
     assert node.val == 1

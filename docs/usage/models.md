@@ -1,165 +1,133 @@
 # 定义模型
 
-在 Tarsio 中，数据模型是通过继承 `Struct` 并使用 Python 类型提示来定义的。这与 Pydantic 的使用方式非常相似，但增加了一个关键概念：**JCE ID (Tag)**。
+在 Tarsio 中，定义模型（Tars 结构体）的方式非常直观。您只需要创建一个继承自 `tarsio.Struct` 的类，并使用标准的 Python 类型注解定义字段即可。
 
-## 基础结构体
+## 基础定义
 
-每个字段必须通过 `Field` 指定一个唯一的 `id`。这是 JCE 协议的要求，用于在二进制流中标识字段。
+Tarsio 使用 Python 标准库 `typing.Annotated` 来指定 JCE Tag。这使得模型定义既保持了 Python 的原生风格，又提供了清晰的协议元数据。
 
-```python title="basic.py"
-from tarsio import Struct, Field
+### 语法结构
 
-class Product(Struct):
-    id: int = Field(id=0)
-    name: str = Field(id=1)
-    price: float = Field(id=2)
+```python
+Annotated[Type, Tag]
 ```
 
-!!! warning "Tag 唯一性"
-    在一个结构体内，`id` 必须是唯一的且为非负整数。通常从 0 开始递增。
-
-## 支持的类型
-
-Tarsio 支持多种 Python 原生类型，并自动映射到 JCE 类型：
-
-| Python 类型 | JCE 类型 | 说明 |
-| :--- | :--- | :--- |
-| `int` | `INT1/2/4/8` | 根据数值大小自动选择最优编码 |
-| `float` | `FLOAT/DOUBLE` | 默认编码为 `DOUBLE` (8字节) |
-| `str` | `STRING1/4` | UTF-8 编码字符串 |
-| `bytes` | `SIMPLE_LIST` | 对应 JCE 的 `byte[]` |
-| `bool` | `INT1` | `True`=1, `False`=0 |
-| `list[T]` | `LIST` | 列表容器 |
-| `dict[K, V]` | `MAP` | 字典容器 |
-
-### 显式指定类型
-
-虽然 Tarsio 会自动推断类型，但你也可以显式指定 JCE 类型（通常用于 `float` vs `double`）：
-
-```python title="explicit_type.py"
-from tarsio import types
-
-class Metrics(Struct):
-    # 强制使用 4 字节 FLOAT
-    cpu_usage: float = Field(id=0, tars_type=types.FLOAT)
-```
-
-## 模型配置
-
-`Struct` 允许你通过 Pydantic 的 `model_config` 来配置一些 JCE 特有的序列化和反序列化行为。
-
-### 支持的配置项
-
-| 配置键 | 类型 | 说明 | 默认值 |
-| :--- | :--- | :--- | :--- |
-| `tars_omit_default` | `bool` | 是否在编码时跳过等于默认值的字段 | `False` |
-| `tars_option` | `Option` | 默认的编码/解码选项（如字节序） | `Option.NONE` |
+* **Type**: 字段的 Python 类型（如 `int`, `str`）。
+* **Tag**: JCE 协议中的 Tag ID（整数，0-255）。
 
 ### 示例
 
-```python title="config.py"
-from pydantic import ConfigDict
-from tarsio import Struct, Field, Option
+```python
+from typing import Annotated
+from tarsio import Struct
 
-class MyConfig(Struct):
-    model_config = ConfigDict(
-        tars_omit_default=True,
-        tars_option=Option.LITTLE_ENDIAN
-    )
-
-    uid: int = Field(id=0, default=0)
-    name: str = Field(id=1, default="unknown")
+class User(Struct):
+    uid: Annotated[int, 0]
+    username: Annotated[str, 1]
+    is_active: Annotated[bool, 2]
 ```
 
-在这个例子中：
+## 可选字段与默认值
 
-1. 如果 `uid` 为 0 或 `name` 为 "unknown"，它们在序列化时会被跳过（节省空间）。
-2. 默认使用小端序进行编解码。
+如果字段是可选的（允许为 None），可以使用 `Optional` 或 `| None`。建议显式提供默认值（通常是 `None`）；未提供时，Tarsio 会将其视为默认 `None`。
+
+```python
+class Response(Struct):
+    code: Annotated[int, 0]
+    message: Annotated[str | None, 1] = None  # 可选字段
+```
+
+对于非 Optional 字段，如果您希望它有默认值，也可以直接赋值：
+
+```python
+class Config(Struct):
+    retry_count: Annotated[int, 0] = 3
+    debug_mode: Annotated[bool, 1] = False
+```
+
+### 解码语义（有 Schema）
+
+下面用一个例子说明“字段缺失”时的行为：
+
+```python
+from typing import Annotated, Optional
+from tarsio import Struct
+
+
+class User(Struct):
+    name: Annotated[str, 0] = "unknown"
+    email: Annotated[str, 1]
+    phone: Annotated[Optional[str], 2]
+```
+
+* 当 wire 缺失 `name` 时：解码结果使用默认值 `"unknown"`。
+* 当 wire 缺失 `phone` 且未显式提供默认值时：解码结果为 `None`。
+* 当 wire 缺失 `email`（非 Optional 且无默认值）时：解码会抛出错误。
+
+### 编码策略（有 Schema）
+
+* 编码端仅省略值为 None 的字段；不会因为“值等于默认值”而省略。
 
 ## 嵌套结构体
 
-你可以在一个结构体中嵌套另一个 `Struct`：
+Tarsio 支持结构体的嵌套。只需将被嵌套的结构体类作为类型即可。
 
-```python title="nested.py"
+```python
 class Address(Struct):
-    city: str = Field(id=0)
-    street: str = Field(id=1)
+    city: Annotated[str, 0]
+    street: Annotated[str, 1]
 
-class User(Struct):
-    uid: int = Field(id=0)
-    address: Address = Field(id=1)  # 嵌套
+class UserProfile(Struct):
+    uid: Annotated[int, 0]
+    address: Annotated[Address, 1]  # 嵌套 Address
 ```
-
-### 嵌套结构体 vs 二进制数据块
-
-在定义字段时，有两种处理复杂对象的常见模式。
-
-#### 模式 A：标准嵌套
-
-这是最常用的方式，直接将结构体作为字段类型。
-
-* **代码**: `param: User = Field(id=2)`
-* **行为**: 编码为 **JCE Struct (Type 10)**。内容是内联的，以 `STRUCT_BEGIN (0x0A)` 开始，`STRUCT_END (0x0B)` 结束。
-* **适用场景**: 标准的嵌套模型，接收方已知其定义。
-
-#### 模式 B：二进制透传
-
-如果你希望将某个对象先序列化为二进制流，再存入字段中（例如作为一个通用的“Payload”字段），可以显式指定 `tars_type=BYTES`。
-
-* **代码**: `param: User = Field(id=2, tars_type=types.BYTES)`
-* **行为**: 编码为 **SimpleList (Type 13)**。Tarsio 会**自动先将对象序列化为 bytes**，然后存入字节数组中。
-* **适用场景**: 不透明负载、延迟解析、或协议中的缓冲区字段。
 
 ## 容器类型
 
-Struct 完整支持泛型容器：
+支持标准的 `list` 和 `dict`。
 
-```python title="containers.py"
+* `list[T]`: 对应 Tars 的 `List<T>`。
+* `dict[K, V]`: 对应 Tars 的 `Map<K, V>`。
+
+```python
 class Group(Struct):
-    # 基础类型列表
-    scores: list[int] = Field(id=0)
-
-    # 结构体列表
-    members: list[User] = Field(id=1)
-
-    # 字典 (JCE Map)
-    config: dict[str, str] = Field(id=2)
+    group_id: Annotated[int, 0]
+    members: Annotated[list[str], 1]      # 字符串列表
+    metadata: Annotated[dict[str, int], 2] # Map<String, Integer>
 ```
+
+> **注意**: `bytes` 类型在 Tarsio 中对应 Tars 的 `SimpleList` (即 `vector<byte>`)，这是一种针对二进制数据的优化存储格式。
 
 ## 泛型支持
 
-Struct 支持定义泛型结构体，这在定义通用的响应包装器时非常有用。
+Tarsio 完美支持泛型结构体。这对于定义通用的包装器（如 `Response<T>`）非常有用。
 
-```python title="generics.py"
-from typing import Generic, TypeVar
-from tarsio import Struct, Field
+```python
+from typing import TypeVar, Generic
 
 T = TypeVar("T")
 
-class Response(Struct, Generic[T]):
-    code: int = Field(id=0)
-    message: str = Field(id=1)
-    data: T = Field(id=2)  # 泛型字段
+class Box(Struct, Generic[T]):
+    value: Annotated[T, 0]
 
-# 具体化
-class UserResponse(Response[User]):
-    pass
-
-# 或者直接使用
-resp = Response[User](code=0, message="OK", data=user)
+# 使用具体类型实例化泛型
+# Tarsio 会自动为 Box[int] 生成专门的 Schema
+int_box = Box[int](value=42)
+str_box = Box[str](value="Hello")
 ```
 
-## 默认值与工厂
+## 向前引用 (Forward References)
 
-你可以使用 `default` 或 `default_factory` 来设置字段默认值：
+如果需要定义递归结构（例如链表节点），可以使用字符串形式的类型注解。
 
-```python title="defaults.py"
-class Config(Struct):
-    version: int = Field(id=0, default=1)
-    tags: list[str] = Field(id=1, default_factory=list)
+```python
+class Node(Struct):
+    value: Annotated[int, 0]
+    next: Annotated["Node", 1] = None
 ```
 
-## 下一步
+## 最佳实践
 
-* 了解如何 [序列化与反序列化](serialization.md) 模型。
-* 深入了解 [字段配置与钩子](fields.md)。
+1. **Tag 连续性**: 虽然 Tars 协议不强制 Tag 连续，但建议从 0 开始连续编号，以节省空间（Tag < 15 时有头部压缩优化）。
+2. **类型注解**: 始终使用 `Annotated` 包裹类型和 Tag。未注解 Tag 的字段将被视为普通类属性，**不会**被序列化。
+3. **继承**: 目前 Tarsio 尚不支持结构体继承（即从另一个 Struct 子类继承）。每个 Struct 应该是独立的定义。

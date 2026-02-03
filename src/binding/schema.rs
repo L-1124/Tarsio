@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 
 // ==========================================
-// [L2] Wire IR: 物理层 (面向 Codec)
+// [L2] 线级中间表示：物理层（面向编解码）
 // ==========================================
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,7 +42,7 @@ impl WireType {
 }
 
 // ==========================================
-// [L1] Semantic IR: 语义层 (面向 Schema)
+// [L1] 语义中间表示：语义层（面向结构定义）
 // ==========================================
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,20 +71,21 @@ impl TypeExpr {
 }
 
 // ==========================================
-// Schema Definitions
+// 结构定义
 // ==========================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FieldDef {
     pub name: String,
     pub tag: u8,
     pub ty: TypeExpr,
     pub wire_type: WireType,
+    pub default_value: Option<Py<PyAny>>,
     pub is_optional: bool,
     pub is_required: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct StructDef {
     pub class: Arc<Py<PyType>>,
     pub fields_sorted: Vec<FieldDef>,
@@ -93,24 +94,62 @@ pub struct StructDef {
 }
 
 impl StructDef {
-    /// Bind class to Python interpreter and return Bound reference.
+    /// 绑定类到 Python 解释器并返回绑定引用。
     pub fn bind_class<'py>(&self, py: Python<'py>) -> Bound<'py, PyType> {
         self.class.bind(py).clone()
     }
 }
 
-type SchemaRegistry = HashMap<usize, StructDef>;
+type SchemaRegistry = HashMap<usize, Arc<StructDef>>;
 
 static REGISTRY: LazyLock<RwLock<SchemaRegistry>> = LazyLock::new(|| RwLock::new(HashMap::new()));
 
-pub fn get_schema(type_ptr: usize) -> Option<StructDef> {
-    REGISTRY.read().unwrap().get(&type_ptr).cloned()
+// TLS 缓存: 每线程维护最近使用的 Schema
+// 热点路径完全绕过全局 RwLock
+thread_local! {
+    static SCHEMA_CACHE: std::cell::RefCell<HashMap<usize, Arc<StructDef>>> =
+        std::cell::RefCell::new(HashMap::with_capacity(16));
+}
+
+/// 获取 Schema (零拷贝 + 无锁热点路径)。
+///
+/// 优化策略:
+/// 1. 首先检查 TLS 缓存 (无锁, O(1))
+/// 2. 缓存未命中时访问全局 Registry (读锁)
+/// 3. 命中后写入 TLS 缓存供后续使用
+///
+/// 返回 Arc 引用，避免深拷贝。
+pub fn get_schema(type_ptr: usize) -> Option<Arc<StructDef>> {
+    // 1. TLS 热点路径 (无锁查询)
+    let cached = SCHEMA_CACHE.with(|cache| cache.borrow().get(&type_ptr).cloned());
+
+    if let Some(schema) = cached {
+        return Some(schema);
+    }
+
+    // 2. 全局 Registry 查询 (读锁)
+    let schema = REGISTRY.read().unwrap().get(&type_ptr).cloned();
+
+    // 3. 写入 TLS 缓存
+    if let Some(ref s) = schema {
+        SCHEMA_CACHE.with(|cache| {
+            cache.borrow_mut().insert(type_ptr, Arc::clone(s));
+        });
+    }
+
+    schema
 }
 
 // ==========================================
-// Python Class Binding
+// Python 类绑定
 // ==========================================
 
+/// Tarsio 的 Struct 基类。
+///
+/// 继承该类会在类创建时编译并注册 Schema，字段使用 `typing.Annotated[T, tag]` 声明。
+///
+/// Notes:
+///     解码时，wire 缺失字段会使用模型默认值；Optional 字段未显式赋默认值时视为 None。
 #[pyclass(subclass, module = "tarsio")]
 pub struct Struct;
 
@@ -131,7 +170,7 @@ impl Struct {
         let cls = slf.get_type();
         let type_ptr = cls.as_ptr() as usize;
 
-        // Runtime Schema Lookup
+        // 运行时结构定义查找
         let def = if let Some(d) = get_schema(type_ptr) {
             d
         } else {
@@ -144,14 +183,30 @@ impl Struct {
         construct_instance(&def, slf.as_any(), args, kwargs)
     }
 
-    /// Encode struct to bytes.
+    /// 将当前实例编码为 Tars 二进制数据。
+    ///
+    /// Returns:
+    ///     编码后的 bytes。
+    ///
+    /// Raises:
+    ///     ValueError: 缺少必填字段、类型不匹配、或递归深度超过限制。
     fn encode(slf: &Bound<'_, Struct>) -> PyResult<Py<pyo3::types::PyBytes>> {
         let py = slf.py();
         let result = crate::binding::ser::encode_object(slf.as_any())?;
         Ok(pyo3::types::PyBytes::new(py, &result).unbind())
     }
 
-    /// Decode bytes into a struct instance.
+    /// 将 Tars 二进制数据解码为当前类的实例。
+    ///
+    /// Args:
+    ///     data: 待解码的 bytes。
+    ///
+    /// Returns:
+    ///     解码得到的实例。
+    ///
+    /// Raises:
+    ///     TypeError: 目标类未注册 Schema。
+    ///     ValueError: 数据格式不正确、缺少必填字段、或递归深度超过限制。
     #[classmethod]
     fn decode<'py>(cls: &Bound<'py, PyType>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
         let py = cls.py();
@@ -168,7 +223,7 @@ impl Struct {
         let super_obj = super_fn.call1((struct_type, cls))?;
         super_obj.call_method0("__init_subclass__")?;
 
-        // 0. Generic Template Check
+        // 0. 泛型模板检查
         if let Ok(params) = cls.getattr("__parameters__") {
             if let Ok(tuple) = params.cast::<PyTuple>() {
                 if !tuple.is_empty() {
@@ -177,7 +232,7 @@ impl Struct {
             }
         }
 
-        // 1. Context Setup
+        // 1. 上下文准备
         let typing = py.import("typing")?;
         let get_origin = typing.getattr("get_origin")?;
         let get_args = typing.getattr("get_args")?;
@@ -220,7 +275,7 @@ impl Struct {
             }
         }
 
-        // 2. Resolve Type Hints
+        // 2. 解析类型注解
         let get_type_hints = typing.getattr("get_type_hints")?;
 
         let localns = PyDict::new(py);
@@ -230,7 +285,7 @@ impl Struct {
         kwargs.set_item("include_extras", true)?;
         kwargs.set_item("localns", &localns)?;
 
-        // Forward Ref Resolution via typing.get_type_hints
+        // 通过 typing.get_type_hints 解析前向引用
         let mut hints = match get_type_hints.call((cls,), Some(&kwargs)) {
             Ok(h) => h.cast::<PyDict>()?.clone(),
             Err(e) => return Err(e),
@@ -252,7 +307,7 @@ impl Struct {
             return Ok(());
         }
 
-        // 3. Lowering Phase
+        // 3. 降阶阶段
         let mut fields: Vec<FieldDef> = Vec::new();
         let mut tags_seen = HashMap::new();
 
@@ -264,7 +319,7 @@ impl Struct {
 
             let origin = get_origin.call1((&type_hint,))?;
 
-            // Check Annotated compatibility
+            // 检查 Annotated 兼容性
             let is_annotated = if let Ok(annotated) = typing.getattr("Annotated") {
                 origin.is(&annotated)
             } else {
@@ -296,26 +351,29 @@ impl Struct {
             }
             tags_seen.insert(tag, name.clone());
 
-            // Dual IR Construction
+            // 构造双层中间表示
             let type_expr = parse_type_expr(&real_type, &get_origin, &get_args, &typevar_map)?;
 
             let wire_type = type_expr.lower();
             let is_optional = type_expr.is_optional();
-            // Default required if not optional. Future: check for default values.
-            let has_default = false;
-            let is_required = !is_optional && !has_default;
+            let mut default_value = lookup_default_value(cls, name.as_str())?;
+            if default_value.is_none() && is_optional {
+                default_value = Some(py.None());
+            }
+            let is_required = !is_optional && default_value.is_none();
 
             fields.push(FieldDef {
                 name: name.clone(),
                 tag,
                 ty: type_expr,
                 wire_type,
+                default_value,
                 is_optional,
                 is_required,
             });
         }
 
-        // 4. Register Schema
+        // 4. 注册结构定义
         if !fields.is_empty() {
             fields.sort_by_key(|f| f.tag);
 
@@ -334,17 +392,43 @@ impl Struct {
                 name_to_tag,
             };
 
-            // Register global schema (class is now part of StructDef)
+            // 注册全局结构定义（class 已纳入 StructDef）
             let type_ptr = cls.as_ptr() as usize;
-            REGISTRY.write().unwrap().insert(type_ptr, def);
+            REGISTRY.write().unwrap().insert(type_ptr, Arc::new(def));
         }
 
         Ok(())
     }
+
+    fn __repr__(slf: &Bound<'_, Struct>) -> PyResult<String> {
+        let cls = slf.get_type();
+        let class_name = cls.name()?.extract::<String>()?;
+        let type_ptr = cls.as_ptr() as usize;
+
+        // 尝试获取 Schema
+        let def = match get_schema(type_ptr) {
+            Some(d) => d,
+            None => return Ok(format!("{}()", class_name)),
+        };
+
+        let mut fields_str = Vec::new();
+        for field in &def.fields_sorted {
+            let val = match slf.getattr(field.name.as_str()) {
+                Ok(v) => v,
+                Err(_) => continue, // Skip missing fields
+            };
+
+            // 使用 Python 的 repr() 获取值的字符串表示
+            let val_repr = val.repr()?.extract::<String>()?;
+            fields_str.push(format!("{}={}", field.name, val_repr));
+        }
+
+        Ok(format!("{}({})", class_name, fields_str.join(", ")))
+    }
 }
 
 // ==========================================
-// Constructor Logic
+// 构造器逻辑
 // ==========================================
 
 fn construct_instance(
@@ -353,7 +437,7 @@ fn construct_instance(
     args: &Bound<'_, PyTuple>,
     kwargs: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<()> {
-    // Positional args for fields map directly to args tuple
+    // 位置参数按字段顺序映射到 args
     let num_positional = args.len();
     let given_args = args;
 
@@ -368,8 +452,8 @@ fn construct_instance(
 
     for (i, field) in def.fields_sorted.iter().enumerate() {
         let val = if i < num_positional {
-            // It is provided positionally
-            // Check Collision with kwargs
+            // 位置参数提供
+            // 检查与 kwargs 冲突
             if let Some(k) = kwargs {
                 if k.contains(&field.name)? {
                     return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -380,7 +464,7 @@ fn construct_instance(
             }
             Some(given_args.get_item(i)?)
         } else {
-            // Look in keyword args
+            // 从关键字参数中读取
             if let Some(k) = kwargs {
                 match k.get_item(&field.name)? {
                     Some(v) => Some(v),
@@ -394,8 +478,9 @@ fn construct_instance(
         match val {
             Some(v) => self_obj.setattr(&field.name, v)?,
             None => {
-                if field.is_optional {
-                    // Default to None for optional fields if missing
+                if let Some(default_value) = field.default_value.as_ref() {
+                    self_obj.setattr(&field.name, default_value.bind(self_obj.py()))?;
+                } else if field.is_optional {
                     self_obj.setattr(&field.name, pyo3::types::PyNone::get(self_obj.py()))?;
                 } else if field.is_required {
                     return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -403,7 +488,7 @@ fn construct_instance(
                         field.name
                     )));
                 } else {
-                    // Should be covered by required check, but safe fallback
+                    // 理论上被 required 校验覆盖，这里作为安全兜底
                     return Err(pyo3::exceptions::PyTypeError::new_err(format!(
                         "__init__() missing 1 required argument: '{}'",
                         field.name
@@ -413,7 +498,7 @@ fn construct_instance(
         }
     }
 
-    // Check for unexpected keyword args
+    // 检查未声明的关键字参数
     if let Some(k) = kwargs {
         for key in k.keys() {
             let key_str = key.extract::<String>()?;
@@ -429,8 +514,27 @@ fn construct_instance(
     Ok(())
 }
 
+fn lookup_default_value(cls: &Bound<'_, PyType>, field_name: &str) -> PyResult<Option<Py<PyAny>>> {
+    let py = cls.py();
+    let mro_any = cls.getattr("__mro__")?;
+    let mro = mro_any.cast::<PyTuple>()?;
+    for base in mro.iter() {
+        let dict_any = base.getattr("__dict__")?;
+        match dict_any.get_item(field_name) {
+            Ok(v) => return Ok(Some(v.unbind())),
+            Err(e) => {
+                if e.is_instance_of::<pyo3::exceptions::PyKeyError>(py) {
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+    Ok(None)
+}
+
 // ==========================================
-// AST Parser
+// 语法树解析器
 // ==========================================
 
 fn parse_type_expr(

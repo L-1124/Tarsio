@@ -234,6 +234,16 @@ def test_decode_string_values(hex_data: str, expected_val: str) -> None:
     assert result.val == expected_val
 
 
+def test_decode_invalid_utf8_string_raises_value_error() -> None:
+    """无效 UTF-8 字符串应抛出 ValueError."""
+    # Arrange
+    data = bytes.fromhex("0601ff")
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="Invalid UTF-8 string"):
+        decode(SimpleString, data)
+
+
 # ==========================================
 # 解码测试 - 复合结构
 # ==========================================

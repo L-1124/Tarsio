@@ -1,31 +1,64 @@
 """Tarsio 的核心 Rust 扩展模块.
 
 本模块包含 TARS 协议处理的高性能 Rust 实现，包括 Schema 编译器、注册表和编解码接口。
+"""
+
+from typing import TypeAlias, TypeVar
+
+from typing_extensions import Any, Self, dataclass_transform
+
+_StructT = TypeVar("_StructT", bound="Struct")
+TarsDict: TypeAlias = dict[int, Any]
+
+__all__ = ["Struct", "TarsDict", "decode", "decode_raw", "encode", "encode_raw", "probe_struct"]
+
+# 通过 dataclass_transform 通知 IDE 和 Type Checker：
+# 1. 这个类的子类行为类似 dataclass（从 annotations 生成 __init__ 等）
+# 2. 字段类型会在 __init__ 中使用
+# 3. 支持处理 Generic[T]
+@dataclass_transform()
+class Struct:
+    """由 Rust Schema 编译器驱动的 Tarsio Struct 基类.
+
+    继承此类将触发静态 Schema 编译过程。编译器会检查 `Annotated[T, Tag]` 注解，
+    并将结构体布局注册到全局 Rust 注册表中。
+
+    此类支持：
+    - 静态 Schema 编译（在类定义时）
+    - 泛型 TypeVar 解析（例如 `Box[int]`）
+    - 向前引用（Forward References，使用字符串注解 `"User"`）
+    - 强大的类型检查（由 `dataclass_transform` 支持）
+
+    示例:
+        >>> from typing import Annotated, Generic, TypeVar
+        >>> class User(Struct):
+        ...     id: Annotated[int, 1]
+        ...     name: Annotated[str, 2]
+
+        >>> # 同时也支持泛型:
+        >>> T = TypeVar("T")
+        >>> class Response(Struct, Generic[T]):
+        ...     code: Annotated[int, 0]
+        ...     data: Annotated[T, 1]
+
+        >>> MyResp = Response[User]  # 为 Response[User] 注册专用的 Schema
+
+        >>> # 支持向前引用 (Forward Reference):
+        >>> class Node(Struct):
+        ...     val: Annotated[int, 0]
+        ...     next: Annotated["Node", 1]
     """
-    ...
+    def __new__(cls) -> Struct: ...
+    def __init_subclass__(cls) -> None:
+        """根据类型注解编译 Schema 并将其注册到 Rust 后端.
 
-def encode_raw(obj: dict[int, Any]) -> bytes:
-    """Raw API: encode a TarsDict (dict[int, TarsValue]) to bytes.
-
-    Args:
-        obj: A dict mapping tags (int) to Tars values.
-
-    Returns:
-        Encoded bytes.
-    """
-    ...
-
-def decode_raw(data: bytes) -> dict[int, Any]:
-    """Raw API: decode bytes into a TarsDict (dict[int, TarsValue]).
-
-    Args:
-        data: Tars encoded bytes.
-
-    Returns:
-        A dict mapping tags (int) to decoded Tars values.
-    """
-    ...
-
+        此方法执行以下操作：
+        1. 遍历 MRO 以合并 `__annotations__`。
+        2. 检测类是泛型模板（Generic Template）还是具体实例（Concrete Instance）。
+        3. 将 `Annotated[T, Tag]` 字段解析为 `JceType` IR。
+        4. 将不可变的 `StructDef` 存储在全局注册表中（以 `PyType` 指针为键）。
+        """
+        ...
 
     def encode(self) -> bytes:
         """将当前实例序列化为 Tars 二进制格式.
@@ -74,5 +107,41 @@ def decode(cls: type[_StructT], data: bytes) -> _StructT:
     Raises:
         TypeError: 如果类未注册 Schema。
         ValueError: 如果数据格式不正确。
+    """
+    ...
+
+def encode_raw(obj: TarsDict) -> bytes:
+    """将 TarsDict 编码为 Tars 二进制格式 (Raw API).
+
+    Args:
+        obj: 一个字典，映射 tag (int) 到 Tars 值。
+
+    Returns:
+        编码后的字节对象。
+    """
+    ...
+
+def decode_raw(data: bytes) -> TarsDict:
+    """将字节解码为 TarsDict (Raw API).
+
+    Args:
+        data: 包含 Tars 编码数据的 bytes 对象。
+
+    Returns:
+        解码后的 TarsDict。
+    """
+    ...
+
+def probe_struct(data: bytes) -> TarsDict | None:
+    """尝试将字节数据递归解析为 Tars 结构.
+
+    这是一个启发式工具，用于探测一段二进制数据是否恰好是有效的 Tars 序列化结构。
+    它不仅检查格式，还会验证是否完全消费了数据。
+
+    Args:
+        data: 可能包含 Tars 结构的二进制数据。
+
+    Returns:
+        如果解析成功且数据完整，返回 TarsDict；否则返回 None。
     """
     ...

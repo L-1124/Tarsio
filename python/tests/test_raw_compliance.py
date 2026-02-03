@@ -1,89 +1,106 @@
+import pytest
 from tarsio._core import decode_raw, encode_raw
 
 
-def test_struct_encoding_rules():
-    """Verify int keys (TarsStruct) are sorted by tag in the encoded output."""
-    # encode_raw expects a dict[int, Any] representing a Struct.
+def test_struct_encoding_rules() -> None:
+    """验证结构体字段按 tag 排序编码."""
     data = {3: 300, 1: 100, 2: 200}
     encoded = encode_raw(data)
-
-    # Verify we can decode it back
-    decoded = decode_raw(encoded)
-    assert decoded == data
-
-    # To verify sorting, we can inspect the first few bytes.
-    # 100 -> Tag 1
-    # 200 -> Tag 2
-    # 300 -> Tag 3
-    # We expect tag 1 to appear first.
-    # Tag 1 (Type Int1/2/4/8/Zero). 100 fits in 1 byte (Int1? No, Int1 is usually char).
-    # 100 is 0x64. Tars Int1 is i8. 100 fits.
-    # Type 0 (Int1/Byte) -> Tag 1, Type 0 -> 0x10.
-    # So first byte should be 0x10.
     assert encoded[0] == 0x10
 
 
-def test_map_encoding_rules():
-    """Verify non-int keys encoded as Map (Type 8)."""
-    # We must wrap the map in a struct to use encode_raw
+def test_map_encoding_rules() -> None:
+    """验证非整数键按 Map 类型编码."""
     inner_map = {"key": "value"}
     data = {0: inner_map}
     encoded = encode_raw(data)
 
-    # Tag 0, Type 8 (Map) -> 0x08
     assert encoded[0] == 0x08
 
 
-def test_float_double():
-    """Verify float encodes as Double (Type 5)."""
-    # Python float is C double (64-bit). Tars should map this to Double (Type 5).
-    # Current implementation suspected to map to Float (Type 4).
+def test_float_double() -> None:
+    """验证浮点数编码为 Double 类型."""
     val = 1.234
     data = {0: val}
     encoded = encode_raw(data)
 
-    # Tag 0.
-    # If Type 5 (Double): 0x05.
-    # If Type 4 (Float): 0x04.
-
     head_byte = encoded[0]
-    # We expect 0x05 for compliance.
     assert head_byte == 0x05, f"Expected Type 5 (Double), got Type {head_byte & 0x0F}"
 
 
-def test_bytes_simplelist():
-    """Verify bytes encoded as SimpleList (Type 13)."""
+def test_bytes_simplelist() -> None:
+    """验证 bytes 编码为 SimpleList 类型."""
     val = b"hello"
     data = {0: val}
     encoded = encode_raw(data)
 
-    # Tag 0.
-    # Type 13 (SimpleList) -> 0x0D.
     head_byte = encoded[0]
     assert head_byte == 0x0D, (
         f"Expected Type 13 (SimpleList), got Type {head_byte & 0x0F}"
     )
 
 
-def test_roundtrip_reversibility():
-    """Verify decode(encode(data)) == data for various types."""
+def test_roundtrip_reversibility() -> None:
+    """验证多类型 encode/decode 往返一致."""
     cases = [
         123,
         -123,
         "string",
-        b"bytes",
-        [300, 400],  # List (use values > 255 to avoid auto-conversion to bytes)
-        {1: "a", 2: "b"},  # Struct (nested)
-        {"a": 1, "b": 2},  # Map
+        b"\xff",
+        [300, 400],
+        {1: "a", 2: "b"},
+        {"a": 1, "b": 2},
         True,
         False,
-        # 1.234, # Float excluded because we know it might fail type check or roundtrip precision if implemented wrong
     ]
 
     for case in cases:
-        # Wrap in struct tag 0
         data = {0: case}
         encoded = encode_raw(data)
         decoded = decode_raw(encoded)
-        # decoded is dict[int, Any]
         assert decoded[0] == case, f"Failed roundtrip for {case}"
+
+
+def test_simplelist_utf8_bytes_decodes_to_str() -> None:
+    """验证 SimpleList 的 UTF-8 bytes 解码为字符串."""
+    data = {0: b"hello"}
+    encoded = encode_raw(data)
+    decoded = decode_raw(encoded)
+    assert decoded[0] == "hello"
+
+
+def test_simplelist_invalid_utf8_decodes_to_bytes() -> None:
+    """验证 SimpleList 的无效 UTF-8 回退为 bytes."""
+    data = {0: b"\xff"}
+    encoded = encode_raw(data)
+    decoded = decode_raw(encoded)
+    assert decoded[0] == b"\xff"
+
+
+def test_raw_string_invalid_utf8_raises_value_error() -> None:
+    """验证原始字符串无效 UTF-8 时抛出 ValueError."""
+    data = bytes.fromhex("0601ff")
+    with pytest.raises(ValueError, match="Invalid UTF-8 string"):
+        decode_raw(data)
+
+
+def _nest_list(depth: int) -> object:
+    """构造指定深度的嵌套 list,用于触发递归保护.
+
+    Args:
+        depth: 嵌套深度。
+
+    Returns:
+        object: 形如 [[...[1]...]] 的嵌套结构。
+    """
+    val: object = 1
+    for _ in range(depth):
+        val = [val]
+    return val
+
+
+def test_raw_encode_max_depth_exceeded() -> None:
+    """Raw 编码递归超限时抛出 ValueError."""
+    data = {0: _nest_list(101)}
+    with pytest.raises(ValueError, match="Recursion limit exceeded"):
+        encode_raw(data)

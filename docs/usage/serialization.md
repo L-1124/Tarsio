@@ -1,145 +1,96 @@
-# 序列化与 API
+# 序列化
 
-Tarsio 提供了简单直观的 API 用于数据的序列化和反序列化，API 设计灵感来源于 Python 标准库的 `json` 模块。
+Tarsio 提供了简洁而高效的 API 来进行 Tars 对象的序列化（编码）和反序列化（解码）。
 
-## 核心函数
+## 基础用法
 
-### `dumps` (Serialize)
+### 编码 (Serialization)
 
-将 `Struct` 对象、字典、列表或基础类型序列化为 `bytes`。
+将 Python 对象转换为二进制数据 (`bytes`)。
 
-```python title="serialize.py"
-from tarsio import dumps
+```python
+# 方式 1: 使用实例方法 (推荐)
+data = user.encode()
 
-data = dumps(user)
-# 或者序列化字典 (会被编码为 JCE Map)
-map_data = dumps({"key": "value"})
-# 序列化 StructDict (会被编码为 JCE Struct)
-struct_data = dumps(StructDict({0: 100}))
+# 方式 2: 使用 tarsio.encode 函数
+from tarsio import encode
+data = encode(user)
 ```
 
-**参数**:
+### 解码 (Deserialization)
 
-* `obj`: 要序列化的对象。支持 `Struct`, `dict`, `list`, `int`, `str` 等。
-* `option`: 序列化选项（如 `Option.LITTLE_ENDIAN`）。
-* `context`: 序列化上下文。传递给自定义序列化器 (`@field_serializer`) 的字典。
-* `exclude_unset`: 是否排除未显式设置的字段（默认为 `False`）。仅对 `Struct` 有效。
+将二进制数据还原为 Python 对象。
 
-### `loads` (Deserialize)
+```python
+# 方式 1: 使用类方法 (推荐)
+user = User.decode(data)
 
-将 `bytes` 反序列化为 Python 对象。
-
-```python title="deserialize.py"
-from tarsio import loads
-
-# 反序列化为特定的结构体
-user = loads(data, User, context={"db": db_connection})
-
-# 反序列化为通用字典 (默认为 StructDict)
-raw_data = loads(data)
+# 方式 2: 使用 tarsio.decode 函数
+from tarsio import decode
+user = decode(User, data)
 ```
 
-**参数**:
+## 无 Schema 模式 (Raw API)
 
-* `data`: 输入的字节数据 (`bytes`, `bytearray` 或 `memoryview`)。
-* `target`: 目标类型。可以是 `Struct` 子类、`StructDict` (默认) 或 `dict`。
-* `option`: 反序列化选项（如 `Option.LITTLE_ENDIAN`）。
-* `bytes_mode`: 控制如何处理二进制数据（见下文）。
-* `context`: Pydantic 验证上下文。传递给验证器及 `computed_field` 的字典。
+有时你可能需要处理未知的 Tars 数据，或者不想定义对应的 `Struct` 类。Tarsio 提供了 Raw API 来直接操作字典。
 
-## 动态类型 (`Any`) {#dynamic-types}
+### `tarsio.encode_raw`
 
-虽然推荐显式定义所有字段类型，但 Tarsio 也支持使用 `Any` 注解。在这种情况下，库会根据运行时行为进行处理。
+将符合特定结构的字典编码为 Tars 二进制。
 
-### 编码（运行时推断）
+```python
+from tarsio import encode_raw
 
-如果 `Field` 没有指定 `tars_type`，编码器会根据**运行时值的类型**来推断 JCE 类型：
+# 构造一个 TarsDict (dict[int, Any])
+# Key 必须是整数 Tag
+payload = {
+    0: 1001,           # Tag 0: int
+    1: "Alice",        # Tag 1: str
+    2: ["admin", "dev"] # Tag 2: List<str>
+}
 
-| Python 运行时类型 | 推断的 JCE 类型    | 说明                                |
-|:------------------|:-------------------|:------------------------------------|
-| `int`             | `INT (0-3)`        | 根据大小自动选择                    |
-| `str`             | `STRING (6/7)`     |                                     |
-| `StructDict`      | **STRUCT (10)**    | **注意：作为结构体编码 (Tag 序列)** |
-| `dict`            | **MAP (8)**        | **注意：作为键值对编码**            |
-| `bytes`           | `SIMPLE_LIST (13)` |                                     |
-
-!!! warning "StructDict vs dict"
-    这是最常见的 Bug 来源：将一个普通的 `dict` 传给 `Any` 字段会生成 JCE Map，而传一个 `StructDict` 则会生成 JCE Struct。如果接收方期望的是 Struct，使用 `dict` 将导致解码失败。
-
-### 解码（通用解码）
-
-当目标字段类型为 `Any` 时，解码器会根据二进制流中的类型代码返回最接近的 Python 类型：
-
-* Type 0-3 (`INT`) -> `int`
-* Type 6-7 (`STRING`) -> `str`
-* Type 8 (`MAP`) -> `dict`
-* Type 10 (`STRUCT`) -> `StructDict`
-* Type 13 (`SIMPLE_LIST`) -> `bytes`
-
-!!! info "无法恢复自定义类"
-    解码 `Any` 字段时，解码器无法自动恢复成你定义的自定义类（如 `User` 对象），因为它在二进制流中只看到了一个“结构体”。它会返回一个 `StructDict`，你可以随后通过 `User.model_validate(struct_dict)` 手动转换。
-
-## 文件 I/O
-
-如果你需要直接读写文件，可以使用 `dump` 和 `load`。
-
-```python title="file_io.py"
-from tarsio import dump, load
-
-# 写入文件
-with open("data.bin", "wb") as f:
-    dump(user, f)
-
-# 读取文件
-with open("data.bin", "rb") as f:
-    user = load(f, User)
+data = encode_raw(payload)
 ```
 
-## Bytes 处理模式
+### `tarsio.decode_raw`
 
-JCE 协议没有原生的 String 类型，只有 `String1` (长度<256) 和 `String4`。它们本质上都是带长度的 buffer。
-`loads` 函数提供 `bytes_mode` 参数来控制如何将这些缓冲区解析为 Python 类型。
+将任意 Tars 二进制数据解码为字典。
 
-* `"auto"` (**默认**): 智能模式。尝试将 buffer 解码为 UTF-8 字符串；如果失败，则尝试递归解码为嵌套 JCE 结构；如果都失败，则保留为 `bytes`。
-* `"string"`: 强制尝试解码为 UTF-8 字符串。
-* `"raw"`: 始终保留为 `bytes`。
+```python
+from tarsio import decode_raw
 
-```python title="bytes_mode.py"
-# 假设 data 包含字符串 "hello"
-print(loads(data, bytes_mode="auto"))   # > "hello"
-print(loads(data, bytes_mode="raw"))    # > b"hello"
+# data 是上面生成的二进制
+result = decode_raw(data)
+print(result)
+# 输出: {0: 1001, 1: 'Alice', 2: ['admin', 'dev']}
 ```
 
-## 高级选项
+> **注意**: `decode_raw` 会尽可能还原数据类型，但由于 Tars 协议不包含字段名，所以 Key 只能是整数 Tag。
 
-### 大小端序
+## 高级特性
 
-JCE 协议默认使用**大端序 (Big Endian)**。如果你的对端系统使用小端序，可以通过选项指定：
+### 探测结构 (`probe_struct`)
 
-```python title="endian.py"
-from tarsio import Option
+Tars 协议中的 `SimpleList` (Type 13) 实际上是 `vector<byte>`。但在很多场景下，这个字节数组内部可能包含了另一个序列化的 Tars 结构体。
 
-data = dumps(user, option=Option.LITTLE_ENDIAN)
+Rust 核心不应该猜测数据的含义，但在调试或分析时，我们经常需要“透视”这些数据。为此，Tarsio 提供了 `probe_struct` 工具。
+
+```python
+from tarsio import probe_struct
+
+# 假设 data 是一个 SimpleList 的内容
+maybe_struct = probe_struct(data)
+
+if maybe_struct:
+    print("这是一个嵌套的结构体:", maybe_struct)
+else:
+    print("这是一段普通的二进制数据")
 ```
 
-### StructDict (动态结构)
+**工作原理**:
 
-如果你不知道数据的具体结构，或者只是想查看原始 Tag-Value 对，可以使用 `StructDict`。
+1. **快速失败**: 检查首字节是否像合法的 Tars 头部。
+2. **试探解码**: 尝试将其作为 Struct 解析。
+3. **终局校验**: 只有当解析成功且**消耗了所有字节**时，才认定为 Struct。
 
-```python title="structdict.py"
-from tarsio import StructDict, loads
-
-# 解码为通用字典结构 (Struct 语义)
-raw_struct = loads(data, target=StructDict)
-print(raw_struct)
-# > {0: 10086, 1: 'Alice', ...}
-```
-
-!!! note "StructDict vs dict"
-    - `StructDict`: 代表一个 **Struct**，编码时按 Tag 顺序拼接字段。
-    - `dict`: 代表一个 **Map**，编码时包含 Map 长度和键值对信息。
-
-## 延伸阅读
-
-* [定义模型](models.md): 了解如何创建 `User` 这样的 JCE 结构体。
-* [流式处理](streams.md): 处理网络流中的粘包数据。
+这一机制被内置在 Tarsio CLI 工具中，用于自动展示嵌套结构。

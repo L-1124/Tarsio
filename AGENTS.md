@@ -32,11 +32,59 @@ Tarsio 是一个由 Rust 核心驱动的高性能 Python Tars (JCE) 协议实现
 | Python API  | `python/tarsio/` | `Field`, `Struct`, 以及 CLI 入口           |
 | 构建配置    | `pyproject.toml` | 定义 `maturin` 构建后端及依赖              |
 
+## 子 AGENTS.md 说明
+
+项目内包含多个子级 `AGENTS.md`，用于按目录细化规范与注意事项：
+
+* `src/AGENTS.md`：Rust 核心层约定与模块说明。
+* `src/binding/AGENTS.md`：Python 绑定层的边界规则与约束。
+* `src/codec/AGENTS.md`：协议读写器与低层编解码注意事项。
+* `python/tests/AGENTS.md`：Python 集成测试规范与约束。
+
+使用原则：**进入对应目录时优先遵循该目录下的子 AGENTS.md**，与本文件冲突时以更近的子级规范为准。
+
 ## 开发约定
 
-* **混合构建**: 项目使用 `maturin` 构建。不要直接使用 `setup.py`。
+* **混合构建**: 项目使用 `maturin` 构建，`uv` 作为依赖管理工具。
 * **类型安全**: Rust 强制内存安全；Python 使用运行时检查 (`typing.get_type_hints`) 构建 schema。
 * **错误处理**: Rust 错误跨越 FFI 边界映射为 Python 异常。
+
+## Commit 格式规范
+
+采用 Conventional Commits 格式，提交信息均使用中文撰写：
+
+```text
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+**类型定义:**
+
+* `feat`: 新功能
+* `fix`: 缺陷修复
+* `perf`: 性能优化
+* `refactor`: 重构（无功能变更）
+* `style`: 格式调整（不改变代码逻辑）
+* `test`: 添加或修改测试
+* `docs`: 文档更新
+* `chore`: 构建工具、依赖版本等变更
+* `ci`: CI/CD 配置变更
+
+**示例:**
+
+```text
+feat(binding): 添加 MAX_DEPTH 递归深度限制
+
+实现反序列化和序列化路径的递归深度检查，防止
+恶意输入导致的栈溢出和 DoS 攻击。
+
+- 在 de.rs 中集成递归深度追踪
+- 在 ser.rs 中检测循环引用
+- 默认最大深度设置为 100
+```
 
 ## 常用命令
 
@@ -55,22 +103,3 @@ cargo test           # Rust 单元测试
 uv run ruff check .  # Python linting
 cargo clippy         # Rust linting
 ```
-
-## 架构说明
-
-* **Schema 注册表**: `src/binding/schema.rs` 维护全局注册表，将 Python 类连接到 Rust schema。
-* **入口点**:
-    * Rust 库: `src/lib.rs` (定义 `_core` 模块)。
-    * Python 包: `python/tarsio/__init__.py`。
-
-## 设计不变式 (Design Invariants)
-
-以下核心机制已冻结，修改需极度谨慎：
-
-1. **Schema 权威性**: `StructDef` (Rust侧) 是唯一事实来源。Python 类仅作为定义的入口。
-2. **反序列化机制**: `decode` 必须使用 `__new__` 构造实例，**严禁触发** 用户的 `__init__`。
-3. **API 对称性**: 编码 (`obj.encode()`) 与解码 (`Cls.decode(bytes)`) 必须在语义和数据上完全可逆。
-4. **错误模型**:
-    * `TypeError`: Schema 不匹配、类型未注册。
-    * `ValueError`: 数据损坏、Required 字段缺失、Tag 未知（且无法跳过）。
-5. **实现收敛**: `tarsio.encode/decode` 和 `obj.encode/Cls.decode` 必须路由到同一个 Rust 实现 (`encode_object`/`decode_object`)。
