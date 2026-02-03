@@ -1,38 +1,47 @@
-use crate::codec::consts::JceType;
-use crate::codec::endian::Endianness;
-use byteorder::BigEndian;
-use bytes::BufMut;
-use std::marker::PhantomData;
+use crate::codec::consts::TarsType;
 
-/// JCE 编码器，用于将数据序列化为二进制格式.
-pub struct JceWriter<B = Vec<u8>, E = BigEndian> {
+use bytes::BufMut;
+
+/// Tars 数据流编码器 (Writer)。
+///
+/// 用于将 Rust 数据类型序列化为 Tars 二进制格式。
+/// 支持内存缓冲区 (`Vec<u8>`) 以及任何实现了 `bytes::BufMut` 的类型。
+pub struct TarsWriter<B = Vec<u8>> {
     buffer: B,
-    _phantom: PhantomData<E>,
 }
 
-impl Default for JceWriter<Vec<u8>, BigEndian> {
+impl Default for TarsWriter<Vec<u8>> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl JceWriter<Vec<u8>, BigEndian> {
-    /// 创建一个新的 JceWriter.
+impl TarsWriter<Vec<u8>> {
+    /// 创建一个新的 TarsWriter.
     pub fn new() -> Self {
         Self {
             buffer: Vec::with_capacity(128),
-            _phantom: PhantomData,
         }
+    }
+
+    pub fn into_inner(self) -> Vec<u8> {
+        self.buffer
+    }
+
+    pub fn reserve(&mut self, additional: usize) {
+        self.buffer.reserve(additional);
+    }
+
+    /// 重置 Writer (针对 Vec 的特化实现).
+    pub fn clear(&mut self) {
+        self.buffer.clear();
     }
 }
 
-impl<B: BufMut, E: Endianness> JceWriter<B, E> {
-    /// 使用指定的缓冲区创建 JceWriter.
+impl<B: BufMut> TarsWriter<B> {
+    /// 使用指定的缓冲区创建 TarsWriter.
     pub fn with_buffer(buffer: B) -> Self {
-        Self {
-            buffer,
-            _phantom: PhantomData,
-        }
+        Self { buffer }
     }
 
     /// 获取编码后的字节流.
@@ -44,9 +53,11 @@ impl<B: BufMut, E: Endianness> JceWriter<B, E> {
         self.buffer.as_ref()
     }
 
-    /// 写入 Tag 和类型信息.
+    /// 写入 Tag 和类型头部信息。
+    ///
+    /// 自动处理 Tag < 15 和 Tag >= 15 的两种头部格式。
     #[inline]
-    pub fn write_tag(&mut self, tag: u8, type_id: JceType) {
+    pub fn write_tag(&mut self, tag: u8, type_id: TarsType) {
         let type_val = type_id as u8;
         if tag < 15 {
             // 低 4 位是类型，高 4 位是 Tag
@@ -60,58 +71,41 @@ impl<B: BufMut, E: Endianness> JceWriter<B, E> {
         }
     }
 
-    /// 写入整数.
+    /// 写入整数 (自动选择最小宽度)。
+    ///
+    /// 根据数值大小自动选择 Int1, Int2, Int4, Int8 或 ZeroTag 类型。
+    /// 这是 Tars 协议的一种压缩优化。
     #[inline]
     pub fn write_int(&mut self, tag: u8, value: i64) {
         if value == 0 {
-            self.write_tag(tag, JceType::ZeroTag);
+            self.write_tag(tag, TarsType::ZeroTag);
         } else if value >= i8::MIN as i64 && value <= i8::MAX as i64 {
-            self.write_tag(tag, JceType::Int1);
+            self.write_tag(tag, TarsType::Int1);
             self.buffer.put_u8(value as u8);
         } else if value >= i16::MIN as i64 && value <= i16::MAX as i64 {
-            self.write_tag(tag, JceType::Int2);
-            if E::IS_LITTLE {
-                self.buffer.put_i16_le(value as i16);
-            } else {
-                self.buffer.put_i16(value as i16);
-            }
+            self.write_tag(tag, TarsType::Int2);
+            self.buffer.put_i16(value as i16);
         } else if value >= i32::MIN as i64 && value <= i32::MAX as i64 {
-            self.write_tag(tag, JceType::Int4);
-            if E::IS_LITTLE {
-                self.buffer.put_i32_le(value as i32);
-            } else {
-                self.buffer.put_i32(value as i32);
-            }
+            self.write_tag(tag, TarsType::Int4);
+            self.buffer.put_i32(value as i32);
         } else {
-            self.write_tag(tag, JceType::Int8);
-            if E::IS_LITTLE {
-                self.buffer.put_i64_le(value);
-            } else {
-                self.buffer.put_i64(value);
-            }
+            self.write_tag(tag, TarsType::Int8);
+            self.buffer.put_i64(value);
         }
     }
 
     /// 写入单精度浮点数.
     #[inline]
     pub fn write_float(&mut self, tag: u8, value: f32) {
-        self.write_tag(tag, JceType::Float);
-        if E::IS_LITTLE {
-            self.buffer.put_f32_le(value);
-        } else {
-            self.buffer.put_f32(value);
-        }
+        self.write_tag(tag, TarsType::Float);
+        self.buffer.put_f32(value);
     }
 
     /// 写入双精度浮点数.
     #[inline]
     pub fn write_double(&mut self, tag: u8, value: f64) {
-        self.write_tag(tag, JceType::Double);
-        if E::IS_LITTLE {
-            self.buffer.put_f64_le(value);
-        } else {
-            self.buffer.put_f64(value);
-        }
+        self.write_tag(tag, TarsType::Double);
+        self.buffer.put_f64(value);
     }
 
     /// 写入字符串.
@@ -120,15 +114,11 @@ impl<B: BufMut, E: Endianness> JceWriter<B, E> {
         let bytes = value.as_bytes();
         let len = bytes.len();
         if len <= 255 {
-            self.write_tag(tag, JceType::String1);
+            self.write_tag(tag, TarsType::String1);
             self.buffer.put_u8(len as u8);
         } else {
-            self.write_tag(tag, JceType::String4);
-            if E::IS_LITTLE {
-                self.buffer.put_u32_le(len as u32);
-            } else {
-                self.buffer.put_u32(len as u32);
-            }
+            self.write_tag(tag, TarsType::String4);
+            self.buffer.put_u32(len as u32);
         }
         self.buffer.put_slice(bytes);
     }
@@ -136,7 +126,7 @@ impl<B: BufMut, E: Endianness> JceWriter<B, E> {
     /// 写入字节数组 (SimpleList).
     #[inline]
     pub fn write_bytes(&mut self, tag: u8, value: &[u8]) {
-        self.write_tag(tag, JceType::SimpleList);
+        self.write_tag(tag, TarsType::SimpleList);
         // Element type byte: 0 for Byte
         self.buffer.put_u8(0);
         // 写入长度，使用 write_int (Tag 0)
@@ -145,55 +135,54 @@ impl<B: BufMut, E: Endianness> JceWriter<B, E> {
     }
 }
 
-impl<E: Endianness> JceWriter<Vec<u8>, E> {
-    /// 重置 Writer (针对 Vec 的特化实现).
-    pub fn clear(&mut self) {
-        self.buffer.clear();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// 验证数值 0 是否能被优化为 ZeroTag 以压缩字节大小。
     #[test]
-    fn test_write_int_zero() {
-        let mut writer = JceWriter::new();
+    fn test_write_int_with_zero_value_produces_zero_tag() {
+        let mut writer = TarsWriter::new();
         writer.write_int(0, 0);
         assert_eq!(writer.get_buffer(), b"\x0c"); // Tag 0, ZeroTag
     }
 
+    /// 验证小整数是否被正确编码为 Int1 类型。
     #[test]
-    fn test_write_int_small() {
-        let mut writer = JceWriter::new();
+    fn test_write_int_with_small_value_produces_int1_type() {
+        let mut writer = TarsWriter::new();
         writer.write_int(0, 1);
         assert_eq!(writer.get_buffer(), b"\x00\x01"); // Tag 0, Int1, Value 1
     }
 
+    /// 验证超过 1 字节范围的整数是否被正确编码为 Int2 类型。
     #[test]
-    fn test_write_int_16() {
-        let mut writer = JceWriter::new();
+    fn test_write_int_with_i16_range_value_produces_int2_type() {
+        let mut writer = TarsWriter::new();
         writer.write_int(0, 256);
         assert_eq!(writer.get_buffer(), b"\x01\x01\x00"); // Tag 0, Int2, Value 256 (0x0100)
     }
 
+    /// 验证字符串的编码布局，包含 Tag、类型标记、长度及内容。
     #[test]
-    fn test_write_string() {
-        let mut writer = JceWriter::new();
+    fn test_write_string_with_short_value_produces_string1_type() {
+        let mut writer = TarsWriter::new();
         writer.write_string(0, "a");
         assert_eq!(writer.get_buffer(), b"\x06\x01\x61"); // Tag 0, String1, Len 1, 'a'
     }
 
+    /// 验证二进制字节数组的编码布局，遵循 SimpleList 规范。
     #[test]
-    fn test_write_bytes() {
-        let mut writer = JceWriter::new();
+    fn test_write_bytes_with_valid_data_produces_simple_list_type() {
+        let mut writer = TarsWriter::new();
         writer.write_bytes(0, b"abc");
         assert_eq!(writer.get_buffer(), b"\x0d\x00\x00\x03abc");
     }
 
+    /// 验证当 Tag >= 15 时，编码器是否正确生成双字节扩展头部。
     #[test]
-    fn test_high_tag() {
-        let mut writer = JceWriter::new();
+    fn test_write_int_with_high_tag_produces_expanded_header() {
+        let mut writer = TarsWriter::new();
         writer.write_int(15, 1);
         assert_eq!(writer.get_buffer(), b"\xf0\x0f\x01"); // Tag 15, Int1, Value 1
     }

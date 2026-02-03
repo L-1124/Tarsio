@@ -6,12 +6,12 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://L-1124.github.io/Tarsio/)
 
-**Tarsio** 是一个 Python Tars (JCE) 协议实现，基于 **Pydantic v2** 构建。
+**Tarsio** 是一个 Python Tars (JCE) 协议实现，提供 **Pydantic 风格** 的 API 体验。
 
 ## Tars 与 JCE 的关系
 
-- **Tars**: 腾讯开源的高性能微服务 RPC 框架。
-- **JCE (Jce Encoding)**: Tars 框架底层使用的二进制序列化协议（类似 Protobuf，但支持更丰富的类型系统）。
+* **Tars**: 腾讯开源的高性能微服务 RPC 框架。
+* **JCE (Jce Encoding)**: Tars 框架底层使用的二进制序列化协议（类似 Protobuf，但支持更丰富的类型系统）。
 
 ## 📖 官方文档
 
@@ -19,15 +19,15 @@
 
 ## ✨ 核心特性
 
-- **🛡️ 类型安全**: 基于 Pydantic v2，提供完整的类型提示和运行时验证。
-- **⚡ 高性能**: **Rust 核心驱动**，提供极速的编解码性能；支持智能整数压缩、零值优化、字节数组优化、零拷贝读取。
-- **🧩 灵活性**: 支持 Schema (Struct) 和无 Schema (dict/StructDict) 两种模式。
-- **🌊 流式处理**: 提供 [`LengthPrefixedWriter/Reader`](docs/usage/streams.md) 支持增量打包和长度前缀协议。
-- **📂 文件支持**: 提供 `dump`/`load` 直接读写文件类对象（IO[bytes]）。
-- **🔌 上下文**: 支持序列化上下文传递 (`context`) 和字段钩子 (`@field_serializer`).
-- **🧬 泛型支持**: 完整支持 Python `Generic[T]` 类型系统。
-- **🛠️ CLI 工具**: 基于 Click 的强大命令行工具，支持文件读写、格式化输出和调试。
-- **🛡️ 安全防护**: 递归深度限制、容器大小限制，防止 DoS 攻击。
+* **🛡️ 类型安全**: 提供 Pydantic 风格的类型提示和运行时验证，无需引入重量级依赖。
+* **⚡ 高性能**: **Rust 核心驱动**，提供极速的编解码性能；支持智能整数压缩、零值优化、字节数组优化、零拷贝读取。
+* **🧩 灵活性**: 支持 Schema (Struct) 和无 Schema (dict/StructDict) 两种模式。
+* **🌊 流式处理**: 提供 [`LengthPrefixedWriter/Reader`](docs/usage/streams.md) 支持增量打包和长度前缀协议。
+* **📂 文件支持**: 提供 `dump`/`load` 直接读写文件类对象（IO[bytes]）。
+* **🔌 上下文**: 支持序列化上下文传递 (`context`) 和字段钩子 (`@field_serializer`).
+* **🧬 泛型支持**: 完整支持 Python `Generic[T]` 类型系统。
+* **🛠️ CLI 工具**: 基于 Click 的强大命令行工具，支持文件读写、格式化输出和调试。
+* **🛡️ 安全防护**: 递归深度限制、容器大小限制，防止 DoS 攻击。
 
 ## 📦 安装
 
