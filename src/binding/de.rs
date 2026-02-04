@@ -1,4 +1,5 @@
 use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyType};
 use simdutf8::basic::from_utf8;
@@ -70,9 +71,16 @@ fn deserialize_struct<'py>(
     // 从 StructDef 中获取 Python 类
     let class_obj = def.bind_class(py);
 
-    // 直接使用 __new__ 创建实例，绕过 __init__
-    // 便于后续直接设置属性
-    let instance = class_obj.call_method1("__new__", (&class_obj,))?;
+    // 使用 PyType_GenericAlloc 直接分配内存，绕过 __new__ 方法调用
+    // 这比 call_method1("__new__") 快得多，因为它避免了完整的 Python 方法调用开销
+    let instance = unsafe {
+        let type_ptr = class_obj.as_ptr() as *mut ffi::PyTypeObject;
+        let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
+        if obj_ptr.is_null() {
+            return Err(PyErr::fetch(py));
+        }
+        Bound::from_owned_ptr(py, obj_ptr)
+    };
 
     let mut seen = vec![false; def.fields_sorted.len()];
 
