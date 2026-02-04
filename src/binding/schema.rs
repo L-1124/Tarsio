@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 
 // ==========================================
-// [L2] 线级中间表示：物理层（面向编解码）
+// [L2] 线级中间表示:物理层(面向编解码)
 // ==========================================
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,7 +42,7 @@ impl WireType {
 }
 
 // ==========================================
-// [L1] 语义中间表示：语义层（面向结构定义）
+// [L1] 语义中间表示:语义层(面向结构定义)
 // ==========================================
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,7 +94,7 @@ pub struct StructDef {
 }
 
 impl StructDef {
-    /// 绑定类到 Python 解释器并返回绑定引用。
+    /// 绑定类到 Python 解释器并返回绑定引用.
     pub fn bind_class<'py>(&self, py: Python<'py>) -> Bound<'py, PyType> {
         self.class.bind(py).clone()
     }
@@ -111,14 +111,14 @@ thread_local! {
         std::cell::RefCell::new(HashMap::with_capacity(16));
 }
 
-/// 获取 Schema (零拷贝 + 无锁热点路径)。
+/// 获取 Schema (零拷贝 + 无锁热点路径).
 ///
 /// 优化策略:
 /// 1. 首先检查 TLS 缓存 (无锁, O(1))
 /// 2. 缓存未命中时访问全局 Registry (读锁)
 /// 3. 命中后写入 TLS 缓存供后续使用
 ///
-/// 返回 Arc 引用，避免深拷贝。
+/// 返回 Arc 引用,避免深拷贝.
 pub fn get_schema(type_ptr: usize) -> Option<Arc<StructDef>> {
     // 1. TLS 热点路径 (无锁查询)
     let cached = SCHEMA_CACHE.with(|cache| cache.borrow().get(&type_ptr).cloned());
@@ -144,12 +144,12 @@ pub fn get_schema(type_ptr: usize) -> Option<Arc<StructDef>> {
 // Python 类绑定
 // ==========================================
 
-/// Tarsio 的 Struct 基类。
+/// Tarsio 的 Struct 基类.
 ///
-/// 继承该类会在类创建时编译并注册 Schema，字段使用 `typing.Annotated[T, tag]` 声明。
+/// 继承该类会在类创建时编译并注册 Schema,字段使用 `typing.Annotated[T, tag]` 声明.
 ///
 /// Notes:
-///     解码时，wire 缺失字段会使用模型默认值；Optional 字段未显式赋默认值时视为 None。
+///     解码时,wire 缺失字段会使用模型默认值;Optional 字段未显式赋默认值时视为 None.
 #[pyclass(subclass, module = "tarsio")]
 pub struct Struct;
 
@@ -183,30 +183,30 @@ impl Struct {
         construct_instance(&def, slf.as_any(), args, kwargs)
     }
 
-    /// 将当前实例编码为 Tars 二进制数据。
+    /// 将当前实例编码为 Tars 二进制数据.
     ///
     /// Returns:
-    ///     编码后的 bytes。
+    ///     编码后的 bytes.
     ///
     /// Raises:
-    ///     ValueError: 缺少必填字段、类型不匹配、或递归深度超过限制。
+    ///     ValueError: 缺少必填字段、类型不匹配、或递归深度超过限制.
     fn encode(slf: &Bound<'_, Struct>) -> PyResult<Py<pyo3::types::PyBytes>> {
         let py = slf.py();
         let result = crate::binding::ser::encode_object(slf.as_any())?;
         Ok(pyo3::types::PyBytes::new(py, &result).unbind())
     }
 
-    /// 将 Tars 二进制数据解码为当前类的实例。
+    /// 将 Tars 二进制数据解码为当前类的实例.
     ///
     /// Args:
-    ///     data: 待解码的 bytes。
+    ///     data: 待解码的 bytes.
     ///
     /// Returns:
-    ///     解码得到的实例。
+    ///     解码得到的实例.
     ///
     /// Raises:
-    ///     TypeError: 目标类未注册 Schema。
-    ///     ValueError: 数据格式不正确、缺少必填字段、或递归深度超过限制。
+    ///     TypeError: 目标类未注册 Schema.
+    ///     ValueError: 数据格式不正确、缺少必填字段、或递归深度超过限制.
     #[classmethod]
     fn decode<'py>(cls: &Bound<'py, PyType>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
         let py = cls.py();
@@ -392,7 +392,7 @@ impl Struct {
                 name_to_tag,
             };
 
-            // 注册全局结构定义（class 已纳入 StructDef）
+            // 注册全局结构定义(class 已纳入 StructDef)
             let type_ptr = cls.as_ptr() as usize;
             REGISTRY.write().unwrap().insert(type_ptr, Arc::new(def));
         }
@@ -488,7 +488,7 @@ fn construct_instance(
                         field.name
                     )));
                 } else {
-                    // 理论上被 required 校验覆盖，这里作为安全兜底
+                    // 理论上被 required 校验覆盖,这里作为安全兜底
                     return Err(pyo3::exceptions::PyTypeError::new_err(format!(
                         "__init__() missing 1 required argument: '{}'",
                         field.name

@@ -10,7 +10,15 @@ from typing_extensions import Any, Self, dataclass_transform
 _StructT = TypeVar("_StructT", bound="Struct")
 TarsDict: TypeAlias = dict[int, Any]
 
-__all__ = ["Struct", "TarsDict", "decode", "decode_raw", "encode", "encode_raw", "probe_struct"]
+__all__ = [
+    "Struct",
+    "TarsDict",
+    "decode",
+    "decode_raw",
+    "encode",
+    "encode_raw",
+    "probe_struct",
+]
 
 # 通过 dataclass_transform 通知 IDE 和 Type Checker：
 # 1. 这个类的子类行为类似 dataclass（从 annotations 生成 __init__ 等）

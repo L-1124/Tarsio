@@ -10,18 +10,18 @@ use crate::codec::reader::TarsReader;
 
 const MAX_DEPTH: usize = 100;
 
-/// 将 Tars 二进制数据解码为 Struct 实例（Schema API）。
+/// 将 Tars 二进制数据解码为 Struct 实例(Schema API).
 ///
 /// Args:
-///     cls: 目标 Struct 类型。
-///     data: 待解码的 bytes。
+///     cls: 目标 Struct 类型.
+///     data: 待解码的 bytes.
 ///
 /// Returns:
-///     解码得到的实例。
+///     解码得到的实例.
 ///
 /// Raises:
-///     TypeError: cls 未注册 Schema。
-///     ValueError: 数据格式不正确、缺少必填字段、或递归深度超过限制。
+///     TypeError: cls 未注册 Schema.
+///     ValueError: 数据格式不正确、缺少必填字段、或递归深度超过限制.
 #[pyfunction]
 pub fn decode<'py>(
     py: Python<'py>,
@@ -31,7 +31,7 @@ pub fn decode<'py>(
     decode_object(py, cls, data)
 }
 
-/// 内部：将字节解码为 Tars Struct 实例。
+/// 内部:将字节解码为 Tars Struct 实例.
 pub fn decode_object<'py>(
     py: Python<'py>,
     cls: &Bound<'py, PyType>,
@@ -55,7 +55,7 @@ pub fn decode_object<'py>(
     deserialize_struct(py, &mut reader, &def, 0)
 }
 
-/// 从读取器中反序列化结构体。
+/// 从读取器中反序列化结构体.
 fn deserialize_struct<'py>(
     py: Python<'py>,
     reader: &mut TarsReader,
@@ -71,8 +71,8 @@ fn deserialize_struct<'py>(
     // 从 StructDef 中获取 Python 类
     let class_obj = def.bind_class(py);
 
-    // 使用 PyType_GenericAlloc 直接分配内存，绕过 __new__ 方法调用
-    // 这比 call_method1("__new__") 快得多，因为它避免了完整的 Python 方法调用开销
+    // 使用 PyType_GenericAlloc 直接分配内存,绕过 __new__ 方法调用
+    // 这比 call_method1("__new__") 快得多,因为它避免了完整的 Python 方法调用开销
     let instance = unsafe {
         let type_ptr = class_obj.as_ptr() as *mut ffi::PyTypeObject;
         let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
@@ -92,7 +92,7 @@ fn deserialize_struct<'py>(
         }
     }
 
-    // 读取字段，直到遇到 StructEnd 或 EOF
+    // 读取字段,直到遇到 StructEnd 或 EOF
     while !reader.is_end() {
         let (tag, type_id) = match reader.peek_head() {
             Ok(h) => h,
@@ -117,7 +117,7 @@ fn deserialize_struct<'py>(
             instance.setattr(field.name.as_str(), value)?;
             seen[idx] = true;
         } else {
-            // 未知 tag，跳过
+            // 未知 tag,跳过
             reader.skip_field(type_id).map_err(|e| {
                 PyValueError::new_err(format!("Failed to skip unknown field: {}", e))
             })?;
@@ -137,7 +137,7 @@ fn deserialize_struct<'py>(
     Ok(instance)
 }
 
-/// 根据 WireType 反序列化单个值。
+/// 根据 WireType 反序列化单个值.
 fn deserialize_value<'py>(
     py: Python<'py>,
     reader: &mut TarsReader,
@@ -190,7 +190,7 @@ fn deserialize_value<'py>(
             deserialize_struct(py, reader, &nested_def, depth + 1)
         }
         WireType::List(inner) => {
-            // 处理 SimpleList（字节数组）
+            // 处理 SimpleList(字节数组)
             if type_id == TarsType::SimpleList {
                 let _sub_type = reader.read_u8().map_err(|e| {
                     PyValueError::new_err(format!("Failed to read SimpleList subtype: {}", e))

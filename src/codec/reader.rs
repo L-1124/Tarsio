@@ -3,21 +3,21 @@ use crate::codec::error::{Error, Result};
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io::Cursor;
 
-/// Tars 数据流读取器。
+/// Tars 数据流读取器.
 ///
-/// 基于 `Cursor` 实现，支持对字节切片的零拷贝读取。
-/// 内部维护了解码深度 (`depth`)，以防止恶意的深度嵌套攻击。
+/// 基于 `Cursor` 实现,支持对字节切片的零拷贝读取.
+/// 内部维护了解码深度 (`depth`),以防止恶意的深度嵌套攻击.
 pub struct TarsReader<'a> {
     cursor: Cursor<&'a [u8]>,
     depth: usize,
 }
 
 impl<'a> TarsReader<'a> {
-    /// 创建一个新的读取器。
+    /// 创建一个新的读取器.
     ///
     /// # 参数
     ///
-    /// * `bytes`: 包含 Tars 编码数据的字节切片。
+    /// * `bytes`: 包含 Tars 编码数据的字节切片.
     pub fn new(bytes: &'a [u8]) -> Self {
         Self {
             cursor: Cursor::new(bytes),
@@ -25,13 +25,13 @@ impl<'a> TarsReader<'a> {
         }
     }
 
-    /// 获取当前偏移量。
+    /// 获取当前偏移量.
     #[inline]
     pub fn position(&self) -> u64 {
         self.cursor.position()
     }
 
-    /// 检查是否已到达末尾。
+    /// 检查是否已到达末尾.
     #[inline]
     pub fn is_end(&self) -> bool {
         self.cursor.position() >= self.cursor.get_ref().len() as u64
@@ -43,15 +43,15 @@ impl<'a> TarsReader<'a> {
         &data[pos..]
     }
 
-    /// 读取字段头部信息 (Tag 和 Type)。
+    /// 读取字段头部信息 (Tag 和 Type).
     ///
-    /// 解析紧接在当前游标位置的头部字节。
-    /// 涵盖了单字节头部和双字节头部（当标签 >= 15 时）的处理。
+    /// 解析紧接在当前游标位置的头部字节.
+    /// 涵盖了单字节头部和双字节头部(当标签 >= 15 时)的处理.
     ///
     /// # 错误
     ///
-    /// 如果缓冲区剩余字节不足以解析头部，返回 `Error::BufferOverflow`。
-    /// 如果类型 ID 非法 (不在 0-13 范围内)，返回 `Error::InvalidType`。
+    /// 如果缓冲区剩余字节不足以解析头部,返回 `Error::BufferOverflow`.
+    /// 如果类型 ID 非法 (不在 0-13 范围内),返回 `Error::InvalidType`.
     #[inline]
     pub fn read_head(&mut self) -> Result<(u8, TarsType)> {
         let pos = self.position();
@@ -76,7 +76,7 @@ impl<'a> TarsReader<'a> {
         Ok((tag, tars_type))
     }
 
-    /// 预览头部信息而不移动指针。
+    /// 预览头部信息而不移动指针.
     pub fn peek_head(&mut self) -> Result<(u8, TarsType)> {
         let pos = self.position();
         let res = self.read_head();
@@ -84,14 +84,14 @@ impl<'a> TarsReader<'a> {
         res
     }
 
-    /// 读取有符号整数。
+    /// 读取有符号整数.
     ///
-    /// 根据 `type_id` 自动识别整数宽度 (i8/i16/i32/i64)，并统一返回 `i64`。
+    /// 根据 `type_id` 自动识别整数宽度 (i8/i16/i32/i64),并统一返回 `i64`.
     ///
     /// # 错误
     ///
-    /// * `Error::BufferOverflow`: 数据不足。
-    /// * `Error::Custom`: `type_id` 不是整数类型。
+    /// * `Error::BufferOverflow`: 数据不足.
+    /// * `Error::Custom`: `type_id` 不是整数类型.
     #[inline]
     pub fn read_int(&mut self, type_id: TarsType) -> Result<i64> {
         let pos = self.position();
@@ -137,14 +137,14 @@ impl<'a> TarsReader<'a> {
         }
     }
 
-    /// 读取无符号整数（向上转型为 u64）。
+    /// 读取无符号整数(向上转型为 u64).
     ///
-    /// 将 `u8`、`u16`、`u32` 读取并转换为 `u64`，以避免有符号数解析导致的负数问题。
-    /// 适用于 `Schema` 中标记为 `is_unsigned` 的字段。
+    /// 将 `u8`、`u16`、`u32` 读取并转换为 `u64`,以避免有符号数解析导致的负数问题.
+    /// 适用于 `Schema` 中标记为 `is_unsigned` 的字段.
     ///
     /// # 错误
     ///
-    /// 类似于 `read_int`。
+    /// 类似于 `read_int`.
     #[inline]
     pub fn read_uint(&mut self, type_id: TarsType) -> Result<u64> {
         let pos = self.position();
@@ -190,7 +190,7 @@ impl<'a> TarsReader<'a> {
         }
     }
 
-    /// 跳过指定的 Tars 类型值。
+    /// 跳过指定的 Tars 类型值.
     pub fn skip_element(&mut self, type_id: TarsType) -> Result<()> {
         match type_id {
             TarsType::Int1 => self.skip_bytes(1),
@@ -225,8 +225,8 @@ impl<'a> TarsReader<'a> {
             TarsType::StructEnd => Ok(()),
             TarsType::ZeroTag => Ok(()),
             TarsType::SimpleList => {
-                let _t = self.read_u8()?; // 内部类型（byte）
-                // 是否需要检查 t != 0？
+                let _t = self.read_u8()?; // 内部类型(byte)
+                // 是否需要检查 t != 0?
                 let size = self.read_size()?;
                 self.skip_bytes(size as u64)
             }
@@ -248,7 +248,7 @@ impl<'a> TarsReader<'a> {
         }
     }
 
-    /// skip_bytes 内部辅助函数。
+    /// skip_bytes 内部辅助函数.
     #[inline]
     fn skip_bytes(&mut self, len: u64) -> Result<()> {
         if self.cursor.position() + len > self.cursor.get_ref().len() as u64 {
@@ -260,7 +260,7 @@ impl<'a> TarsReader<'a> {
         Ok(())
     }
 
-    /// 读取单精度浮点数。
+    /// 读取单精度浮点数.
     #[inline]
     pub fn read_float(&mut self, type_id: TarsType) -> Result<f32> {
         match type_id {
@@ -280,7 +280,7 @@ impl<'a> TarsReader<'a> {
         }
     }
 
-    /// 读取双精度浮点数。
+    /// 读取双精度浮点数.
     #[inline]
     pub fn read_double(&mut self, type_id: TarsType) -> Result<f64> {
         match type_id {
@@ -301,9 +301,9 @@ impl<'a> TarsReader<'a> {
         }
     }
 
-    /// 读取字符串 payload（原始字节，不校验 UTF-8）。
+    /// 读取字符串 payload(原始字节,不校验 UTF-8).
     ///
-    /// 仅做长度与越界检查，返回指向输入缓冲区的切片。
+    /// 仅做长度与越界检查,返回指向输入缓冲区的切片.
     pub fn read_string(&mut self, type_id: TarsType) -> Result<&'a [u8]> {
         let pos = self.position();
 
@@ -339,7 +339,7 @@ impl<'a> TarsReader<'a> {
         Ok(&data[start..end])
     }
 
-    /// 跳过当前字段。
+    /// 跳过当前字段.
     pub fn skip_field(&mut self, type_id: TarsType) -> Result<()> {
         if self.depth > 100 {
             return Err(Error::new(
@@ -354,9 +354,9 @@ impl<'a> TarsReader<'a> {
         res
     }
 
-    /// 实际的跳过逻辑。
+    /// 实际的跳过逻辑.
     ///
-    /// 递归处理容器类型（Map、List、Struct）。
+    /// 递归处理容器类型(Map、List、Struct).
     fn do_skip_field(&mut self, type_id: TarsType) -> Result<()> {
         let pos = self.position();
         match type_id {
@@ -443,7 +443,7 @@ impl<'a> TarsReader<'a> {
         self.read_bytes(len as usize)
     }
 
-    /// 读取字节数组（零拷贝）。
+    /// 读取字节数组(零拷贝).
     pub fn read_bytes(&mut self, len: usize) -> Result<&'a [u8]> {
         let pos = self.position() as usize;
         let data = self.cursor.get_ref();
@@ -458,9 +458,9 @@ impl<'a> TarsReader<'a> {
         Ok(slice)
     }
 
-    /// 跳过指定长度的字节。
+    /// 跳过指定长度的字节.
     ///
-    /// 检查边界，更新游标位置。
+    /// 检查边界,更新游标位置.
     fn skip(&mut self, len: u64) -> Result<()> {
         let pos = self.position();
         let new_pos = pos + len;
@@ -473,7 +473,7 @@ impl<'a> TarsReader<'a> {
         Ok(())
     }
 
-    /// 读取一个字节。
+    /// 读取一个字节.
     #[inline]
     pub fn read_u8(&mut self) -> Result<u8> {
         let pos = self.position();
@@ -482,11 +482,11 @@ impl<'a> TarsReader<'a> {
         })
     }
 
-    /// 读取 Tars 容器的大小（List/Map/SimpleList 长度）。
-    /// 读取容器大小（Size）。
+    /// 读取 Tars 容器的大小(List/Map/SimpleList 长度).
+    /// 读取容器大小(Size).
     ///
-    /// Tars 中大小也是一个 Tag 为 0 的整数，但类型可能是 Int1/2/4。
-    /// 此方法自动解析并返回 i32 大小。
+    /// Tars 中大小也是一个 Tag 为 0 的整数,但类型可能是 Int1/2/4.
+    /// 此方法自动解析并返回 i32 大小.
     #[inline]
     pub fn read_size(&mut self) -> Result<i32> {
         let (_, t) = self.read_head()?;

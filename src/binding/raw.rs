@@ -9,17 +9,17 @@ use simdutf8::basic::from_utf8;
 
 const MAX_DEPTH: usize = 100;
 
-/// 将 TarsDict 编码为 Tars 二进制数据。
+/// 将 TarsDict 编码为 Tars 二进制数据.
 ///
 /// Args:
-///     obj: dict[int, TarsValue]，tag 范围为 0-255。
+///     obj: dict[int, TarsValue],tag 范围为 0-255.
 ///
 /// Returns:
-///     编码后的 bytes。
+///     编码后的 bytes.
 ///
 /// Raises:
-///     TypeError: obj 不是 dict，或 tag 超出 0-255，或值类型不受支持。
-///     ValueError: 递归深度超过 MAX_DEPTH。
+///     TypeError: obj 不是 dict,或 tag 超出 0-255,或值类型不受支持.
+///     ValueError: 递归深度超过 MAX_DEPTH.
 #[pyfunction]
 pub fn encode_raw(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes>> {
     let dict = obj
@@ -30,16 +30,16 @@ pub fn encode_raw(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes
     Ok(PyBytes::new(py, &bytes).unbind())
 }
 
-/// 将 Tars 二进制数据解码为 TarsDict。
+/// 将 Tars 二进制数据解码为 TarsDict.
 ///
 /// Args:
-///     data: 待解码的 bytes。
+///     data: 待解码的 bytes.
 ///
 /// Returns:
-///     解码后的 dict[int, TarsValue]。
+///     解码后的 dict[int, TarsValue].
 ///
 /// Raises:
-///     ValueError: 数据格式不正确、存在 trailing bytes、或递归深度超过 MAX_DEPTH。
+///     ValueError: 数据格式不正确、存在 trailing bytes、或递归深度超过 MAX_DEPTH.
 #[pyfunction]
 pub fn decode_raw<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyDict>> {
     let mut reader = TarsReader::new(data);
@@ -341,13 +341,13 @@ fn decode_simple_list<'py>(
     Ok(PyBytes::new(py, bytes).into_any())
 }
 
-/// 启发式探测字节数据是否为一个有效的 Tars Struct。
+/// 启发式探测字节数据是否为一个有效的 Tars Struct.
 ///
 /// Args:
-///     data: 可能包含 Tars Struct 的 bytes。
+///     data: 可能包含 Tars Struct 的 bytes.
 ///
 /// Returns:
-///     若解析成功且完全消费输入，返回 TarsDict；否则返回 None。
+///     若解析成功且完全消费输入,返回 TarsDict;否则返回 None.
 #[pyfunction]
 pub fn probe_struct<'py>(py: Python<'py>, data: &[u8]) -> Option<Bound<'py, PyDict>> {
     if data.is_empty() {

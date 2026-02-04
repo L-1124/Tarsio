@@ -90,7 +90,7 @@ def test_invariant_unknown_tags_skipped() -> None:
 
     class V2(Struct):
         a: Annotated[int, 0]
-        b: Annotated[dict[str, int], 1]  # V1 未知 Tag 1（复杂类型）
+        b: Annotated[dict[str, int], 1]  # V1 未知 Tag 1(复杂类型)
         c: Annotated[int, 2]
 
     # Arrange: 用 V2 编码
@@ -100,14 +100,14 @@ def test_invariant_unknown_tags_skipped() -> None:
     # Act: 用 V1 解码
     v1_obj = decode(V1, data)
 
-    # Assert: 已知字段正确，未知字段被忽略
+    # Assert: 已知字段正确,未知字段被忽略
     assert v1_obj.a == 10
     assert v1_obj.c == 20
     assert not hasattr(v1_obj, "b")
 
 
 # ==========================================
-# 边界：空容器与 SimpleList
+# 边界:空容器与 SimpleList
 # ==========================================
 
 
@@ -148,7 +148,7 @@ def test_simple_list_wire_format() -> None:
 
 
 # ==========================================
-# Schema Evolution（演进）
+# Schema Evolution(演进)
 # ==========================================
 
 

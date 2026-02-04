@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 pub mod binding;
 pub mod codec;
 
-/// Rust 实现的 Python 模块。
+/// Rust 实现的 Python 模块.
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<binding::schema::Struct>()?;

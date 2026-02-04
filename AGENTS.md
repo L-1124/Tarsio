@@ -49,6 +49,10 @@ Tarsio 是一个由 Rust 核心驱动的高性能 Python Tars (JCE) 协议实现
 * **类型安全**: Rust 强制内存安全；Python 使用运行时检查 (`typing.get_type_hints`) 构建 schema。
 * **错误处理**: Rust 错误跨越 FFI 边界映射为 Python 异常。
 
+## 注释规范
+
+* **语言**: 所有注释均使用中文撰写，但是使用英文标点符号。
+
 ## Commit 格式规范
 
 采用 Conventional Commits 格式，提交信息均使用中文撰写：

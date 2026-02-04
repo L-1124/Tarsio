@@ -8,24 +8,24 @@ use crate::codec::writer::TarsWriter;
 
 const MAX_DEPTH: usize = 100;
 
-/// 将一个已注册的 Struct 实例编码为 Tars 二进制数据（Schema API）。
+/// 将一个已注册的 Struct 实例编码为 Tars 二进制数据(Schema API).
 ///
 /// Args:
-///     obj: Struct 实例。
+///     obj: Struct 实例.
 ///
 /// Returns:
-///     编码后的 bytes。
+///     编码后的 bytes.
 ///
 /// Raises:
-///     TypeError: obj 不是已注册的 Struct。
-///     ValueError: 缺少必填字段、类型不匹配、或递归深度超过限制。
+///     TypeError: obj 不是已注册的 Struct.
+///     ValueError: 缺少必填字段、类型不匹配、或递归深度超过限制.
 #[pyfunction]
 pub fn encode(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes>> {
     let bytes = encode_object(obj)?;
     Ok(PyBytes::new(py, &bytes).unbind())
 }
 
-/// 内部：使用 schema 将 Python 对象序列化为 Tars 字节。
+/// 内部:使用 schema 将 Python 对象序列化为 Tars 字节.
 pub fn encode_object(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     let cls = obj.get_type();
     let ptr = cls.as_ptr() as usize;
@@ -127,7 +127,7 @@ fn serialize_impl(
                 // 若可视为字节数组则使用 SimpleList
                 // 先检查是否为 PyBytes
                 if val.is_instance_of::<PyBytes>() {
-                    // 安全的转换或提取？
+                    // 安全的转换或提取?
                     // val.extract::<&[u8]>() 最简单
                     if let Ok(bytes) = val.extract::<&[u8]>() {
                         writer.write_bytes(tag, bytes);
@@ -137,10 +137,10 @@ fn serialize_impl(
             }
 
             writer.write_tag(tag, TarsType::List);
-            // PySequence 不是像 PyDict 那样的具体类，而是协议
+            // PySequence 不是像 PyDict 那样的具体类,而是协议
             // PyO3 暴露了 PySequence 类型
-            // 是的：`pyo3::types::PySequence`
-            // 使用 extract 而不是 downcast，避免弃用歧义
+            // 是的:`pyo3::types::PySequence`
+            // 使用 extract 而不是 downcast,避免弃用歧义
             let seq = val.extract::<Bound<'_, PySequence>>()?;
             let len = seq.len()?;
             writer.write_int(0, len as i64); // 长度
@@ -152,7 +152,7 @@ fn serialize_impl(
         }
         WireType::Map(k_type, v_type) => {
             writer.write_tag(tag, TarsType::Map);
-            // 对 PyDict 使用 extract？
+            // 对 PyDict 使用 extract?
             let dict = val.extract::<Bound<'_, PyDict>>()?;
             let len = dict.len();
             writer.write_int(0, len as i64); // 长度

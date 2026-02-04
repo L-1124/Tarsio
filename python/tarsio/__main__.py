@@ -82,7 +82,7 @@ def deep_probe(data: Any) -> Any:
     elif isinstance(data, bytes):
         struct = probe_struct(data)
         if struct:
-            # 递归处理解码后的结构（因为里面可能还有嵌套）
+            # 递归处理解码后的结构(因为里面可能还有嵌套)
             return deep_probe(struct)
         return data
     return data
@@ -114,7 +114,7 @@ def build_tree(
         # 根节点
         tree = Tree(f"[bold white]{key}[/]")
     else:
-        # 子节点，通常 key 是 "[0]" 或 "Key" 等前缀
+        # 子节点,通常 key 是 "[0]" 或 "Key" 等前缀
         tree = parent
 
     # 1. Struct (Dict with int keys)
@@ -340,8 +340,8 @@ def _create_cli() -> Any:
         # 解码
         try:
             raw_decoded = decode_raw(data)
-            # 对于 JSON/Pretty 格式，我们希望直接替换 bytes 为解码后的结构
-            # 对于 Tree 格式，我们在 build_tree 中动态探测并展示为子节点（保留 SimpleList 标签）
+            # 对于 JSON/Pretty 格式,我们希望直接替换 bytes 为解码后的结构
+            # 对于 Tree 格式,我们在 build_tree 中动态探测并展示为子节点(保留 SimpleList 标签)
             if fmt != "tree":
                 decoded = deep_probe(raw_decoded)
             else:
