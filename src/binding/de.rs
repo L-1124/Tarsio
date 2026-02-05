@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyType};
 use simdutf8::basic::from_utf8;
 
-use crate::binding::schema::{StructDef, WireType, get_schema};
+use crate::binding::schema::{StructDef, TypeExpr, WireType, get_schema};
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
 
@@ -85,10 +85,21 @@ fn deserialize_struct<'py>(
     let mut seen = vec![false; def.fields_sorted.len()];
 
     for field in &def.fields_sorted {
-        if let Some(default_value) = field.default_value.as_ref() {
-            instance.setattr(field.name.as_str(), default_value.bind(py))?;
+        let val = if let Some(default_value) = field.default_value.as_ref() {
+            default_value.bind(py).clone()
         } else if field.is_optional {
-            instance.setattr(field.name.as_str(), py.None())?;
+            py.None().into_bound(py)
+        } else {
+            continue;
+        };
+
+        unsafe {
+            let name_py = field.name.as_str().into_pyobject(py)?;
+            let res =
+                ffi::PyObject_GenericSetAttr(instance.as_ptr(), name_py.as_ptr(), val.as_ptr());
+            if res != 0 {
+                return Err(PyErr::fetch(py));
+            }
         }
     }
 
@@ -111,13 +122,35 @@ fn deserialize_struct<'py>(
             .read_head()
             .map_err(|e| PyValueError::new_err(format!("Read head error: {}", e)))?; // Consume the head
 
-        if let Some(&idx) = def.tag_index.get(&tag) {
+        let idx_opt = if (tag as usize) < def.tag_lookup_vec.len() {
+            def.tag_lookup_vec[tag as usize]
+        } else {
+            None
+        };
+
+        if let Some(idx) = idx_opt {
             let field = &def.fields_sorted[idx];
-            let value = deserialize_value(py, reader, type_id, &field.wire_type, depth + 1)?;
-            instance.setattr(field.name.as_str(), value)?;
+            let value = deserialize_value(py, reader, type_id, &field.ty, depth + 1)?;
+            unsafe {
+                let name_py = field.name.as_str().into_pyobject(py)?;
+                let res = ffi::PyObject_GenericSetAttr(
+                    instance.as_ptr(),
+                    name_py.as_ptr(),
+                    value.as_ptr(),
+                );
+                if res != 0 {
+                    return Err(PyErr::fetch(py));
+                }
+            }
             seen[idx] = true;
         } else {
             // 未知 tag,跳过
+            if def.forbid_unknown_tags {
+                return Err(PyValueError::new_err(format!(
+                    "Unknown tag {} found in deserialization (forbid_unknown_tags=True)",
+                    tag
+                )));
+            }
             reader.skip_field(type_id).map_err(|e| {
                 PyValueError::new_err(format!("Failed to skip unknown field: {}", e))
             })?;
@@ -137,12 +170,12 @@ fn deserialize_struct<'py>(
     Ok(instance)
 }
 
-/// 根据 WireType 反序列化单个值.
+/// 根据 TypeExpr 反序列化单个值.
 fn deserialize_value<'py>(
     py: Python<'py>,
     reader: &mut TarsReader,
     type_id: TarsType,
-    wire_type: &WireType,
+    type_expr: &TypeExpr,
     depth: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
     if depth > MAX_DEPTH {
@@ -151,45 +184,42 @@ fn deserialize_value<'py>(
         ));
     }
 
-    match wire_type {
-        WireType::Int | WireType::Long => {
-            let v = reader
-                .read_int(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read int: {}", e)))?;
-            Ok(v.into_pyobject(py)?.into_any())
-        }
-        WireType::Float => {
-            let v = reader
-                .read_float(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read float: {}", e)))?;
-            Ok(v.into_pyobject(py)?.into_any())
-        }
-        WireType::Double => {
-            let v = reader
-                .read_double(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read double: {}", e)))?;
-            Ok(v.into_pyobject(py)?.into_any())
-        }
-        WireType::String => {
-            let bytes = reader.read_string(type_id).map_err(|e| {
-                PyValueError::new_err(format!("Failed to read string bytes: {}", e))
-            })?;
-
-            // 使用 simdutf8 进行 SIMD 加速 UTF-8 验证
-            // 注: 对于超大字符串 (>几MB) 可考虑释放 GIL, 但:
-            // - simdutf8 速度 >20GB/s, 1MB 验证仅需 ~50μs
-            // - GIL 切换开销约 ~100ns-1μs
-            // - 当前场景收益不明显, 保持简单实现
-            let s = from_utf8(bytes).map_err(|_| PyValueError::new_err("Invalid UTF-8 string"))?;
-            Ok(s.into_pyobject(py)?.into_any())
-        }
-        WireType::Struct(ptr) => {
-            // 递归反序列化嵌套结构体
+    match type_expr {
+        TypeExpr::Primitive(wire_type) => match wire_type {
+            WireType::Int | WireType::Long => {
+                let v = reader
+                    .read_int(type_id)
+                    .map_err(|e| PyValueError::new_err(format!("Failed to read int: {}", e)))?;
+                Ok(v.into_pyobject(py)?.into_any())
+            }
+            WireType::Float => {
+                let v = reader
+                    .read_float(type_id)
+                    .map_err(|e| PyValueError::new_err(format!("Failed to read float: {}", e)))?;
+                Ok(v.into_pyobject(py)?.into_any())
+            }
+            WireType::Double => {
+                let v = reader
+                    .read_double(type_id)
+                    .map_err(|e| PyValueError::new_err(format!("Failed to read double: {}", e)))?;
+                Ok(v.into_pyobject(py)?.into_any())
+            }
+            WireType::String => {
+                let bytes = reader.read_string(type_id).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to read string bytes: {}", e))
+                })?;
+                let s =
+                    from_utf8(bytes).map_err(|_| PyValueError::new_err("Invalid UTF-8 string"))?;
+                Ok(s.into_pyobject(py)?.into_any())
+            }
+            _ => Err(PyValueError::new_err("Unexpected wire type for primitive")),
+        },
+        TypeExpr::Struct(ptr) => {
             let nested_def = get_schema(*ptr)
                 .ok_or_else(|| PyTypeError::new_err("Nested struct schema not found"))?;
             deserialize_struct(py, reader, &nested_def, depth + 1)
         }
-        WireType::List(inner) => {
+        TypeExpr::List(inner) | TypeExpr::Tuple(inner) => {
             // 处理 SimpleList(字节数组)
             if type_id == TarsType::SimpleList {
                 let _sub_type = reader.read_u8().map_err(|e| {
@@ -218,9 +248,14 @@ fn deserialize_value<'py>(
                 let item = deserialize_value(py, reader, item_type, inner, depth + 1)?;
                 list.append(item)?;
             }
-            Ok(list.into_any())
+
+            if matches!(type_expr, TypeExpr::Tuple(_)) {
+                Ok(list.to_tuple().into_any())
+            } else {
+                Ok(list.into_any())
+            }
         }
-        WireType::Map(k_type, v_type) => {
+        TypeExpr::Map(k_type, v_type) => {
             let len = reader
                 .read_size()
                 .map_err(|e| PyValueError::new_err(format!("Failed to read map size: {}", e)))?
@@ -242,5 +277,6 @@ fn deserialize_value<'py>(
             }
             Ok(dict.into_any())
         }
+        TypeExpr::Optional(inner) => deserialize_value(py, reader, type_id, inner, depth),
     }
 }

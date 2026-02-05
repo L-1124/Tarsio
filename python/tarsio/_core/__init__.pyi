@@ -57,17 +57,23 @@ class Struct:
         ...     next: Annotated["Node", 1]
     """
     def __new__(cls) -> Struct: ...
-    def __init_subclass__(cls) -> None:
+    def __init_subclass__(
+        cls,
+        frozen: bool = False,
+        forbid_unknown_tags: bool = False,
+        **kwargs: Any,
+    ) -> None:
         """根据类型注解编译 Schema 并将其注册到 Rust 后端.
 
-        此方法执行以下操作：
-        1. 遍历 MRO 以合并 `__annotations__`。
-        2. 检测类是泛型模板（Generic Template）还是具体实例（Concrete Instance）。
-        3. 将 `Annotated[T, Tag]` 字段解析为 `JceType` IR。
-        4. 将不可变的 `StructDef` 存储在全局注册表中（以 `PyType` 指针为键）。
+        Args:
+            frozen: 如果为 True,则实例不可变且可哈希。
+            forbid_unknown_tags: 如果为 True,反序列化时遇到未知 Tag 会报错。
+            **kwargs: 其他传递给基类的参数。
         """
         ...
 
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
     def encode(self) -> bytes:
         """将当前实例序列化为 Tars 二进制格式.
 
@@ -89,7 +95,7 @@ class Struct:
         ...
 
 def encode(obj: Any) -> bytes:
-    """将 Tars Struct 对象序列化为 Tars 二进制格式 (codec-style API).
+    """将 Tars Struct 对象序列化为 Tars 二进制格式.
 
     Args:
         obj: 继承自 `Struct` 的类实例。
@@ -103,7 +109,7 @@ def encode(obj: Any) -> bytes:
     ...
 
 def decode(cls: type[_StructT], data: bytes) -> _StructT:
-    """从 Tars 二进制数据反序列化为类实例 (codec-style API).
+    """从 Tars 二进制数据反序列化为类实例.
 
     Args:
         cls: 目标类（继承自 `Struct`）。
@@ -119,7 +125,7 @@ def decode(cls: type[_StructT], data: bytes) -> _StructT:
     ...
 
 def encode_raw(obj: TarsDict) -> bytes:
-    """将 TarsDict 编码为 Tars 二进制格式 (Raw API).
+    """将 TarsDict 编码为 Tars 二进制格式.
 
     Args:
         obj: 一个字典，映射 tag (int) 到 Tars 值。
@@ -130,7 +136,7 @@ def encode_raw(obj: TarsDict) -> bytes:
     ...
 
 def decode_raw(data: bytes) -> TarsDict:
-    """将字节解码为 TarsDict (Raw API).
+    """将字节解码为 TarsDict.
 
     Args:
         data: 包含 Tars 编码数据的 bytes 对象。

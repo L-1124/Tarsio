@@ -6,6 +6,7 @@
 )]
 use crate::codec::consts::TarsType;
 use pyo3::prelude::*;
+use pyo3::pyclass::CompareOp;
 use pyo3::types::{PyAny, PyDict, PyString, PyTuple, PyType};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
@@ -50,6 +51,7 @@ pub enum TypeExpr {
     Primitive(WireType),
     Struct(usize),
     List(Box<TypeExpr>),
+    Tuple(Box<TypeExpr>),
     Map(Box<TypeExpr>, Box<TypeExpr>),
     Optional(Box<TypeExpr>),
 }
@@ -60,6 +62,7 @@ impl TypeExpr {
             TypeExpr::Primitive(w) => w.clone(),
             TypeExpr::Struct(ptr) => WireType::Struct(*ptr),
             TypeExpr::List(inner) => WireType::List(Box::new(inner.lower())),
+            TypeExpr::Tuple(inner) => WireType::List(Box::new(inner.lower())),
             TypeExpr::Map(k, v) => WireType::Map(Box::new(k.lower()), Box::new(v.lower())),
             TypeExpr::Optional(inner) => inner.lower(),
         }
@@ -90,7 +93,10 @@ pub struct StructDef {
     pub class: Arc<Py<PyType>>,
     pub fields_sorted: Vec<FieldDef>,
     pub tag_index: HashMap<u8, usize>,
+    pub tag_lookup_vec: Vec<Option<usize>>,
     pub name_to_tag: HashMap<String, u8>,
+    pub frozen: bool,
+    pub forbid_unknown_tags: bool,
 }
 
 impl StructDef {
@@ -150,7 +156,7 @@ pub fn get_schema(type_ptr: usize) -> Option<Arc<StructDef>> {
 ///
 /// Notes:
 ///     解码时,wire 缺失字段会使用模型默认值;Optional 字段未显式赋默认值时视为 None.
-#[pyclass(subclass, module = "tarsio")]
+#[pyclass(subclass, module = "tarsio", freelist = 1000)]
 pub struct Struct;
 
 #[pymethods]
@@ -214,14 +220,32 @@ impl Struct {
     }
 
     #[classmethod]
-    fn __init_subclass__(cls: &Bound<'_, PyType>) -> PyResult<()> {
+    #[pyo3(signature = (**kwargs))]
+    fn __init_subclass__(
+        cls: &Bound<'_, PyType>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
         let py = cls.py();
+
+        let mut frozen = false;
+        let mut forbid_unknown_tags = false;
+
+        if let Some(k) = kwargs {
+            if let Some(v) = k.get_item("frozen")? {
+                frozen = v.extract::<bool>()?;
+                k.del_item("frozen")?;
+            }
+            if let Some(v) = k.get_item("forbid_unknown_tags")? {
+                forbid_unknown_tags = v.extract::<bool>()?;
+                k.del_item("forbid_unknown_tags")?;
+            }
+        }
 
         let builtins = py.import("builtins")?;
         let super_fn = builtins.getattr("super")?;
         let struct_type = py.get_type::<Struct>();
         let super_obj = super_fn.call1((struct_type, cls))?;
-        super_obj.call_method0("__init_subclass__")?;
+        super_obj.call_method("__init_subclass__", (), kwargs)?;
 
         // 0. 泛型模板检查
         if let Ok(params) = cls.getattr("__parameters__") {
@@ -379,17 +403,29 @@ impl Struct {
 
             let mut tag_index = HashMap::new();
             let mut name_to_tag = HashMap::new();
+            let mut max_tag = 0;
 
             for (idx, f) in fields.iter().enumerate() {
                 tag_index.insert(f.tag, idx);
                 name_to_tag.insert(f.name.clone(), f.tag);
+                if f.tag > max_tag {
+                    max_tag = f.tag;
+                }
+            }
+
+            let mut tag_lookup_vec = vec![None; (max_tag as usize) + 1];
+            for (idx, f) in fields.iter().enumerate() {
+                tag_lookup_vec[f.tag as usize] = Some(idx);
             }
 
             let def = StructDef {
                 class: Arc::new(cls.clone().unbind()),
                 fields_sorted: fields,
                 tag_index,
+                tag_lookup_vec,
                 name_to_tag,
+                frozen,
+                forbid_unknown_tags,
             };
 
             // 注册全局结构定义(class 已纳入 StructDef)
@@ -424,6 +460,103 @@ impl Struct {
         }
 
         Ok(format!("{}({})", class_name, fields_str.join(", ")))
+    }
+
+    fn __richcmp__(
+        slf: &Bound<'_, Struct>,
+        other: &Bound<'_, PyAny>,
+        op: CompareOp,
+    ) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        match op {
+            CompareOp::Eq => {
+                if !other.is_instance_of::<Struct>() {
+                    return Ok(false.into_pyobject(py)?.to_owned().into_any().unbind());
+                }
+
+                let cls1 = slf.get_type();
+                let cls2 = other.get_type();
+
+                if !cls1.is(&cls2) {
+                    return Ok(false.into_pyobject(py)?.to_owned().into_any().unbind());
+                }
+
+                let type_ptr = cls1.as_ptr() as usize;
+                let def = match get_schema(type_ptr) {
+                    Some(d) => d,
+                    None => return Ok(false.into_pyobject(py)?.to_owned().into_any().unbind()),
+                };
+
+                for field in &def.fields_sorted {
+                    let v1 = slf.getattr(field.name.as_str())?;
+                    let v2 = other.getattr(field.name.as_str())?;
+                    if !v1.eq(v2)? {
+                        return Ok(false.into_pyobject(py)?.to_owned().into_any().unbind());
+                    }
+                }
+                Ok(true.into_pyobject(py)?.to_owned().into_any().unbind())
+            }
+            CompareOp::Ne => {
+                let eq = Self::__richcmp__(slf, other, CompareOp::Eq)?;
+                let is_eq: bool = eq.bind(py).extract()?;
+                Ok((!is_eq).into_pyobject(py)?.to_owned().into_any().unbind())
+            }
+            _ => Ok(py.NotImplemented()),
+        }
+    }
+
+    fn __hash__(slf: &Bound<'_, Struct>) -> PyResult<isize> {
+        let py = slf.py();
+        let cls = slf.get_type();
+        let type_ptr = cls.as_ptr() as usize;
+        let def = match get_schema(type_ptr) {
+            Some(d) => d,
+            None => {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "unhashable type: '{}'",
+                    cls.name()?
+                )));
+            }
+        };
+
+        if !def.frozen {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "unhashable type: '{}' (not frozen)",
+                cls.name()?
+            )));
+        }
+
+        let mut vals = Vec::with_capacity(def.fields_sorted.len());
+        for field in &def.fields_sorted {
+            vals.push(slf.getattr(field.name.as_str())?);
+        }
+        let tuple = PyTuple::new(py, vals)?;
+        tuple.hash()
+    }
+
+    fn __setattr__(
+        slf: &Bound<'_, Struct>,
+        name: Bound<'_, PyAny>,
+        value: Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let cls = slf.get_type();
+        let type_ptr = cls.as_ptr() as usize;
+        if let Some(def) = get_schema(type_ptr) {
+            if def.frozen {
+                return Err(pyo3::exceptions::PyAttributeError::new_err(format!(
+                    "can't set attributes of frozen instance '{}'",
+                    cls.name()?
+                )));
+            }
+        }
+        unsafe {
+            let res =
+                pyo3::ffi::PyObject_GenericSetAttr(slf.as_ptr(), name.as_ptr(), value.as_ptr());
+            if res != 0 {
+                return Err(PyErr::fetch(slf.py()));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -475,13 +608,15 @@ fn construct_instance(
             }
         };
 
-        match val {
-            Some(v) => self_obj.setattr(&field.name, v)?,
+        let val_to_set = match val {
+            Some(v) => v,
             None => {
                 if let Some(default_value) = field.default_value.as_ref() {
-                    self_obj.setattr(&field.name, default_value.bind(self_obj.py()))?;
+                    default_value.bind(self_obj.py()).clone()
                 } else if field.is_optional {
-                    self_obj.setattr(&field.name, pyo3::types::PyNone::get(self_obj.py()))?;
+                    pyo3::types::PyNone::get(self_obj.py())
+                        .to_owned()
+                        .into_any()
                 } else if field.is_required {
                     return Err(pyo3::exceptions::PyTypeError::new_err(format!(
                         "__init__() missing 1 required positional argument: '{}'",
@@ -494,6 +629,19 @@ fn construct_instance(
                         field.name
                     )));
                 }
+            }
+        };
+
+        // 使用 PyObject_GenericSetAttr 绕过 frozen 检查
+        unsafe {
+            let name_py = field.name.as_str().into_pyobject(self_obj.py())?;
+            let res = pyo3::ffi::PyObject_GenericSetAttr(
+                self_obj.as_ptr(),
+                name_py.as_ptr(),
+                val_to_set.as_ptr(),
+            );
+            if res != 0 {
+                return Err(PyErr::fetch(self_obj.py()));
             }
         }
     }
@@ -571,10 +719,14 @@ fn parse_type_expr(
         let original_name: String = origin.getattr("__name__")?.extract()?;
         let args = get_args.call1((resolved_ty,))?;
 
-        if original_name == "list" && args.len()? > 0 {
+        if (original_name == "list" || original_name == "tuple") && args.len()? > 0 {
             let inner = args.get_item(0)?;
             let inner_expr = parse_type_expr(&inner, get_origin, get_args, typevar_map)?;
-            return Ok(TypeExpr::List(Box::new(inner_expr)));
+            if original_name == "list" {
+                return Ok(TypeExpr::List(Box::new(inner_expr)));
+            } else {
+                return Ok(TypeExpr::Tuple(Box::new(inner_expr)));
+            }
         }
 
         if original_name == "dict" && args.len()? >= 2 {
