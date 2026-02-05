@@ -228,3 +228,105 @@ def test_decode_skips_unknown_tag() -> None:
     # Assert
     assert result.id == 1
     assert result.name == "Alice"
+
+
+# ==========================================
+# Frozen 和 Hash 测试
+# ==========================================
+
+
+def test_frozen_struct_is_immutable() -> None:
+    """Frozen 结构体应禁止修改属性."""
+
+    class FrozenPoint(Struct, frozen=True):
+        x: Annotated[int, 0]
+        y: Annotated[int, 1]
+
+    p = FrozenPoint(1, 2)
+
+    with pytest.raises(AttributeError):
+        p.x = 3  # type: ignore
+
+    with pytest.raises(AttributeError):
+        p.z = 4  # type: ignore # New attribute
+
+
+def test_frozen_struct_is_hashable() -> None:
+    """Frozen 结构体应支持 hash."""
+
+    class FrozenPoint(Struct, frozen=True):
+        x: Annotated[int, 0]
+        y: Annotated[int, 1]
+
+    p1 = FrozenPoint(1, 2)
+    p2 = FrozenPoint(1, 2)
+
+    assert hash(p1) == hash(p2)
+    assert isinstance(hash(p1), int)
+
+    # Test usage in set/dict
+    s = {p1}
+    assert p2 in s
+
+
+def test_non_frozen_struct_is_not_hashable() -> None:
+    """非 Frozen 结构体不应支持 hash."""
+
+    class Point(Struct):
+        x: Annotated[int, 0]
+        y: Annotated[int, 1]
+
+    p = Point(1, 2)
+
+    # mutable types are not hashable by default in Python if __eq__ is defined
+    # checking if it raises TypeError
+    with pytest.raises(TypeError):
+        hash(p)
+
+
+# ==========================================
+# Equality 测试
+# ==========================================
+
+
+def test_struct_equality() -> None:
+    """结构体应支持基于内容的相等性比较."""
+
+    class Point(Struct):
+        x: Annotated[int, 0]
+        y: Annotated[int, 1]
+
+    p1 = Point(1, 2)
+    p2 = Point(1, 2)
+    p3 = Point(1, 3)
+
+    assert p1 == p2
+    assert p1 != p3
+    assert p1 != "string"
+    assert p1 != 123
+
+
+# ==========================================
+# forbid_unknown_tags 测试
+# ==========================================
+
+
+def test_decode_raises_on_unknown_tag_if_forbidden() -> None:
+    """当启用 forbid_unknown_tags 时，遇到未知 tag 应抛错."""
+
+    class V1Strict(Struct, forbid_unknown_tags=True):
+        id: Annotated[int, 0]
+        name: Annotated[str, 1]
+
+    class V2(Struct):
+        id: Annotated[int, 0]
+        name: Annotated[str, 1]
+        extra: Annotated[int, 2]
+
+    # Arrange
+    data = V2(1, "Alice", 999).encode()
+
+    # Act & Assert
+    # Usually unknown tags raise ValueError or similar when forbidden
+    with pytest.raises(ValueError, match="Unknown tag"):
+        V1Strict.decode(data)
