@@ -84,9 +84,10 @@ class UserProfile(Struct):
 
 ## 容器类型
 
-支持标准的 `list` 和 `dict`。
+支持标准的 `list`/`tuple` 以及 `dict`。
 
 * `list[T]`: 对应 Tars 的 `List<T>`。
+* `tuple[T, ...]`: 对应 Tars 的 `List<T>`。
 * `dict[K, V]`: 对应 Tars 的 `Map<K, V>`。
 
 ```python

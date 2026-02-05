@@ -67,13 +67,11 @@ print(result)
 
 > **注意**: `decode_raw` 会尽可能还原数据类型，但由于 Tars 协议不包含字段名，所以 Key 只能是整数 Tag。
 
-## 高级特性
-
 ### 探测结构 (`probe_struct`)
 
 Tars 协议中的 `SimpleList` (Type 13) 实际上是 `vector<byte>`。但在很多场景下，这个字节数组内部可能包含了另一个序列化的 Tars 结构体。
 
-Rust 核心不应该猜测数据的含义，但在调试或分析时，我们经常需要“透视”这些数据。为此，Tarsio 提供了 `probe_struct` 工具。
+在调试或分析时，你可以用 `probe_struct` 检查一段 `bytes` 是否包含一个完整的 Struct 编码。
 
 ```python
 from tarsio import probe_struct
@@ -87,10 +85,7 @@ else:
     print("这是一段普通的二进制数据")
 ```
 
-**工作原理**:
+行为约定:
 
-1. **快速失败**: 检查首字节是否像合法的 Tars 头部。
-2. **试探解码**: 尝试将其作为 Struct 解析。
-3. **终局校验**: 只有当解析成功且**消耗了所有字节**时，才认定为 Struct。
-
-这一机制被内置在 Tarsio CLI 工具中，用于自动展示嵌套结构。
+* 若输入可被解析为 Struct 且完全消费输入，返回 `dict[int, Any]`。
+* 否则返回 `None`。

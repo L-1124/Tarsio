@@ -1,5 +1,5 @@
 site_name: Tarsio
-site_description: Modern Tars/JCE serialization library for Python, built on Pydantic v2.
+site_description: Modern Tars/JCE serialization library for Python.
 repo_url: https://github.com/l-1124/Tarsio
 repo_name: Tarsio
 extra:

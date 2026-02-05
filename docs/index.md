@@ -1,16 +1,15 @@
 # Tarsio
 
-**Tarsio** 是一个高性能的 Tars (JCE) 协议序列化库，由 Rust 核心驱动，专为 Python 设计。
-
-它利用 PyO3 和 Rust 的极致性能，结合 Python 的灵活性，提供了现代化的开发体验。
+**Tarsio** 是一个面向 Python 的 Tars (JCE) 协议序列化库。
+它提供 `Struct` 模型、二进制编解码与调试工具。
 
 ## 核心特性
 
-* **🚀 极致性能**: 核心编解码逻辑完全由 Rust 实现，零拷贝读取，SIMD 加速字符串校验。
-* **✨ 现代 API**: 使用 Python 标准库 `Annotated` 定义 Tag，告别繁琐的 `Field` 函数。
-* **🛡️ 类型安全**: 在类定义时进行静态 Schema 编译和检查。
-* **🔧 强大的工具**: 内置功能丰富的 CLI 工具，支持递归探测二进制数据结构。
-* **📦 零依赖**: 核心库不依赖任何第三方 Python 包（仅需 `typing-extensions`）。
+* **性能**: 适合高频编解码场景。
+* **模型**: 使用 Python 标准库 `Annotated` 定义 Tag。
+* **约束**: 在类定义阶段校验 Schema。
+* **工具**: 提供 CLI 与 `probe_struct`，用于分析二进制数据。
+* **依赖**: 核心功能不依赖第三方 Python 包（仅需 `typing-extensions`）。
 
 ## 快速开始
 
