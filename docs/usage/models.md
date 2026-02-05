@@ -15,6 +15,24 @@ Annotated[Type, Tag]
 * **Type**: 字段的 Python 类型（如 `int`, `str`）。
 * **Tag**: JCE 协议中的 Tag ID（整数，0-255）。
 
+### 元数据模式 (Meta)
+
+当你希望为字段增加约束校验（如数值范围、长度、正则）时，可以使用 `tarsio.Meta` 作为 Tag 的替代形式:
+
+```python
+from typing import Annotated
+from tarsio import Meta, Struct
+
+class User(Struct):
+    uid: Annotated[int, Meta(tag=0, gt=0)]
+    name: Annotated[str, Meta(tag=1, min_len=1, max_len=20)]
+```
+
+约束校验在 Rust 侧的反序列化阶段执行, 校验失败会抛出 `tarsio.ValidationError`。
+
+> **重要**: Tag 的写法遵循"单一来源"策略, 同一字段必须二选一:
+> `Annotated[T, 1]` 或 `Annotated[T, Meta(tag=1, ...)]`, 禁止混用。
+
 ### 示例
 
 ```python

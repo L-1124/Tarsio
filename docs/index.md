@@ -7,7 +7,7 @@
 
 * **性能**: 适合高频编解码场景。
 * **模型**: 使用 Python 标准库 `Annotated` 定义 Tag。
-* **约束**: 在类定义阶段校验 Schema。
+* **约束**: 支持 `Meta` 声明字段约束, 解码阶段执行校验。
 * **工具**: 提供 CLI 与 `probe_struct`，用于分析二进制数据。
 * **依赖**: 核心功能不依赖第三方 Python 包（仅需 `typing-extensions`）。
 

@@ -30,6 +30,23 @@ from tarsio import decode
 user = decode(User, data)
 ```
 
+### 运行时校验 (Validation)
+
+当模型字段使用 `Meta(tag=..., ...)` 声明了约束时, 反序列化会在赋值前执行校验。校验失败抛出 `tarsio.ValidationError`:
+
+```python
+from typing import Annotated
+from tarsio import Meta, Struct, ValidationError
+
+class User(Struct):
+    uid: Annotated[int, Meta(tag=0, gt=0)]
+
+try:
+    user = User.decode(b"...")
+except ValidationError as e:
+    print(e)
+```
+
 ## 无 Schema 模式 (Raw API)
 
 有时你可能需要处理未知的 Tars 数据，或者不想定义对应的 `Struct` 类。Tarsio 提供了 Raw API 来直接操作字典。
