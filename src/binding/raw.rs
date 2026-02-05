@@ -1,6 +1,10 @@
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use std::cell::RefCell;
+
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyBytes, PyDict, PyFloat, PyList, PySequence, PyString};
+
+use bytes::BufMut;
 
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
@@ -8,6 +12,10 @@ use crate::codec::writer::TarsWriter;
 use simdutf8::basic::from_utf8;
 
 const MAX_DEPTH: usize = 100;
+
+thread_local! {
+    static RAW_ENCODE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(128));
+}
 
 /// 将 TarsDict 编码为 Tars 二进制数据.
 ///
@@ -26,8 +34,7 @@ pub fn encode_raw(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes
         .cast::<PyDict>()
         .map_err(|_| PyTypeError::new_err("encode_raw expects a dict[int, TarsValue]"))?;
 
-    let bytes = encode_raw_dict(dict, 0)?;
-    Ok(PyBytes::new(py, &bytes).unbind())
+    encode_raw_dict_to_pybytes(py, dict, 0)
 }
 
 /// 将 Tars 二进制数据解码为 TarsDict.
@@ -52,19 +59,36 @@ pub fn decode_raw<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyDi
     Ok(dict)
 }
 
-fn encode_raw_dict(dict: &Bound<'_, PyDict>, depth: usize) -> PyResult<Vec<u8>> {
+fn encode_raw_dict_to_pybytes(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    depth: usize,
+) -> PyResult<Py<PyBytes>> {
     if depth > MAX_DEPTH {
         return Err(PyValueError::new_err(
             "Recursion limit exceeded during raw serialization",
         ));
     }
-    let mut writer = TarsWriter::new();
-    write_struct_fields(&mut writer, dict, depth)?;
-    Ok(writer.into_inner())
+
+    RAW_ENCODE_BUFFER.with(|cell| {
+        let mut buffer = cell.try_borrow_mut().map_err(|_| {
+            PyRuntimeError::new_err(
+                "Re-entrant encode_raw detected: thread-local buffer is already borrowed",
+            )
+        })?;
+        buffer.clear();
+
+        {
+            let mut writer = TarsWriter::with_buffer(&mut *buffer);
+            write_struct_fields(&mut writer, dict, depth)?;
+        }
+
+        Ok(PyBytes::new(py, &buffer[..]).unbind())
+    })
 }
 
 fn write_struct_fields(
-    writer: &mut TarsWriter,
+    writer: &mut TarsWriter<impl BufMut>,
     dict: &Bound<'_, PyDict>,
     depth: usize,
 ) -> PyResult<()> {
@@ -92,7 +116,7 @@ fn write_struct_fields(
 }
 
 fn encode_value(
-    writer: &mut TarsWriter,
+    writer: &mut TarsWriter<impl BufMut>,
     tag: u8,
     value: &Bound<'_, PyAny>,
     depth: usize,

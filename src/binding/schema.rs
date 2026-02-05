@@ -198,8 +198,7 @@ impl Struct {
     ///     ValueError: 缺少必填字段、类型不匹配、或递归深度超过限制.
     fn encode(slf: &Bound<'_, Struct>) -> PyResult<Py<pyo3::types::PyBytes>> {
         let py = slf.py();
-        let result = crate::binding::ser::encode_object(slf.as_any())?;
-        Ok(pyo3::types::PyBytes::new(py, &result).unbind())
+        crate::binding::ser::encode_object_to_pybytes(py, slf.as_any())
     }
 
     /// 将 Tars 二进制数据解码为当前类的实例.

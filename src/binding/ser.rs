@@ -1,12 +1,20 @@
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use std::cell::RefCell;
+
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PySequence};
+
+use bytes::BufMut;
 
 use crate::binding::schema::{WireType, get_schema};
 use crate::codec::consts::TarsType;
 use crate::codec::writer::TarsWriter;
 
 const MAX_DEPTH: usize = 100;
+
+thread_local! {
+    static ENCODE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(128));
+}
 
 /// 将一个已注册的 Struct 实例编码为 Tars 二进制数据(Schema API).
 ///
@@ -21,30 +29,40 @@ const MAX_DEPTH: usize = 100;
 ///     ValueError: 缺少必填字段、类型不匹配、或递归深度超过限制.
 #[pyfunction]
 pub fn encode(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes>> {
-    let bytes = encode_object(obj)?;
-    Ok(PyBytes::new(py, &bytes).unbind())
+    encode_object_to_pybytes(py, obj)
 }
 
-/// 内部:使用 schema 将 Python 对象序列化为 Tars 字节.
-pub fn encode_object(obj: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
+pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes>> {
     let cls = obj.get_type();
     let ptr = cls.as_ptr() as usize;
 
     // 检查是否为已注册的 Struct
-    if get_schema(ptr).is_some() {
-        let mut writer = TarsWriter::new();
-        serialize_struct_fields(&mut writer, ptr, obj, 0)?;
-        Ok(writer.into_inner())
-    } else {
-        Err(PyTypeError::new_err(format!(
+    if get_schema(ptr).is_none() {
+        return Err(PyTypeError::new_err(format!(
             "Object of type '{}' is not a registered Tars Struct",
             cls.name()?
-        )))
+        )));
     }
+
+    ENCODE_BUFFER.with(|cell| {
+        let mut buffer = cell.try_borrow_mut().map_err(|_| {
+            PyRuntimeError::new_err(
+                "Re-entrant encode detected: thread-local buffer is already borrowed",
+            )
+        })?;
+        buffer.clear();
+
+        {
+            let mut writer = TarsWriter::with_buffer(&mut *buffer);
+            serialize_struct_fields(&mut writer, ptr, obj, 0)?;
+        }
+
+        Ok(PyBytes::new(py, &buffer[..]).unbind())
+    })
 }
 
 fn serialize_struct_fields(
-    writer: &mut TarsWriter,
+    writer: &mut TarsWriter<impl BufMut>,
     type_ptr: usize,
     obj: &Bound<'_, PyAny>,
     depth: usize,
@@ -83,7 +101,7 @@ fn serialize_struct_fields(
 }
 
 fn serialize_impl(
-    writer: &mut TarsWriter,
+    writer: &mut TarsWriter<impl BufMut>,
     tag: u8,
     wire_type: &WireType,
     val: &Bound<'_, PyAny>,
