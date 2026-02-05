@@ -1,109 +1,52 @@
-# 项目知识库
+# Tarsio 知识库
 
-**生成时间:** 2026-02-03
-**上下文:** Rust/Python 混合 Tars/JCE 协议库
+**每次回答都以"Tarsio:"开头**
+**项目**: Rust 核心驱动的高性能 Python Tars (JCE) 协议库。
+**架构**: Rust (`src/`) 处理协议编解码 (重活); Python (`python/`) 提供 Struct 模型与 API (接口)。
 
-## 概览
+## 📂 关键目录
 
-Tarsio 是一个由 Rust 核心驱动的高性能 Python Tars (JCE) 协议实现。
-它使用 **PyO3** 将 Rust 的速度（通过 `maturin`）与 Python 的灵活性结合起来。
-核心二元性：**Rust** 处理原始字节/协议逻辑；**Python** 提供 `Struct` 模型和用户 API。
+| 路径             | 说明                                            |
+|------------------|-------------------------------------------------|
+| `src/codec/`     | **核心逻辑**。纯 Rust JCE 编解码，零拷贝优化。  |
+| `src/binding/`   | **PyO3 绑定**。`SchemaRegistry` 及 FFI 胶水层。 |
+| `python/tarsio/` | **用户 API**。`Struct`, `Field` 定义。          |
+| `python/tests/`  | **集成测试**。所有 Python 测试平铺于此。        |
 
-## 结构
+## 🛠️ 开发工具链
 
-```tree
-.
-├── src/                # Rust 核心（重活累活）
-│   ├── binding/        # PyO3 绑定（Python <-> Rust 胶水层）
-│   └── codec/          # 纯 Tars 协议实现（Reader/Writer）
-├── python/             # Python 包装器 & 测试
-│   ├── tarsio/         # 用户面代码包
-│   └── tests/          # Python 侧集成测试
-├── Cargo.toml          # Rust 工作区配置
-└── pyproject.toml      # Python 构建配置 (Maturin)
-```
+* **管理**: `uv` (Python 依赖), `cargo` (Rust).
+* **构建**: `maturin` (混合构建).
+* **命令**:
+    * `uv run maturin develop`: 编译 Rust 扩展。
+    * `uv run pytest`: 运行集成测试。
+    * `cargo test`: 运行 Rust 核心测试。
 
-## 导航指南
+## 🤖 AI 编码指令 (CRITICAL)
 
-| 任务        | 位置             | 说明                                       |
-|-------------|------------------|--------------------------------------------|
-| 协议逻辑    | `src/codec/`     | 原始 JCE 编解码规则，零拷贝优化            |
-| Python 绑定 | `src/binding/`   | `PyClass` 定义, `SchemaRegistry`, FFI 边界 |
-| Python API  | `python/tarsio/` | `Field`, `Struct`, 以及 CLI 入口           |
-| 构建配置    | `pyproject.toml` | 定义 `maturin` 构建后端及依赖              |
+### 1. 架构边界
 
-## 子 AGENTS.md 说明
+* **Rust (src)**: 处理所有字节操作、内存管理、WireType 逻辑。禁止 `panic!`。
+* **Python (python)**: 仅负责类型定义和 API 暴露。运行时通过 `typing` 构建 Schema 传给 Rust。
 
-项目内包含多个子级 `AGENTS.md`，用于按目录细化规范与注意事项：
+### 2. 测试规范 (严格遵守)
 
-* `src/AGENTS.md`：Rust 核心层约定与模块说明。
-* `src/binding/AGENTS.md`：Python 绑定层的边界规则与约束。
-* `src/codec/AGENTS.md`：协议读写器与低层编解码注意事项。
-* `python/tests/AGENTS.md`：Python 集成测试规范与约束。
+* **Python 测试 (`python/tests/`)**:
+    * **风格**: 必须用 `pytest` 函数式写法 (`def test_...`)。**禁止使用 class (`class Test...`)**。
+    * **结构**: 所有文件平铺在 `python/tests/`，**禁止子目录**。
+    * **内容**: 只验证**可观察行为** (Input/Output/Exception)。禁止断言 Rust 内部实现细节。
+    * **原子性**: 一个测试只测一个点。
+* **Rust 测试 (`src/`)**:
+    * 单元测试写在对应文件的 `mod tests`。
+    * 使用 `proptest` 进行 Fuzzing/Roundtrip 测试。
 
-使用原则：**进入对应目录时优先遵循该目录下的子 AGENTS.md**，与本文件冲突时以更近的子级规范为准。
+### 3. 代码风格
 
-## 开发约定
+* **语言**: 注释和 Commit Message 必须用**中文**。
+* **规范**: 遵循 `CONTRIBUTING.md` 中的详细规约。
 
-* **混合构建**: 项目使用 `maturin` 构建，`uv` 作为依赖管理工具。
-* **类型安全**: Rust 强制内存安全；Python 使用运行时检查 (`typing.get_type_hints`) 构建 schema。
-* **错误处理**: Rust 错误跨越 FFI 边界映射为 Python 异常。
+### 4. 常见陷阱
 
-## 注释规范
-
-* **语言**: 所有注释均使用中文撰写，但是使用英文标点符号。
-
-## Commit 格式规范
-
-采用 Conventional Commits 格式，提交信息均使用中文撰写：
-
-```text
-<type>(<scope>): <subject>
-
-<body>
-
-<footer>
-```
-
-**类型定义:**
-
-* `feat`: 新功能
-* `fix`: 缺陷修复
-* `perf`: 性能优化
-* `refactor`: 重构（无功能变更）
-* `style`: 格式调整（不改变代码逻辑）
-* `test`: 添加或修改测试
-* `docs`: 文档更新
-* `chore`: 构建工具、依赖版本等变更
-* `ci`: CI/CD 配置变更
-
-**示例:**
-
-```text
-feat(binding): 添加 MAX_DEPTH 递归深度限制
-
-实现反序列化和序列化路径的递归深度检查，防止
-恶意输入导致的栈溢出和 DoS 攻击。
-
-- 在 de.rs 中集成递归深度追踪
-- 在 ser.rs 中检测循环引用
-- 默认最大深度设置为 100
-```
-
-## 常用命令
-
-```bash
-# 环境设置 (自动处理依赖安装和 Rust 扩展编译)
-uv sync
-
-# 仅在需要显式重编译时运行 (通常 uv sync 会自动处理)
-uv run maturin develop
-
-# 测试
-uv run pytest        # Python 测试
-cargo test           # Rust 单元测试
-
-# 代码检查 (Linting)
-uv run ruff check .  # Python linting
-cargo clippy         # Rust linting
-```
+* **不要** 在 Python 测试中模拟 Rust 的 WireType 布局，除非是专门的 Protocol Baseline 测试。
+* **不要** 创建新的测试子目录，保持扁平结构。
+* **务必** 在修改 Rust 代码后运行 `uv run maturin develop` 更新扩展。

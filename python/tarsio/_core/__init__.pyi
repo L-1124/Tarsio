@@ -11,8 +11,10 @@ _StructT = TypeVar("_StructT", bound="Struct")
 TarsDict: TypeAlias = dict[int, Any]
 
 __all__ = [
+    "Meta",
     "Struct",
     "TarsDict",
+    "ValidationError",
     "decode",
     "decode_raw",
     "encode",
@@ -20,10 +22,30 @@ __all__ = [
     "probe_struct",
 ]
 
-# 通过 dataclass_transform 通知 IDE 和 Type Checker：
-# 1. 这个类的子类行为类似 dataclass（从 annotations 生成 __init__ 等）
-# 2. 字段类型会在 __init__ 中使用
-# 3. 支持处理 Generic[T]
+class ValidationError(ValueError): ...
+
+class Meta:
+    def __init__(
+        self,
+        tag: int | None = ...,
+        gt: float | None = ...,
+        lt: float | None = ...,
+        ge: float | None = ...,
+        le: float | None = ...,
+        min_len: int | None = ...,
+        max_len: int | None = ...,
+        pattern: str | None = ...,
+    ) -> None: ...
+
+    tag: int | None
+    gt: float | None
+    lt: float | None
+    ge: float | None
+    le: float | None
+    min_len: int | None
+    max_len: int | None
+    pattern: str | None
+
 @dataclass_transform()
 class Struct:
     """由 Rust Schema 编译器驱动的 Tarsio Struct 基类.

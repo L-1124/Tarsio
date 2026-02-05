@@ -3,8 +3,10 @@ use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyType};
 use simdutf8::basic::from_utf8;
+use std::cmp::Ordering;
 
-use crate::binding::schema::{StructDef, TypeExpr, WireType, get_schema};
+use crate::ValidationError;
+use crate::binding::schema::{Constraints, StructDef, TypeExpr, WireType, get_schema};
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
 
@@ -131,6 +133,9 @@ fn deserialize_struct<'py>(
         if let Some(idx) = idx_opt {
             let field = &def.fields_sorted[idx];
             let value = deserialize_value(py, reader, type_id, &field.ty, depth + 1)?;
+            if let Some(constraints) = field.constraints.as_deref() {
+                validate_value(field.name.as_str(), &value, constraints)?;
+            }
             unsafe {
                 let name_py = field.name.as_str().into_pyobject(py)?;
                 let res = ffi::PyObject_GenericSetAttr(
@@ -168,6 +173,101 @@ fn deserialize_struct<'py>(
     }
 
     Ok(instance)
+}
+
+fn validate_value<'py>(
+    field_name: &str,
+    value: &Bound<'py, PyAny>,
+    constraints: &Constraints,
+) -> PyResult<()> {
+    if constraints.gt.is_some()
+        || constraints.ge.is_some()
+        || constraints.lt.is_some()
+        || constraints.le.is_some()
+    {
+        let v: f64 = value.extract().map_err(|_| {
+            ValidationError::new_err(format!(
+                "Field '{}' must be a number to apply numeric constraints",
+                field_name
+            ))
+        })?;
+
+        if let Some(gt) = constraints.gt
+            && v.partial_cmp(&gt) != Some(Ordering::Greater)
+        {
+            return Err(ValidationError::new_err(format!(
+                "Field '{}' must be > {}",
+                field_name, gt
+            )));
+        }
+        if let Some(ge) = constraints.ge
+            && matches!(v.partial_cmp(&ge), Some(Ordering::Less) | None)
+        {
+            return Err(ValidationError::new_err(format!(
+                "Field '{}' must be >= {}",
+                field_name, ge
+            )));
+        }
+        if let Some(lt) = constraints.lt
+            && v.partial_cmp(&lt) != Some(Ordering::Less)
+        {
+            return Err(ValidationError::new_err(format!(
+                "Field '{}' must be < {}",
+                field_name, lt
+            )));
+        }
+        if let Some(le) = constraints.le
+            && matches!(v.partial_cmp(&le), Some(Ordering::Greater) | None)
+        {
+            return Err(ValidationError::new_err(format!(
+                "Field '{}' must be <= {}",
+                field_name, le
+            )));
+        }
+    }
+
+    if constraints.min_len.is_some() || constraints.max_len.is_some() {
+        let len = value.len().map_err(|_| {
+            ValidationError::new_err(format!(
+                "Field '{}' must have length to apply length constraints",
+                field_name
+            ))
+        })?;
+
+        if let Some(min_len) = constraints.min_len
+            && len < min_len
+        {
+            return Err(ValidationError::new_err(format!(
+                "Field '{}' length must be >= {}",
+                field_name, min_len
+            )));
+        }
+        if let Some(max_len) = constraints.max_len
+            && len > max_len
+        {
+            return Err(ValidationError::new_err(format!(
+                "Field '{}' length must be <= {}",
+                field_name, max_len
+            )));
+        }
+    }
+
+    if let Some(pattern) = constraints.pattern.as_ref() {
+        let s: &str = value.extract().map_err(|_| {
+            ValidationError::new_err(format!(
+                "Field '{}' must be a string to apply pattern constraint",
+                field_name
+            ))
+        })?;
+        if !pattern.is_match(s) {
+            return Err(ValidationError::new_err(format!(
+                "Field '{}' does not match pattern",
+                field_name
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 /// 根据 TypeExpr 反序列化单个值.

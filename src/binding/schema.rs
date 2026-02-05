@@ -4,10 +4,12 @@
     clippy::needless_match,
     clippy::manual_map
 )]
+use crate::binding::meta::Meta;
 use crate::codec::consts::TarsType;
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
 use pyo3::types::{PyAny, PyDict, PyString, PyTuple, PyType};
+use regex::Regex;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 
@@ -77,6 +79,64 @@ impl TypeExpr {
 // 结构定义
 // ==========================================
 
+#[derive(Debug, Clone)]
+pub struct Constraints {
+    pub gt: Option<f64>,
+    pub lt: Option<f64>,
+    pub ge: Option<f64>,
+    pub le: Option<f64>,
+    pub min_len: Option<usize>,
+    pub max_len: Option<usize>,
+    pub pattern: Option<Regex>,
+}
+
+fn resolve_meta_constraints(
+    field_name: &str,
+    meta: &Meta,
+) -> PyResult<(u8, Option<Box<Constraints>>)> {
+    let tag = meta.tag.ok_or_else(|| {
+        pyo3::exceptions::PyTypeError::new_err(format!(
+            "Meta object must include 'tag' for field '{}'",
+            field_name
+        ))
+    })?;
+
+    let has_constraints = meta.gt.is_some()
+        || meta.lt.is_some()
+        || meta.ge.is_some()
+        || meta.le.is_some()
+        || meta.min_len.is_some()
+        || meta.max_len.is_some()
+        || meta.pattern.is_some();
+
+    let constraints = if has_constraints {
+        let pattern = meta
+            .pattern
+            .as_deref()
+            .map(Regex::new)
+            .transpose()
+            .map_err(|e| {
+                pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Invalid regex pattern for field '{}': {}",
+                    field_name, e
+                ))
+            })?;
+        Some(Box::new(Constraints {
+            gt: meta.gt,
+            lt: meta.lt,
+            ge: meta.ge,
+            le: meta.le,
+            min_len: meta.min_len,
+            max_len: meta.max_len,
+            pattern,
+        }))
+    } else {
+        None
+    };
+
+    Ok((tag, constraints))
+}
+
 #[derive(Debug)]
 pub struct FieldDef {
     pub name: String,
@@ -86,6 +146,7 @@ pub struct FieldDef {
     pub default_value: Option<Py<PyAny>>,
     pub is_optional: bool,
     pub is_required: bool,
+    pub constraints: Option<Box<Constraints>>,
 }
 
 #[derive(Debug)]
@@ -354,16 +415,74 @@ impl Struct {
             }
 
             let args = get_args.call1((&type_hint,))?;
-            if args.len()? < 2 {
-                continue;
+            let args_len = args.len()?;
+            if args_len < 2 {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Missing tag for field '{}'",
+                    name
+                )));
             }
 
             let real_type = args.get_item(0)?;
-            let tag_obj = args.get_item(1)?;
+            let mut found_int_tag: Option<u8> = None;
+            let mut found_meta: Option<Meta> = None;
+            for i in 1..args_len {
+                let item = args.get_item(i)?;
 
-            let tag = match tag_obj.extract::<u8>() {
-                Ok(t) => t,
-                Err(_) => continue,
+                if item.is_instance_of::<pyo3::types::PyInt>() {
+                    let tag = item.extract::<u8>().map_err(|_| {
+                        pyo3::exceptions::PyTypeError::new_err(format!(
+                            "Tag must be in range 0..=255 for field '{}'",
+                            name
+                        ))
+                    })?;
+                    if found_int_tag.is_some() {
+                        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                            "Multiple integer tags are not allowed for field '{}'",
+                            name
+                        )));
+                    }
+                    found_int_tag = Some(tag);
+                    continue;
+                }
+
+                if item.is_instance_of::<Meta>() {
+                    if found_meta.is_some() {
+                        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                            "Multiple Meta objects are not allowed for field '{}'",
+                            name
+                        )));
+                    }
+                    let meta_ref: pyo3::PyRef<'_, Meta> = item.extract()?;
+                    found_meta = Some(Meta {
+                        tag: meta_ref.tag,
+                        gt: meta_ref.gt,
+                        lt: meta_ref.lt,
+                        ge: meta_ref.ge,
+                        le: meta_ref.le,
+                        min_len: meta_ref.min_len,
+                        max_len: meta_ref.max_len,
+                        pattern: meta_ref.pattern.clone(),
+                    });
+                    continue;
+                }
+            }
+
+            if found_int_tag.is_some() && found_meta.is_some() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Do not mix integer tag and Meta object",
+                ));
+            }
+
+            let (tag, constraints) = if let Some(tag) = found_int_tag {
+                (tag, None)
+            } else if let Some(meta) = found_meta {
+                resolve_meta_constraints(name.as_str(), &meta)?
+            } else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Missing tag for field '{}'",
+                    name
+                )));
             };
 
             if let Some(existing) = tags_seen.get(&tag) {
@@ -393,6 +512,7 @@ impl Struct {
                 default_value,
                 is_optional,
                 is_required,
+                constraints,
             });
         }
 
