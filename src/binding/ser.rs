@@ -6,7 +6,7 @@ use pyo3::types::{PyBytes, PyDict, PySequence};
 
 use bytes::BufMut;
 
-use crate::binding::schema::{WireType, get_schema};
+use crate::binding::schema::{WireType, schema_from_class};
 use crate::codec::consts::TarsType;
 use crate::codec::writer::TarsWriter;
 
@@ -34,10 +34,9 @@ pub fn encode(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes>> {
 
 pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes>> {
     let cls = obj.get_type();
-    let ptr = cls.as_ptr() as usize;
 
     // 检查是否为已注册的 Struct
-    if get_schema(ptr).is_none() {
+    if schema_from_class(py, &cls)?.is_none() {
         return Err(PyTypeError::new_err(format!(
             "Object of type '{}' is not a registered Tars Struct",
             cls.name()?
@@ -54,7 +53,7 @@ pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyRes
 
         {
             let mut writer = TarsWriter::with_buffer(&mut *buffer);
-            serialize_struct_fields(&mut writer, ptr, obj, 0)?;
+            serialize_struct_fields(&mut writer, obj, 0)?;
         }
 
         Ok(PyBytes::new(py, &buffer[..]).unbind())
@@ -63,7 +62,6 @@ pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyRes
 
 fn serialize_struct_fields(
     writer: &mut TarsWriter<impl BufMut>,
-    type_ptr: usize,
     obj: &Bound<'_, PyAny>,
     depth: usize,
 ) -> PyResult<()> {
@@ -73,7 +71,8 @@ fn serialize_struct_fields(
         ));
     }
 
-    let def = get_schema(type_ptr)
+    let cls = obj.get_type();
+    let def = schema_from_class(obj.py(), &cls)?
         .ok_or_else(|| PyTypeError::new_err("Schema not found during serialization"))?;
 
     for field in &def.fields_sorted {
@@ -83,6 +82,15 @@ fn serialize_struct_fields(
                 if val.is_none() {
                     // 可选字段为 None 时跳过
                     continue;
+                }
+                if def.omit_defaults {
+                    if let Some(default_val) = &field.default_value {
+                        if val.eq(default_val.bind(obj.py()))? {
+                            continue;
+                        }
+                    } else if field.is_optional && val.is_none() {
+                        continue;
+                    }
                 }
                 serialize_impl(writer, field.tag, &field.wire_type, &val, depth + 1)?;
             }
@@ -136,7 +144,8 @@ fn serialize_impl(
         }
         WireType::Struct(ptr) => {
             writer.write_tag(tag, TarsType::StructBegin);
-            serialize_struct_fields(writer, *ptr, val, depth + 1)?;
+            let _ = ptr;
+            serialize_struct_fields(writer, val, depth + 1)?;
             writer.write_tag(0, TarsType::StructEnd);
         }
         WireType::List(inner) => {

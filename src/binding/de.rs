@@ -6,7 +6,7 @@ use simdutf8::basic::from_utf8;
 use std::cmp::Ordering;
 
 use crate::ValidationError;
-use crate::binding::schema::{Constraints, StructDef, TypeExpr, WireType, get_schema};
+use crate::binding::schema::{Constraints, StructDef, TypeExpr, WireType, schema_from_class};
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
 
@@ -39,10 +39,8 @@ pub fn decode_object<'py>(
     cls: &Bound<'py, PyType>,
     data: &[u8],
 ) -> PyResult<Bound<'py, PyAny>> {
-    let type_ptr = cls.as_ptr() as usize;
-
     // 校验 schema 是否存在并获取
-    let def = get_schema(type_ptr).ok_or_else(|| {
+    let def = schema_from_class(py, cls)?.ok_or_else(|| {
         let class_name = cls
             .name()
             .map(|n| n.to_string())
@@ -315,7 +313,10 @@ fn deserialize_value<'py>(
             _ => Err(PyValueError::new_err("Unexpected wire type for primitive")),
         },
         TypeExpr::Struct(ptr) => {
-            let nested_def = get_schema(*ptr)
+            let obj_ptr = *ptr as *mut ffi::PyObject;
+            let nested_any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
+            let nested_cls = nested_any.cast::<PyType>()?;
+            let nested_def = schema_from_class(py, nested_cls)?
                 .ok_or_else(|| PyTypeError::new_err("Nested struct schema not found"))?;
             deserialize_struct(py, reader, &nested_def, depth + 1)
         }
