@@ -9,6 +9,20 @@
       show_root_heading: true
       show_source: true
 
+## StructMeta
+
+::: tarsio.StructMeta
+    options:
+      show_root_heading: true
+      show_source: true
+
+## StructConfig
+
+::: tarsio.StructConfig
+    options:
+      show_root_heading: true
+      show_source: true
+
 ## Meta
 
 ::: tarsio.Meta

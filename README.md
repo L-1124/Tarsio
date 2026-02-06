@@ -7,8 +7,6 @@
 
 **Tarsio** 是一个高性能的 Python Tars (JCE) 协议库，由 Rust 核心驱动。
 
-它提供了类似 `msgspec` 或 `pydantic` 的开发体验，同时保持了 Rust 原生的极致性能。
-
 ## 核心特性
 
 * 🚀 **高性能**: 核心编解码由 Rust 实现，比纯 Python 实现快 10-50 倍。
