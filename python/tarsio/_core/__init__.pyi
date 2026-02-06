@@ -25,6 +25,26 @@ __all__ = [
 class ValidationError(ValueError): ...
 
 class Meta:
+    """字段元数据与约束定义.
+
+    用于在 `Annotated` 中替代纯整数 Tag, 提供额外的运行时校验.
+
+
+
+    Examples:
+        ```python
+        from typing import Annotated
+        from tarsio import Struct, Meta
+
+        class Product(Struct):
+            # 价格必须 > 0
+            price: Annotated[int, Meta(tag=0, gt=0)]
+            # 代码必须是 1-10 位大写字母
+            code: Annotated[
+                str, Meta(tag=1, min_len=1, max_len=10, pattern=r"^[A-Z]+$")
+            ]
+        ```
+    """
     def __init__(
         self,
         tag: int | None = ...,
@@ -50,33 +70,29 @@ class Meta:
 class Struct:
     """由 Rust Schema 编译器驱动的 Tarsio Struct 基类.
 
-    继承此类将触发静态 Schema 编译过程。编译器会检查 `Annotated[T, Tag]` 注解，
-    并将结构体布局注册到全局 Rust 注册表中。
+    Examples:
+        ```python
+        from typing import Annotated, Generic, TypeVar
+        from tarsio import Struct
 
-    此类支持：
-    - 静态 Schema 编译（在类定义时）
-    - 泛型 TypeVar 解析（例如 `Box[int]`）
-    - 向前引用（Forward References，使用字符串注解 `"User"`）
-    - 强大的类型检查（由 `dataclass_transform` 支持）
+        class User(Struct):
+            id: Annotated[int, 1]
+            name: Annotated[str, 2]
 
-    示例:
-        >>> from typing import Annotated, Generic, TypeVar
-        >>> class User(Struct):
-        ...     id: Annotated[int, 1]
-        ...     name: Annotated[str, 2]
+        # 同时也支持泛型:
+        T = TypeVar("T")
 
-        >>> # 同时也支持泛型:
-        >>> T = TypeVar("T")
-        >>> class Response(Struct, Generic[T]):
-        ...     code: Annotated[int, 0]
-        ...     data: Annotated[T, 1]
+        class Response(Struct, Generic[T]):
+            code: Annotated[int, 0]
+            data: Annotated[T, 1]
 
-        >>> MyResp = Response[User]  # 为 Response[User] 注册专用的 Schema
+        MyResp = Response[User]  # 为 Response[User] 注册专用的 Schema
 
-        >>> # 支持向前引用 (Forward Reference):
-        >>> class Node(Struct):
-        ...     val: Annotated[int, 0]
-        ...     next: Annotated["Node", 1]
+        # 支持向前引用 (Forward Reference):
+        class Node(Struct):
+            val: Annotated[int, 0]
+            next: Annotated["Node", 1]
+        ```
     """
     def __new__(cls) -> Struct: ...
     def __init_subclass__(

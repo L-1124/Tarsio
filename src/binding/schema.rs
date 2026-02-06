@@ -213,10 +213,20 @@ pub fn get_schema(type_ptr: usize) -> Option<Arc<StructDef>> {
 
 /// Tarsio 的 Struct 基类.
 ///
-/// 继承该类会在类创建时编译并注册 Schema,字段使用 `typing.Annotated[T, tag]` 声明.
+/// 继承该类会在类创建时编译并注册 Schema, 字段使用 `typing.Annotated[T, tag]` 声明.
+///
+/// Examples:
+///     ```python
+///     from typing import Annotated
+///     from tarsio import Struct
+///
+///     class User(Struct):
+///         uid: Annotated[int, 0]
+///         name: Annotated[str, 1]
+///     ```
 ///
 /// Notes:
-///     解码时,wire 缺失字段会使用模型默认值;Optional 字段未显式赋默认值时视为 None.
+///     解码时, wire 缺失字段会使用模型默认值; Optional 字段未显式赋默认值时视为 None.
 #[pyclass(subclass, module = "tarsio", freelist = 1000)]
 pub struct Struct;
 

@@ -1,5 +1,30 @@
 use pyo3::prelude::*;
 
+/// 字段元数据与约束定义.
+///
+/// 用于在 `Annotated` 中替代纯整数 Tag, 提供额外的运行时校验.
+///
+/// Args:
+///     tag: JCE Tag ID (0-255).
+///     gt: 大于 (Greater Than).
+///     lt: 小于 (Less Than).
+///     ge: 大于等于 (Greater or Equal).
+///     le: 小于等于 (Less or Equal).
+///     min_len: 最小长度 (String/List/Map).
+///     max_len: 最大长度.
+///     pattern: 正则表达式 (仅 String).
+///
+/// Examples:
+///     ```python
+///     from typing import Annotated
+///     from tarsio import Struct, Meta
+///
+///     class Product(Struct):
+///         # 价格必须 > 0
+///         price: Annotated[int, Meta(tag=0, gt=0)]
+///         # 代码必须是 1-10 位大写字母
+///         code: Annotated[str, Meta(tag=1, min_len=1, max_len=10, pattern=r"^[A-Z]+$")]
+///     ```
 #[pyclass]
 pub struct Meta {
     #[pyo3(get, set)]
