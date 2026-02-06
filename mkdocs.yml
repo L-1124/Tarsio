@@ -48,11 +48,13 @@ theme:
 
 nav:
   - 简介: index.md
-  - 使用:
-    - 模型 (Models): usage/models.md
-    - 序列化 (Serialization): usage/serialization.md
+  - 使用指南:
+    - 定义模型: usage/models.md
+    - 序列化: usage/serialization.md
+    - CLI 工具: usage/cli.md
   - API 参考:
-    - 结构体 (Structs): api/struct.md
+    - Struct API: api/struct.md
+    - Functional API: api/functions.md
 
 markdown_extensions:
   - pymdownx.highlight:

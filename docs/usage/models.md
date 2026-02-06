@@ -1,39 +1,13 @@
 # 定义模型
 
-在 Tarsio 中，定义模型（Tars 结构体）的方式非常直观。您只需要创建一个继承自 `tarsio.Struct` 的类，并使用标准的 Python 类型注解定义字段即可。
+使用 `Struct` 与 `Annotated` 定义 Tars 结构体。
+本页介绍如何定义字段类型、添加元数据约束、配置默认值以及处理嵌套结构。
 
 ## 基础定义
 
-Tarsio 使用 Python 标准库 `typing.Annotated` 来指定 JCE Tag。这使得模型定义既保持了 Python 的原生风格，又提供了清晰的协议元数据。
+使用 Python 标准库 `typing.Annotated` 将 JCE Tag 绑定到类型上。
 
 ### 语法结构
-
-```python
-Annotated[Type, Tag]
-```
-
-* **Type**: 字段的 Python 类型（如 `int`, `str`）。
-* **Tag**: JCE 协议中的 Tag ID（整数，0-255）。
-
-### 元数据模式 (Meta)
-
-当你希望为字段增加约束校验（如数值范围、长度、正则）时，可以使用 `tarsio.Meta` 作为 Tag 的替代形式:
-
-```python
-from typing import Annotated
-from tarsio import Meta, Struct
-
-class User(Struct):
-    uid: Annotated[int, Meta(tag=0, gt=0)]
-    name: Annotated[str, Meta(tag=1, min_len=1, max_len=20)]
-```
-
-约束校验在 Rust 侧的反序列化阶段执行, 校验失败会抛出 `tarsio.ValidationError`。
-
-> **重要**: Tag 的写法遵循"单一来源"策略, 同一字段必须二选一:
-> `Annotated[T, 1]` 或 `Annotated[T, Meta(tag=1, ...)]`, 禁止混用。
-
-### 示例
 
 ```python
 from typing import Annotated
@@ -41,112 +15,110 @@ from tarsio import Struct
 
 class User(Struct):
     uid: Annotated[int, 0]
-    username: Annotated[str, 1]
-    is_active: Annotated[bool, 2]
+    name: Annotated[str, 1]
 ```
 
-## 可选字段与默认值
+* **Annotated[T, N]**: 定义一个类型为 `T`，Tag 为 `N` 的字段。
+* **N**: 必须是 0-255 之间的整数。
 
-如果字段是可选的（允许为 None），可以使用 `Optional` 或 `| None`。建议显式提供默认值（通常是 `None`）；未提供时，Tarsio 会将其视为默认 `None`。
+## 字段类型
+
+Tarsio 支持以下标准 Python 类型与 Tars 类型的映射：
+
+| Python 类型 | Tars 类型 | 说明 |
+| :--- | :--- | :--- |
+| `int` | `int8` / `int16` / `int32` / `int64` | 根据数值大小自动选择最紧凑的编码 |
+| `float` | `float` / `double` | 对应 JCE 的浮点数 |
+| `bool` | `int8` (0 或 1) | Tars 无原生 bool，映射为 0/1 |
+| `str` | `String1` / `String4` | 自动处理长度前缀 |
+| `bytes` | `SimpleList` | 对应 `vector<byte>` |
+| `list[T]` | `List<T>` | 列表 |
+| `dict[K, V]` | `Map<K, V>` | 映射 |
+
+### 容器类型示例
 
 ```python
-class Response(Struct):
-    code: Annotated[int, 0]
-    message: Annotated[str | None, 1] = None  # 可选字段
+from typing import Annotated
+from tarsio import Struct
+
+class Group(Struct):
+    # 列表: vector<string>
+    tags: Annotated[list[str], 0]
+
+    # 映射: map<string, int>
+    scores: Annotated[dict[str, int], 1]
 ```
 
-对于非 Optional 字段，如果您希望它有默认值，也可以直接赋值：
+## 元数据与校验 (Meta)
+
+当需要对字段值进行约束时，使用 `tarsio.Meta` 替代纯整数 Tag。
+校验逻辑在 **反序列化 (decode)** 时执行，失败抛出 `ValidationError`。
 
 ```python
-class Config(Struct):
-    retry_count: Annotated[int, 0] = 3
-    debug_mode: Annotated[bool, 1] = False
+from typing import Annotated
+from tarsio import Struct, Meta
+
+class Product(Struct):
+    # 必须大于 0
+    price: Annotated[int, Meta(tag=0, gt=0)]
+
+    # 长度必须在 1-50 之间，且匹配正则
+    code: Annotated[str, Meta(tag=1, min_len=1, max_len=50, pattern=r"^[A-Z]+$")]
 ```
 
-### 解码语义（有 Schema）
+> **注意**: `Meta(tag=N, ...)` 包含了 Tag 信息。同一字段必须二选一：要么用整数 `N`，要么用 `Meta(tag=N, ...)`。
 
-下面用一个例子说明“字段缺失”时的行为：
+## 默认值与可选字段
+
+建议为所有字段提供默认值，通常是 `None`。
+
+### 必填字段 (Required)
+
+不提供默认值的字段为必填项。如果在解码数据中找不到对应的 Tag，且该字段没有默认值，将抛出异常。
+
+```python
+class Request(Struct):
+    # 必填: 数据中必须包含 Tag 0
+    token: Annotated[str, 0]
+```
+
+### 可选字段 (Optional)
+
+使用 `Optional[T]` 或 `T | None` 并赋值 `= None`。
 
 ```python
 from typing import Annotated, Optional
 from tarsio import Struct
 
+class Response(Struct):
+    # 必填
+    code: Annotated[int, 0]
 
-class User(Struct):
-    name: Annotated[str, 0] = "unknown"
-    email: Annotated[str, 1]
-    phone: Annotated[Optional[str], 2]
+    # 可选: 若数据中无 Tag 1，则 message 为 None
+    message: Annotated[Optional[str], 1] = None
 ```
-
-* 当 wire 缺失 `name` 时：解码结果使用默认值 `"unknown"`。
-* 当 wire 缺失 `phone` 且未显式提供默认值时：解码结果为 `None`。
-* 当 wire 缺失 `email`（非 Optional 且无默认值）时：解码会抛出错误。
-
-### 编码策略（有 Schema）
-
-* 编码端仅省略值为 None 的字段；不会因为“值等于默认值”而省略。
 
 ## 嵌套结构体
 
-Tarsio 支持结构体的嵌套。只需将被嵌套的结构体类作为类型即可。
+将另一个 `Struct` 子类作为类型注解即可实现嵌套。
 
 ```python
 class Address(Struct):
     city: Annotated[str, 0]
-    street: Annotated[str, 1]
 
-class UserProfile(Struct):
-    uid: Annotated[int, 0]
-    address: Annotated[Address, 1]  # 嵌套 Address
+class User(Struct):
+    id: Annotated[int, 0]
+    address: Annotated[Address, 1]  # 嵌套
 ```
 
-## 容器类型
+## 模型配置
 
-支持标准的 `list`/`tuple` 以及 `dict`。
-
-* `list[T]`: 对应 Tars 的 `List<T>`。
-* `tuple[T, ...]`: 对应 Tars 的 `List<T>`。
-* `dict[K, V]`: 对应 Tars 的 `Map<K, V>`。
+通过在类定义时传递参数来配置模型行为。
 
 ```python
-class Group(Struct):
-    group_id: Annotated[int, 0]
-    members: Annotated[list[str], 1]      # 字符串列表
-    metadata: Annotated[dict[str, int], 2] # Map<String, Integer>
+class Config(Struct, frozen=True, forbid_unknown_tags=True):
+    ...
 ```
 
-> **注意**: `bytes` 类型在 Tarsio 中对应 Tars 的 `SimpleList` (即 `vector<byte>`)，这是一种针对二进制数据的优化存储格式。
-
-## 泛型支持
-
-Tarsio 完美支持泛型结构体。这对于定义通用的包装器（如 `Response<T>`）非常有用。
-
-```python
-from typing import TypeVar, Generic
-
-T = TypeVar("T")
-
-class Box(Struct, Generic[T]):
-    value: Annotated[T, 0]
-
-# 使用具体类型实例化泛型
-# Tarsio 会自动为 Box[int] 生成专门的 Schema
-int_box = Box[int](value=42)
-str_box = Box[str](value="Hello")
-```
-
-## 向前引用 (Forward References)
-
-如果需要定义递归结构（例如链表节点），可以使用字符串形式的类型注解。
-
-```python
-class Node(Struct):
-    value: Annotated[int, 0]
-    next: Annotated["Node", 1] = None
-```
-
-## 最佳实践
-
-1. **Tag 连续性**: 虽然 Tars 协议不强制 Tag 连续，但建议从 0 开始连续编号，以节省空间（Tag < 15 时有头部压缩优化）。
-2. **类型注解**: 始终使用 `Annotated` 包裹类型和 Tag。未注解 Tag 的字段将被视为普通类属性，**不会**被序列化。
-3. **继承**: 目前 Tarsio 尚不支持结构体继承（即从另一个 Struct 子类继承）。每个 Struct 应该是独立的定义。
+* **frozen**: `bool` (默认 False)。设为 `True` 后实例不可变，且可哈希（可作为 dict key）。
+* **forbid_unknown_tags**: `bool` (默认 False)。设为 `True` 时，若解码遇到未知 Tag 则报错。

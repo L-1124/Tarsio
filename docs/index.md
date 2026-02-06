@@ -1,60 +1,36 @@
-# Tarsio
+# Tarsio 文档
 
-**Tarsio** 是一个面向 Python 的 Tars (JCE) 协议序列化库。
-它提供 `Struct` 模型、二进制编解码与调试工具。
+Tarsio 是一个 Rust 核心驱动的高性能 Python Tars (JCE) 协议库。
+本文档旨在帮助你快速掌握 Tarsio 的使用方法、核心概念与 API。
 
-## 核心特性
+## 导航
 
-* **性能**: 适合高频编解码场景。
-* **模型**: 使用 Python 标准库 `Annotated` 定义 Tag。
-* **约束**: 支持 `Meta` 声明字段约束, 解码阶段执行校验。
-* **工具**: 提供 CLI 与 `probe_struct`，用于分析二进制数据。
-* **依赖**: 核心功能不依赖第三方 Python 包（仅需 `typing-extensions`）。
+* **[使用指南](usage/models.md)**: 学习如何定义模型、编解码数据。
+* **[API 参考](api/struct.md)**: 查阅类与函数的详细说明。
 
-## 快速开始
-
-### 安装
+## 安装
 
 ```bash
 pip install tarsio
 ```
 
-或者使用 `uv`:
+## 核心概念
 
-```bash
-uv add tarsio
-```
-
-### 定义模型
-
-使用 `Annotated[T, Tag]` 语法定义 Tars 结构体：
+Tarsio 的设计哲学是 **"Type Hint as Schema"**。你不需要编写额外的 IDL 文件，只需使用标准的 Python 类型注解即可定义 JCE 结构。
 
 ```python
 from typing import Annotated
 from tarsio import Struct
 
-class User(Struct):
-    id: Annotated[int, 0]
-    name: Annotated[str, 1]
-    email: Annotated[str | None, 2] = None  # 可选字段
-
-# 实例化
-user = User(id=1001, name="Alice")
-print(user)
+class Packet(Struct):
+    version: Annotated[int, 0] = 1
+    body: Annotated[bytes, 1]
 ```
 
-### 序列化与反序列化
+* **Struct**: 所有 Tarsio 模型的基类。
+* **Annotated**: 用于附加元数据（如 Tag ID）。
+* **Tag ID**: 直接使用整数 (0-255) 指定字段在 JCE 协议中的编号。
 
-```python
-# 编码
-data = user.encode()
-print(f"Hex: {data.hex()}")
+## 性能
 
-# 解码
-user_decoded = User.decode(data)
-assert user_decoded.id == 1001
-```
-
-## 许可证
-
-MIT License
+Tarsio 的底层编解码完全由 Rust 实现 (通过 PyO3 绑定)，在处理大量数据时比纯 Python 实现快 10-50 倍。
