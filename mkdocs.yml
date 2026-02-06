@@ -1,5 +1,5 @@
 site_name: Tarsio
-site_description: Modern Tars/JCE serialization library for Python, built on Pydantic v2.
+site_description: Modern Tars/JCE serialization library for Python.
 repo_url: https://github.com/l-1124/Tarsio
 repo_name: Tarsio
 extra:
@@ -48,23 +48,13 @@ theme:
 
 nav:
   - 简介: index.md
-  - 使用:
-    - 模型 (Models): usage/models.md
-    - 字段 (Fields): usage/fields.md
-    - 序列化 (Serialization): usage/serialization.md
-    - 类型适配器 (TypeAdapter): usage/type_adapter.md
-    - 类型转换表 (Conversion Table): usage/conversion_table.md
-    - 流式处理 (Streams): usage/streams.md
-  - 工具:
-    - 命令行工具 (CLI): usage/cli.md
+  - 使用指南:
+    - 定义模型: usage/models.md
+    - 序列化: usage/serialization.md
+    - CLI 工具: usage/cli.md
   - API 参考:
-    - 结构体 (Structs): api/struct.md
-    - 字段 (Fields): api/fields.md
-    - 序列化 (Serialization): api/serialization.md
-    - 类型适配器 (TypeAdapter): api/type_adapter.md
-    - 流式处理 (Streams): api/streams.md
-    - 类型定义 (Types): api/types.md
-    - 异常 (Exceptions): api/exceptions.md
+    - Struct API: api/struct.md
+    - Functional API: api/functions.md
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -97,7 +87,6 @@ plugins:
             extensions:
               - dataclasses
               - griffe_inherited_docstrings
-              - griffe_pydantic
               - unpack_typeddict
           inventories:
           - https://docs.pydantic.dev/latest/objects.inv

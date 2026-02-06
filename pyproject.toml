@@ -1,6 +1,6 @@
 [project]
 name = "tarsio"
-version = "0.3.1"
+version = "0.4.0"
 description = "Fast Tars/JCE protocol implementation for Python, powered by Rust"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -12,7 +12,6 @@ keywords = [
   "binary",
   "jce",
   "protocol",
-  "pydantic",
   "serialization",
   "struct",
   "tars",
@@ -31,12 +30,12 @@ classifiers = [
   "Topic :: System :: Networking",
   "Typing :: Typed",
 ]
-dependencies = ["pydantic>=2.0", "typing-extensions>=4.15.0"]
+dependencies = ["typing-extensions>=4.15.0"]
 
 [project.urls]
-Homepage = "https://github.com/L-1124/JceStruct"
-Issues = "https://github.com/L-1124/JceStruct/issues"
-Repository = "https://github.com/L-1124/JceStruct"
+Homepage = "https://github.com/L-1124/Tarsio"
+Issues = "https://github.com/L-1124/Tarsio/issues"
+Repository = "https://github.com/L-1124/Tarsio"
 
 [project.scripts]
 tarsio = "tarsio.__main__:main"
@@ -46,6 +45,7 @@ cli = ["click>=8.0", "rich>=14.2.0"]
 
 [dependency-groups]
 dev = [
+  "maturin>=1.11.5",
   { include-group = "cli" },
   { include-group = "linting" },
   { include-group = "testing" },
@@ -59,7 +59,6 @@ all = [
 cli = ["click>=8.0", "rich>=14.2.0"]
 docs = [
   "griffe-inherited-docstrings>=1.1.2",
-  "griffe-pydantic>=1.2.0",
   "mkdocs>=1.6.1",
   "mkdocs-material>=9.7.1",
   "mkdocstrings[python]>=1.0.1",

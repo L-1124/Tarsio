@@ -1,145 +1,121 @@
-# 序列化与 API
+# 序列化
 
-Tarsio 提供了简单直观的 API 用于数据的序列化和反序列化，API 设计灵感来源于 Python 标准库的 `json` 模块。
+介绍 Tarsio 的编解码 API，包括强类型 `Struct` 模式与无 Schema 的 `Raw` 模式。
+核心函数：`encode`, `decode`, `encode_raw`, `decode_raw`。
 
-## 核心函数
+## Struct 模式
 
-### `dumps` (Serialize)
+适用于已定义 `Struct` 类的情况。这是推荐的使用方式，提供类型安全与校验。
 
-将 `Struct` 对象、字典、列表或基础类型序列化为 `bytes`。
+### 编码 (Encode)
 
-```python title="serialize.py"
-from tarsio import dumps
+```python
+from typing import Annotated
+from tarsio import Struct, encode
 
-data = dumps(user)
-# 或者序列化字典 (会被编码为 JCE Map)
-map_data = dumps({"key": "value"})
-# 序列化 StructDict (会被编码为 JCE Struct)
-struct_data = dumps(StructDict({0: 100}))
+class User(Struct):
+    uid: Annotated[int, 0]
+
+user = User(uid=123)
+data = encode(user)
+# data 是 bytes 类型
 ```
 
-**参数**:
+### 解码 (Decode)
 
-* `obj`: 要序列化的对象。支持 `Struct`, `dict`, `list`, `int`, `str` 等。
-* `option`: 序列化选项（如 `Option.LITTLE_ENDIAN`）。
-* `context`: 序列化上下文。传递给自定义序列化器 (`@field_serializer`) 的字典。
-* `exclude_unset`: 是否排除未显式设置的字段（默认为 `False`）。仅对 `Struct` 有效。
+```python
+from tarsio import decode
 
-### `loads` (Deserialize)
-
-将 `bytes` 反序列化为 Python 对象。
-
-```python title="deserialize.py"
-from tarsio import loads
-
-# 反序列化为特定的结构体
-user = loads(data, User, context={"db": db_connection})
-
-# 反序列化为通用字典 (默认为 StructDict)
-raw_data = loads(data)
+# 将 bytes 还原为 User 对象
+user = decode(User, data)
+print(user.uid)  # 123
 ```
 
-**参数**:
+## Raw 模式
 
-* `data`: 输入的字节数据 (`bytes`, `bytearray` 或 `memoryview`)。
-* `target`: 目标类型。可以是 `Struct` 子类、`StructDict` (默认) 或 `dict`。
-* `option`: 反序列化选项（如 `Option.LITTLE_ENDIAN`）。
-* `bytes_mode`: 控制如何处理二进制数据（见下文）。
-* `context`: Pydantic 验证上下文。传递给验证器及 `computed_field` 的字典。
+适用于没有 Schema 定义，或需要动态处理 Tars 数据的场景。
+数据以 `dict[int, Any]` (即 TarsDict) 的形式存在，Key 为 Tag ID。
 
-## 动态类型 (`Any`) {#dynamic-types}
+### Raw 编码
 
-虽然推荐显式定义所有字段类型，但 Tarsio 也支持使用 `Any` 注解。在这种情况下，库会根据运行时行为进行处理。
+```python
+from tarsio import encode_raw
 
-### 编码（运行时推断）
-
-如果 `Field` 没有指定 `tars_type`，编码器会根据**运行时值的类型**来推断 JCE 类型：
-
-| Python 运行时类型 | 推断的 JCE 类型    | 说明                                |
-|:------------------|:-------------------|:------------------------------------|
-| `int`             | `INT (0-3)`        | 根据大小自动选择                    |
-| `str`             | `STRING (6/7)`     |                                     |
-| `StructDict`      | **STRUCT (10)**    | **注意：作为结构体编码 (Tag 序列)** |
-| `dict`            | **MAP (8)**        | **注意：作为键值对编码**            |
-| `bytes`           | `SIMPLE_LIST (13)` |                                     |
-
-!!! warning "StructDict vs dict"
-    这是最常见的 Bug 来源：将一个普通的 `dict` 传给 `Any` 字段会生成 JCE Map，而传一个 `StructDict` 则会生成 JCE Struct。如果接收方期望的是 Struct，使用 `dict` 将导致解码失败。
-
-### 解码（通用解码）
-
-当目标字段类型为 `Any` 时，解码器会根据二进制流中的类型代码返回最接近的 Python 类型：
-
-* Type 0-3 (`INT`) -> `int`
-* Type 6-7 (`STRING`) -> `str`
-* Type 8 (`MAP`) -> `dict`
-* Type 10 (`STRUCT`) -> `StructDict`
-* Type 13 (`SIMPLE_LIST`) -> `bytes`
-
-!!! info "无法恢复自定义类"
-    解码 `Any` 字段时，解码器无法自动恢复成你定义的自定义类（如 `User` 对象），因为它在二进制流中只看到了一个“结构体”。它会返回一个 `StructDict`，你可以随后通过 `User.model_validate(struct_dict)` 手动转换。
-
-## 文件 I/O
-
-如果你需要直接读写文件，可以使用 `dump` 和 `load`。
-
-```python title="file_io.py"
-from tarsio import dump, load
-
-# 写入文件
-with open("data.bin", "wb") as f:
-    dump(user, f)
-
-# 读取文件
-with open("data.bin", "rb") as f:
-    user = load(f, User)
+payload = {
+    0: 123,           # Tag 0: int
+    1: "Alice",       # Tag 1: str
+    2: [1, 2, 3]      # Tag 2: list
+}
+data = encode_raw(payload)
 ```
 
-## Bytes 处理模式
+### Raw 解码
 
-JCE 协议没有原生的 String 类型，只有 `String1` (长度<256) 和 `String4`。它们本质上都是带长度的 buffer。
-`loads` 函数提供 `bytes_mode` 参数来控制如何将这些缓冲区解析为 Python 类型。
+```python
+from tarsio import decode_raw
 
-* `"auto"` (**默认**): 智能模式。尝试将 buffer 解码为 UTF-8 字符串；如果失败，则尝试递归解码为嵌套 JCE 结构；如果都失败，则保留为 `bytes`。
-* `"string"`: 强制尝试解码为 UTF-8 字符串。
-* `"raw"`: 始终保留为 `bytes`。
-
-```python title="bytes_mode.py"
-# 假设 data 包含字符串 "hello"
-print(loads(data, bytes_mode="auto"))   # > "hello"
-print(loads(data, bytes_mode="raw"))    # > b"hello"
+# 还原为字典
+data_dict = decode_raw(data)
+# {0: 123, 1: 'Alice', 2: [1, 2, 3]}
 ```
 
-## 高级选项
+> **注意**: 由于 Tars 协议不包含字段名信息，Raw 模式只能还原 Tag ID 和基本值类型。
 
-### 大小端序
+### TarsDict 详解
 
-JCE 协议默认使用**大端序 (Big Endian)**。如果你的对端系统使用小端序，可以通过选项指定：
+在 Raw 模式下，Tars 结构体被表示为 `dict[int, Any]`，通常称为 **TarsDict**。
 
-```python title="endian.py"
-from tarsio import Option
+#### 结构体 vs 映射 (Struct vs Map)
 
-data = dumps(user, option=Option.LITTLE_ENDIAN)
+Tars 协议同时支持 Map (字典) 和 Struct (结构体)。
+在 **Schema 模式** 下，这通过类型定义严格区分：
+
+* `class User(Struct)` -> Struct
+* `Annotated[dict[K, V], Tag]` -> Map
+
+但在 **Raw 模式** 下，输入都是 Python `dict`。Tarsio 通过 Key 的类型来推断意图：
+
+* **Struct**: 字典的 Key **全部**为 `int` (且在 0-255 范围内)。
+* **Map**: 字典的 Key 包含非 `int` 类型，或 `int` 超出 Tag 范围，或为空字典（默认为 Map）。
+
+#### 嵌套结构处理
+
+这种推断是递归的。当一个字典的值也是字典时：
+
+```python
+payload = {
+    0: 1001,
+    # Key 为 int (0, 1)，被推断为嵌套 Struct
+    1: {0: "Alice", 1: "Bob"},
+    # Key 为 str，被推断为 Map<string, int>
+    2: {"math": 90, "english": 85}
+}
 ```
 
-### StructDict (动态结构)
+#### 限制
 
-如果你不知道数据的具体结构，或者只是想查看原始 Tag-Value 对，可以使用 `StructDict`。
+* Raw 模式无法区分 `int` 的具体精度 (int8/16/32/64)，解码时会根据数值大小自动选择。
+* Raw 模式解码 `SimpleList` (vector<byte>) 时，如果内容全是 0-255 的整数，可能会被还原为 `bytes`。
 
-```python title="structdict.py"
-from tarsio import StructDict, loads
+## 异常处理
 
-# 解码为通用字典结构 (Struct 语义)
-raw_struct = loads(data, target=StructDict)
-print(raw_struct)
-# > {0: 10086, 1: 'Alice', ...}
+在反序列化过程中可能抛出以下异常：
+
+| 异常类型 | 说明 |
+| :--- | :--- |
+| `tarsio.ValidationError` | **数据逻辑错误**。违反了 Meta 约束（如数值越界、正则不匹配）。 |
+| `ValueError` | **数据格式错误**。二进制数据截断、畸形或递归过深。 |
+| `TypeError` | **类型错误**。Schema 定义与实际数据类型不兼容。 |
+
+### 示例
+
+```python
+from tarsio import decode, ValidationError
+
+try:
+    user = decode(User, malicious_data)
+except ValidationError as e:
+    print(f"校验失败: {e}")
+except ValueError:
+    print("数据损坏")
 ```
-
-!!! note "StructDict vs dict"
-    - `StructDict`: 代表一个 **Struct**，编码时按 Tag 顺序拼接字段。
-    - `dict`: 代表一个 **Map**，编码时包含 Map 长度和键值对信息。
-
-## 延伸阅读
-
-* [定义模型](models.md): 了解如何创建 `User` 这样的 JCE 结构体。
-* [流式处理](streams.md): 处理网络流中的粘包数据。

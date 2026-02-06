@@ -1,13 +1,17 @@
-# Struct 核心类
+# Struct API
 
-::: tarsio.struct.Struct
-    options:
-      members:
-        - __init__
-        - model_validate_tars
-        - model_dump_tars
+`tarsio.Struct` 及其相关定义。
 
-::: tarsio.struct.StructDict
+## Struct
+
+::: tarsio.Struct
     options:
-      members:
-        - __init__
+      show_root_heading: true
+      show_source: true
+
+## Meta
+
+::: tarsio.Meta
+    options:
+      show_root_heading: true
+      show_source: true

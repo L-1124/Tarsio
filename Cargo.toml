@@ -1,15 +1,26 @@
 [package]
 name = "tarsio-core"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 
 [lib]
-name = "_core"
-crate-type = ["cdylib", "rlib"]
+name = "tarsio_core"
+crate-type = ["cdylib"]
+
 
 [dependencies]
 byteorder = "1.5.0"
-bytes = "1.9"
-pyo3 = { version = "0.27.2", features = ["generate-import-lib"] }
-serde = { version = "1.0", features = ["derive"] }
+bytes = "1.11.1"
+simdutf8 = "0.1.5"
 thiserror = "2.0"
+pyo3 = { version = "0.28.0", features = ["extension-module", "generate-import-lib"] }
+regex = "1.11.1"
+
+[dev-dependencies]
+proptest = "1.10.0"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

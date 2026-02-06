@@ -1,165 +1,124 @@
 # 定义模型
 
-在 Tarsio 中，数据模型是通过继承 `Struct` 并使用 Python 类型提示来定义的。这与 Pydantic 的使用方式非常相似，但增加了一个关键概念：**JCE ID (Tag)**。
+使用 `Struct` 与 `Annotated` 定义 Tars 结构体。
+本页介绍如何定义字段类型、添加元数据约束、配置默认值以及处理嵌套结构。
 
-## 基础结构体
+## 基础定义
 
-每个字段必须通过 `Field` 指定一个唯一的 `id`。这是 JCE 协议的要求，用于在二进制流中标识字段。
+使用 Python 标准库 `typing.Annotated` 将 JCE Tag 绑定到类型上。
 
-```python title="basic.py"
-from tarsio import Struct, Field
+### 语法结构
 
-class Product(Struct):
-    id: int = Field(id=0)
-    name: str = Field(id=1)
-    price: float = Field(id=2)
+```python
+from typing import Annotated
+from tarsio import Struct
+
+class User(Struct):
+    uid: Annotated[int, 0]
+    name: Annotated[str, 1]
 ```
 
-!!! warning "Tag 唯一性"
-    在一个结构体内，`id` 必须是唯一的且为非负整数。通常从 0 开始递增。
+* **Annotated[T, N]**: 定义一个类型为 `T`，Tag 为 `N` 的字段。
+* **N**: 必须是 0-255 之间的整数。
 
-## 支持的类型
+## 字段类型
 
-Tarsio 支持多种 Python 原生类型，并自动映射到 JCE 类型：
+Tarsio 支持以下标准 Python 类型与 Tars 类型的映射：
 
-| Python 类型 | JCE 类型 | 说明 |
+| Python 类型 | Tars 类型 | 说明 |
 | :--- | :--- | :--- |
-| `int` | `INT1/2/4/8` | 根据数值大小自动选择最优编码 |
-| `float` | `FLOAT/DOUBLE` | 默认编码为 `DOUBLE` (8字节) |
-| `str` | `STRING1/4` | UTF-8 编码字符串 |
-| `bytes` | `SIMPLE_LIST` | 对应 JCE 的 `byte[]` |
-| `bool` | `INT1` | `True`=1, `False`=0 |
-| `list[T]` | `LIST` | 列表容器 |
-| `dict[K, V]` | `MAP` | 字典容器 |
+| `int` | `int8` / `int16` / `int32` / `int64` | 根据数值大小自动选择最紧凑的编码 |
+| `float` | `float` / `double` | 对应 JCE 的浮点数 |
+| `bool` | `int8` (0 或 1) | Tars 无原生 bool，映射为 0/1 |
+| `str` | `String1` / `String4` | 自动处理长度前缀 |
+| `bytes` | `SimpleList` | 对应 `vector<byte>` |
+| `list[T]` | `List<T>` | 列表 |
+| `dict[K, V]` | `Map<K, V>` | 映射 |
 
-### 显式指定类型
+### 容器类型示例
 
-虽然 Tarsio 会自动推断类型，但你也可以显式指定 JCE 类型（通常用于 `float` vs `double`）：
+```python
+from typing import Annotated
+from tarsio import Struct
 
-```python title="explicit_type.py"
-from tarsio import types
+class Group(Struct):
+    # 列表: vector<string>
+    tags: Annotated[list[str], 0]
 
-class Metrics(Struct):
-    # 强制使用 4 字节 FLOAT
-    cpu_usage: float = Field(id=0, tars_type=types.FLOAT)
+    # 映射: map<string, int>
+    scores: Annotated[dict[str, int], 1]
+```
+
+## 元数据与校验 (Meta)
+
+当需要对字段值进行约束时，使用 `tarsio.Meta` 替代纯整数 Tag。
+校验逻辑在 **反序列化 (decode)** 时执行，失败抛出 `ValidationError`。
+
+```python
+from typing import Annotated
+from tarsio import Struct, Meta
+
+class Product(Struct):
+    # 必须大于 0
+    price: Annotated[int, Meta(tag=0, gt=0)]
+
+    # 长度必须在 1-50 之间，且匹配正则
+    code: Annotated[str, Meta(tag=1, min_len=1, max_len=50, pattern=r"^[A-Z]+$")]
+```
+
+> **注意**: `Meta(tag=N, ...)` 包含了 Tag 信息。同一字段必须二选一：要么用整数 `N`，要么用 `Meta(tag=N, ...)`。
+
+## 默认值与可选字段
+
+建议为所有字段提供默认值，通常是 `None`。
+
+### 必填字段 (Required)
+
+不提供默认值的字段为必填项。如果在解码数据中找不到对应的 Tag，且该字段没有默认值，将抛出异常。
+
+```python
+class Request(Struct):
+    # 必填: 数据中必须包含 Tag 0
+    token: Annotated[str, 0]
+```
+
+### 可选字段 (Optional)
+
+使用 `Optional[T]` 或 `T | None` 并赋值 `= None`。
+
+```python
+from typing import Annotated, Optional
+from tarsio import Struct
+
+class Response(Struct):
+    # 必填
+    code: Annotated[int, 0]
+
+    # 可选: 若数据中无 Tag 1，则 message 为 None
+    message: Annotated[Optional[str], 1] = None
+```
+
+## 嵌套结构体
+
+将另一个 `Struct` 子类作为类型注解即可实现嵌套。
+
+```python
+class Address(Struct):
+    city: Annotated[str, 0]
+
+class User(Struct):
+    id: Annotated[int, 0]
+    address: Annotated[Address, 1]  # 嵌套
 ```
 
 ## 模型配置
 
-`Struct` 允许你通过 Pydantic 的 `model_config` 来配置一些 JCE 特有的序列化和反序列化行为。
+通过在类定义时传递参数来配置模型行为。
 
-### 支持的配置项
-
-| 配置键 | 类型 | 说明 | 默认值 |
-| :--- | :--- | :--- | :--- |
-| `tars_omit_default` | `bool` | 是否在编码时跳过等于默认值的字段 | `False` |
-| `tars_option` | `Option` | 默认的编码/解码选项（如字节序） | `Option.NONE` |
-
-### 示例
-
-```python title="config.py"
-from pydantic import ConfigDict
-from tarsio import Struct, Field, Option
-
-class MyConfig(Struct):
-    model_config = ConfigDict(
-        tars_omit_default=True,
-        tars_option=Option.LITTLE_ENDIAN
-    )
-
-    uid: int = Field(id=0, default=0)
-    name: str = Field(id=1, default="unknown")
+```python
+class Config(Struct, frozen=True, forbid_unknown_tags=True):
+    ...
 ```
 
-在这个例子中：
-
-1. 如果 `uid` 为 0 或 `name` 为 "unknown"，它们在序列化时会被跳过（节省空间）。
-2. 默认使用小端序进行编解码。
-
-## 嵌套结构体
-
-你可以在一个结构体中嵌套另一个 `Struct`：
-
-```python title="nested.py"
-class Address(Struct):
-    city: str = Field(id=0)
-    street: str = Field(id=1)
-
-class User(Struct):
-    uid: int = Field(id=0)
-    address: Address = Field(id=1)  # 嵌套
-```
-
-### 嵌套结构体 vs 二进制数据块
-
-在定义字段时，有两种处理复杂对象的常见模式。
-
-#### 模式 A：标准嵌套
-
-这是最常用的方式，直接将结构体作为字段类型。
-
-* **代码**: `param: User = Field(id=2)`
-* **行为**: 编码为 **JCE Struct (Type 10)**。内容是内联的，以 `STRUCT_BEGIN (0x0A)` 开始，`STRUCT_END (0x0B)` 结束。
-* **适用场景**: 标准的嵌套模型，接收方已知其定义。
-
-#### 模式 B：二进制透传
-
-如果你希望将某个对象先序列化为二进制流，再存入字段中（例如作为一个通用的“Payload”字段），可以显式指定 `tars_type=BYTES`。
-
-* **代码**: `param: User = Field(id=2, tars_type=types.BYTES)`
-* **行为**: 编码为 **SimpleList (Type 13)**。Tarsio 会**自动先将对象序列化为 bytes**，然后存入字节数组中。
-* **适用场景**: 不透明负载、延迟解析、或协议中的缓冲区字段。
-
-## 容器类型
-
-Struct 完整支持泛型容器：
-
-```python title="containers.py"
-class Group(Struct):
-    # 基础类型列表
-    scores: list[int] = Field(id=0)
-
-    # 结构体列表
-    members: list[User] = Field(id=1)
-
-    # 字典 (JCE Map)
-    config: dict[str, str] = Field(id=2)
-```
-
-## 泛型支持
-
-Struct 支持定义泛型结构体，这在定义通用的响应包装器时非常有用。
-
-```python title="generics.py"
-from typing import Generic, TypeVar
-from tarsio import Struct, Field
-
-T = TypeVar("T")
-
-class Response(Struct, Generic[T]):
-    code: int = Field(id=0)
-    message: str = Field(id=1)
-    data: T = Field(id=2)  # 泛型字段
-
-# 具体化
-class UserResponse(Response[User]):
-    pass
-
-# 或者直接使用
-resp = Response[User](code=0, message="OK", data=user)
-```
-
-## 默认值与工厂
-
-你可以使用 `default` 或 `default_factory` 来设置字段默认值：
-
-```python title="defaults.py"
-class Config(Struct):
-    version: int = Field(id=0, default=1)
-    tags: list[str] = Field(id=1, default_factory=list)
-```
-
-## 下一步
-
-* 了解如何 [序列化与反序列化](serialization.md) 模型。
-* 深入了解 [字段配置与钩子](fields.md)。
+* **frozen**: `bool` (默认 False)。设为 `True` 后实例不可变，且可哈希（可作为 dict key）。
+* **forbid_unknown_tags**: `bool` (默认 False)。设为 `True` 时，若解码遇到未知 Tag 则报错。

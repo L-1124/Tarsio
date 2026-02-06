@@ -1,121 +1,157 @@
-"""测试 JCE 泛型支持."""
+"""测试 Generic Struct (泛型结构体) 的支持.
 
-from typing import Generic, TypeVar
+涵盖 checklist:
+- [x] Box[int], Box[str], Box[User]
+- [x] Generic template 本身不可 encode/decode (应抛出错误)
+"""
+
+from typing import Annotated, Generic, TypeVar
 
 import pytest
-from pydantic import ValidationError
-from tarsio import Field, Struct, dumps, loads, types
+from tarsio import Struct, decode, encode
 
 T = TypeVar("T")
-K = TypeVar("K")
-V = TypeVar("V")
+
+
+# ==========================================
+# 泛型结构体定义
+# ==========================================
 
 
 class Box(Struct, Generic[T]):
-    """基础泛型容器."""
+    """通用泛型容器."""
 
-    value: T = Field(id=0)
-
-
-class Pair(Struct, Generic[K, V]):
-    """双类型泛型容器."""
-
-    key: K = Field(id=0)
-    value: V = Field(id=1)
+    val: Annotated[T, 0]
 
 
 class User(Struct):
-    """测试用的普通结构体."""
+    """普通结构体，用作泛型参数."""
 
-    uid: int = Field(id=0)
-    name: str = Field(id=1)
-
-
-def test_generic_primitive() -> None:
-    """Box[int] 应能正确处理基础类型的泛型参数."""
-    box = Box[int](value=100)
-    data = dumps(box)
-
-    assert data.hex().upper() == "0064"
-
-    restored = loads(data, Box[int])
-    assert restored.value == 100
-    assert isinstance(restored.value, int)
+    id: Annotated[int, 0]
+    name: Annotated[str, 1]
 
 
-def test_generic_struct() -> None:
-    """Box[User] 应能正确处理嵌套结构体的泛型参数."""
-    user = User(uid=1, name="A")
-    box = Box[User](value=user)
-
-    data = dumps(box)
-
-    restored = loads(data, Box[User])
-    assert restored.value.uid == 1
-    assert restored.value.name == "A"
-    assert isinstance(restored.value, User)
+# ==========================================
+# 泛型实例化测试
+# ==========================================
 
 
-def test_generic_multi_type() -> None:
-    """Pair[int, str] 应能处理多个泛型参数."""
-    pair = Pair[int, str](key=1, value="test")
-    data = dumps(pair)
+def test_generic_box_int() -> None:
+    """Box[int] 应该正确编解码."""
+    # Arrange
+    # 注意:Python 运行时构造 Box[int] 不会创建新类,但 Tarsio 的元类/init_subclass
+    # 可能会在具体化时(如果用户显式继承)或运行时处理.
+    # 根据 AGENTS.md,Tarsio 支持泛型,但通常需要具体化类型或运行时推导.
+    # 这里我们测试最直接的用法:直接实例化泛型类(如果支持运行时推导)
+    # 或者定义具体子类.
 
-    restored = loads(data, Pair[int, str])
-    assert restored.key == 1
-    assert restored.value == "test"
+    # 假设 Tarsio 支持运行时根据 __orig_class__ 或手动指定类型.
+    # 如果不支持直接 Box[int](1),则用户必须定义 class IntBox(Box[int]): pass
 
-
-def test_generic_inheritance() -> None:
-    """继承自泛型类的具体子类应能正确解析类型."""
-
+    # 既然 AGENTS.md 提到 "Generic Struct",我们先尝试定义具体子类,这是最稳妥的方式.
     class IntBox(Box[int]):
         pass
 
-    box = IntBox(value=999)
-    data = dumps(box)
+    original = IntBox(100)
 
-    restored = loads(data, IntBox)
-    assert restored.value == 999
+    # Act
+    encoded = encode(original)
+    decoded = decode(IntBox, encoded)
 
-    bad_data = bytes.fromhex("0603616263")  # Tag 0 = String "abc"
-
-    with pytest.raises(ValidationError):
-        loads(bad_data, IntBox)
+    # Assert
+    assert decoded.val == 100
 
 
-def test_nested_generics() -> None:
-    """Box[Box[int]] 应能处理多层嵌套泛型."""
-    inner = Box[int](value=42)
-    outer = Box[Box[int]](value=inner)
+def test_generic_box_str() -> None:
+    """Box[str] 应该正确编解码."""
 
-    data = dumps(outer)
-
-    restored = loads(data, Box[Box[int]])
-    assert restored.value.value == 42
-    assert isinstance(restored.value, Box)
-
-
-def test_generic_list_field() -> None:
-    """Box[list[int]] 应能处理泛型列表字段."""
-    box = Box[list[int]](value=[1, 2, 3])
-    data = dumps(box)
-
-    restored = loads(data, Box[list[int]])
-    assert restored.value == [1, 2, 3]
-
-
-def test_generic_base_fields_discovery() -> None:
-    """从泛型基类发现字段 (覆盖 SchemaDecoder.__init__ 中的逻辑)."""
-
-    class Base(Struct, Generic[T]):
-        base_field: int = Field(id=0, tars_type=types.INT32)
-
-    class Derived(Base[int]):
+    class StrBox(Box[str]):
         pass
 
-    data = Derived(base_field=999)
-    encoded = dumps(data)
+    original = StrBox("hello")
 
-    decoded = loads(encoded, Derived)
-    assert decoded.base_field == 999
+    # Act
+    encoded = encode(original)
+    decoded = decode(StrBox, encoded)
+
+    # Assert
+    assert decoded.val == "hello"
+
+
+def test_generic_box_str_empty_string_roundtrip() -> None:
+    """Box[str] 的空字符串值应能往返还原."""
+
+    class StrBox(Box[str]):
+        pass
+
+    # Arrange
+    original = StrBox("")
+
+    # Act
+    encoded = encode(original)
+    decoded = decode(StrBox, encoded)
+
+    # Assert
+    assert decoded.val == ""
+
+
+def test_generic_box_user() -> None:
+    """Box[User] (嵌套结构体泛型) 应该正确编解码."""
+
+    class UserBox(Box[User]):
+        pass
+
+    user = User(1, "Alice")
+    original = UserBox(user)
+
+    # Act
+    encoded = encode(original)
+    decoded = decode(UserBox, encoded)
+
+    # Assert
+    assert isinstance(decoded.val, User)
+    assert decoded.val.id == 1
+    assert decoded.val.name == "Alice"
+
+
+# ==========================================
+# 泛型模板测试 (不变量)
+# ==========================================
+
+
+def test_generic_template_cannot_be_encoded() -> None:
+    """Generic template (未具体化) 不应被允许编码."""
+    with pytest.raises(TypeError, match="abstract schema class"):
+        Box(1)  # type: ignore
+
+
+def test_generic_template_cannot_be_decoded() -> None:
+    """Generic template (未具体化) 不应被允许解码."""
+    with pytest.raises(TypeError, match="No schema found"):
+        decode(Box, b"\x00\x01")  # type: ignore
+
+
+def test_generic_decode_skips_unknown_tag() -> None:
+    """泛型具体化类型解码时应能跳过未知字段."""
+
+    class BoxV1(Struct, Generic[T]):
+        val: Annotated[T, 0]
+
+    class BoxV2(Struct, Generic[T]):
+        val: Annotated[T, 0]
+        meta: Annotated[str | None, 1] = None
+
+    class IntBoxV1(BoxV1[int]):
+        pass
+
+    class IntBoxV2(BoxV2[int]):
+        pass
+
+    # Arrange
+    data = encode(IntBoxV2(123, "ignored"))
+
+    # Act
+    result = decode(IntBoxV1, data)
+
+    # Assert
+    assert result.val == 123

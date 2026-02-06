@@ -1,296 +1,271 @@
-"""JCE命令行工具."""
+"""Tarsio CLI - Tars 编解码命令行工具."""
 
 import json
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
-
-from . import BytesMode, StructDict, loads
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import click as click_module
-    from rich.console import Console
-    from rich.syntax import Syntax
-    from rich.text import Text
-    from rich.tree import Tree
+    from rich.console import Console as ConsoleType
+    from rich.syntax import Syntax as SyntaxType
+    from rich.tree import Tree as TreeType
 else:
     try:
         import click as click_module
-        from rich.console import Console
-        from rich.syntax import Syntax
-        from rich.text import Text
-        from rich.tree import Tree
+        from rich.console import Console as ConsoleType
+        from rich.syntax import Syntax as SyntaxType
+        from rich.tree import Tree as TreeType
     except ImportError:
         click_module = None
-        Console = None
-        Syntax = None
-        Text = None
-        Tree = None
+        ConsoleType = None
+        SyntaxType = None
+        TreeType = None
+
+from tarsio import decode_raw, probe_struct
 
 click = click_module
 
-# 流式读取配置
-FILE_SIZE_THRESHOLD = 10 * 1024 * 1024  # 10MB
-CHUNK_SIZE = 8 * 1024 * 1024  # 8MB
 
-
-if not click:
-
-    def main() -> None:
-        """入口函数 (缺少 click)."""
-        print("错误: 未检测到 'click' 模块,无法运行 CLI 工具。", file=sys.stderr)
+def _check_cli_deps() -> None:
+    """检查 CLI 依赖是否安装."""
+    if not click:
         print(
-            "\n该功能属于可选组件,请通过以下命令安装依赖:\n"
-            "  pip install 'git+https://github.com/L-1124/Struct.git[cli]'\n"
-            "\n或者如果您使用 uv:\n"
-            "  uv add 'git+https://github.com/L-1124/Struct.git[cli]'",
+            "错误: CLI 依赖未安装\n请运行: pip install tarsio[cli]",
             file=sys.stderr,
         )
         sys.exit(1)
 
-else:
 
-    def _read_binary_file(file_path: Path, verbose: bool) -> bytes:
-        """读取二进制文件,大文件使用分块以控制内存.
+def parse_hex_string(hex_str: str) -> bytes:
+    """解析 hex 字符串为字节.
 
-        Args:
-            file_path: 文件路径.
-            verbose: 是否显示详细信息.
+    Args:
+        hex_str: hex 编码字符串.
 
-        Returns:
-            文件内容的bytes.
-        """
-        file_size = file_path.stat().st_size
+    Returns:
+        解析后的字节数据.
+    """
+    # 移除空格和换行
+    cleaned = "".join(hex_str.split())
+    # 移除可能的 0x 前缀
+    if cleaned.lower().startswith("0x"):
+        cleaned = cleaned[2:]
+    return bytes.fromhex(cleaned)
 
-        if file_size > FILE_SIZE_THRESHOLD:
-            if verbose:
-                click.echo(f"[DEBUG] 文件大小 {file_size} 字节,使用分块读取", err=True)
 
-            chunks = []
-            with open(file_path, "rb") as f:
-                while chunk := f.read(CHUNK_SIZE):
-                    chunks.append(chunk)
-            return b"".join(chunks)
-        return file_path.read_bytes()
+def is_hex_file(content: bytes) -> bool:
+    """检测文件内容是否为 hex 文本.
 
-    def _read_hex_file(file_path: Path, verbose: bool) -> bytes:
-        """读取并解析十六进制文本文件.
+    Args:
+        content: 文件原始内容.
 
-        Args:
-            file_path: 文件路径.
-            verbose: 是否显示详细信息.
+    Returns:
+        是否为有效的 hex 文本.
+    """
+    try:
+        text = content.decode("ascii")
+        cleaned = "".join(text.split())
+        if cleaned.lower().startswith("0x"):
+            cleaned = cleaned[2:]
+        return all(c in "0123456789abcdefABCDEF" for c in cleaned) and len(cleaned) > 0
+    except (UnicodeDecodeError, ValueError):
+        return False
 
-        Returns:
-            解析后的bytes.
 
-        Raises:
-            ValueError: 如果文件内容不是有效的十六进制字符串.
-        """
-        file_size = file_path.stat().st_size
+def deep_probe(data: Any) -> Any:
+    """递归探测并解码 bytes 中的 Struct."""
+    if isinstance(data, dict):
+        return {k: deep_probe(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [deep_probe(item) for item in data]
+    elif isinstance(data, bytes):
+        struct = probe_struct(data)
+        if struct:
+            # 递归处理解码后的结构(因为里面可能还有嵌套)
+            return deep_probe(struct)
+        return data
+    return data
 
-        if file_size > FILE_SIZE_THRESHOLD:
-            if verbose:
-                click.echo(f"[DEBUG] 文件大小 {file_size} 字节,使用分块读取", err=True)
 
-            hex_parts = []
-            with open(file_path, encoding="utf-8") as f:
-                hex_parts.extend(line.strip() for line in f)
-            hex_data = "".join(hex_parts)
+def build_tree(
+    data: Any, parent: TreeType | None = None, key: str = "root"
+) -> TreeType:
+    """递归构建 rich Tree (移植自 0.3.1 风格).
+
+    Args:
+        data: 要展示的数据.
+        parent: 父节点.
+        key: 当前节点的键名/标签.
+
+    Returns:
+        构建的 Tree 对象.
+    """
+    from rich.text import Text
+    from rich.tree import Tree
+
+    # 样式定义
+    style_tag = "bold blue"
+    style_type = "cyan"
+    style_value_str = "green"
+    style_value_num = "magenta"
+
+    if parent is None:
+        # 根节点
+        tree = Tree(f"[bold white]{key}[/]")
+    else:
+        # 子节点,通常 key 是 "[0]" 或 "Key" 等前缀
+        tree = parent
+
+    # 1. Struct (Dict with int keys)
+    if isinstance(data, dict) and all(isinstance(k, int) for k in data.keys()):
+        label = Text()
+        if key != "root" and parent is not None:
+            label.append(f"{key} ", style=style_tag)
+        label.append("Struct", style="bold yellow")
+
+        branch = tree.add(label)
+        for k, v in sorted(data.items()):
+            build_tree(v, branch, f"[{k}]")
+
+    # 2. Map (Dict with mixed/other keys)
+    elif isinstance(data, dict):
+        label = Text()
+        if key != "root" and parent is not None:
+            label.append(f"{key} ", style=style_tag)
+        label.append(f"Map (len={len(data)})", style=style_type)
+
+        branch = tree.add(label)
+        for k, v in data.items():
+            item_branch = branch.add(Text("Item", style="dim"))
+            # Key
+            build_tree(k, item_branch, "Key")
+            # Value
+            build_tree(v, item_branch, "Value")
+
+    # 3. List
+    elif isinstance(data, list):
+        label = Text()
+        if key != "root" and parent is not None:
+            label.append(f"{key} ", style=style_tag)
+        label.append(f"List (len={len(data)})", style=style_type)
+
+        branch = tree.add(label)
+        for i, item in enumerate(data):
+            build_tree(item, branch, f"[{i}]")
+
+    # 4. Bytes (SimpleList)
+    elif isinstance(data, bytes):
+        label = Text()
+        if key != "root" and parent is not None:
+            label.append(f"{key} ", style=style_tag)
+        # 显示 SimpleList=长度
+        label.append(f"SimpleList(len={len(data)}): ", style=style_type)
+
+        # Hex display
+        hex_str = data.hex(" ").upper()
+        if len(hex_str) > 50:
+            display_hex = hex_str[:50] + "..."
         else:
-            hex_data = file_path.read_text(encoding="utf-8").strip()
+            display_hex = hex_str
+        label.append(display_hex, style="dim")
 
-        # 验证并清理
-        cleaned = "".join(hex_data.split())
-        if not all(c in "0123456789abcdefABCDEF" for c in cleaned):
-            raise ValueError("不是有效的十六进制字符串")
+        tree.add(label)
 
-        return bytes.fromhex(cleaned)
+        # 尝试探测内部结构
+        if struct := probe_struct(data):
+            build_tree(struct, tree, "Decoded Structure")
 
-    def _build_rich_tree(obj: Any, tree: Tree, label_prefix: str = "") -> None:
-        """递归构建 Rich 树 (基于通用 Python 对象).
+    # 5. String
+    elif isinstance(data, str):
+        label = Text()
+        if key != "root" and parent is not None:
+            label.append(f"{key} ", style=style_tag)
+        # 显示 String=长度
+        label.append(f"String(len={len(data)}): ", style=style_type)
+        label.append(repr(data), style=style_value_str)
+        tree.add(label)
 
-        Args:
-            obj: 要显示的 Python 对象.
-            tree: 父级 Tree 对象.
-            label_prefix: 标签前缀 (如 "[0]").
-        """
-        # 样式定义
-        style_tag = "bold blue"
-        style_type = "cyan"
-        style_value_str = "green"
-        style_value_num = "magenta"
+    # 6. Primitives (int, float, etc.)
+    else:
+        label = Text()
+        if key != "root" and parent is not None:
+            label.append(f"{key} ", style=style_tag)
+        label.append(f"{type(data).__name__}: ", style=style_type)
+        label.append(str(data), style=style_value_num)
+        tree.add(label)
 
-        if isinstance(obj, StructDict):
-            label = Text()
-            if label_prefix:
-                label.append(f"{label_prefix} ", style=style_tag)
-            label.append("Struct", style="bold yellow")
-            branch = tree.add(label)
-            # 排序以保证输出稳定性
-            for tag, val in sorted(obj.items()):
-                _build_rich_tree(val, branch, f"[{tag}]")
+    return tree
 
-        elif isinstance(obj, dict):
-            # JCE Map 语义
-            label = Text()
-            if label_prefix:
-                label.append(f"{label_prefix} ", style=style_tag)
-            label.append(f"Map (len={len(obj)})", style=style_type)
-            branch = tree.add(label)
-            for k, v in obj.items():
-                item_branch = branch.add(Text("Item", style="dim"))
-                _build_rich_tree(k, item_branch, "Key")
-                _build_rich_tree(v, item_branch, "Value")
 
-        elif isinstance(obj, list):
-            label = Text()
-            if label_prefix:
-                label.append(f"{label_prefix} ", style=style_tag)
-            label.append(f"List (len={len(obj)})", style=style_type)
-            branch = tree.add(label)
-            for i, val in enumerate(obj):
-                _build_rich_tree(val, branch, f"[{i}]")
+class BytesEncoder(json.JSONEncoder):
+    """自定义 JSON encoder, 处理 bytes.
 
-        elif isinstance(obj, bytes | bytearray | memoryview):
-            val_str = bytes(obj).hex(" ").upper()
-            label = Text()
-            if label_prefix:
-                label.append(f"{label_prefix} ", style=style_tag)
-            label.append("Bytes: ", style=style_type)
-            label.append(val_str, style=style_value_str)
-            tree.add(label)
+    将 bytes 转换为 hex 字符串或尝试 UTF-8 解码.
+    """
 
-        elif isinstance(obj, str):
-            label = Text()
-            if label_prefix:
-                label.append(f"{label_prefix} ", style=style_tag)
-            label.append("String: ", style=style_type)
-            label.append(repr(obj), style=style_value_str)
-            tree.add(label)
+    def default(self, o: Any) -> Any:
+        """将 bytes 转换为可序列化格式."""
+        if isinstance(o, bytes):
+            try:
+                return o.decode("utf-8")
+            except UnicodeDecodeError:
+                return f"0x{o.hex()}"
+        return super().default(o)
 
-        else:
-            # 基本类型 (int, float, bool, None)
-            label = Text()
-            if label_prefix:
-                label.append(f"{label_prefix} ", style=style_tag)
-            label.append(f"{type(obj).__name__}: ", style=style_type)
-            label.append(str(obj), style=style_value_num)
-            tree.add(label)
 
-    def _print_node_tree(result: Any, file: Any = None) -> None:
-        """打印JCE节点树 (使用 Rich).
+def format_output(data: dict, fmt: str) -> str | None:
+    """格式化输出数据.
 
-        Args:
-            result: 解码后的对象.
-            file: 输出文件对象,默认为stdout.
-        """
-        if not Console:
-            click.echo("错误: 未安装 rich 库,无法使用 Tree 视图.", err=True)
-            return
+    Args:
+        data: 解码后的数据.
+        fmt: 输出格式 (pretty/json/tree).
 
-        console = Console(file=file, force_terminal=file is None)
-        root = Tree("Struct Root", style="bold white")
+    Returns:
+        格式化后的字符串, 或 None (如果直接输出到 console).
+    """
+    from rich.console import Console
 
-        _build_rich_tree(result, root)
+    console = Console()
 
-        console.print(root)
+    if fmt == "json":
+        json_str = json.dumps(data, cls=BytesEncoder, indent=2, ensure_ascii=False)
+        # 使用 Syntax 高亮
+        from rich.syntax import Syntax
 
-    def _decode_and_print(
-        data: bytes,
-        output_format: str,
-        output_file: str | None,
-        verbose: bool,
-        bytes_mode: str,
-    ) -> None:
-        """解码并输出结果."""
+        syntax = Syntax(json_str, "json", theme="monokai", word_wrap=True)
+        console.print(syntax)
+        return None
+    elif fmt == "tree":
+        tree = build_tree(data, key="Tars Data")
+        console.print(tree)
+        return None
 
-        def _validate_bytes_mode(mode: str) -> None:
-            """验证 bytes-mode 参数."""
-            if mode not in {"auto", "string", "raw"}:
-                raise click.BadParameter("bytes-mode 只能为 auto/string/raw")
+    else:  # pretty
+        console.print(data)
+        return None
 
-        if verbose:
-            click.echo(f"[DEBUG] 数据大小: {len(data)} 字节", err=True)
 
-        # 解码
-        try:
-            _validate_bytes_mode(bytes_mode)
-            result = loads(
-                data,
-                target=StructDict,
-                bytes_mode=cast(BytesMode, bytes_mode),
-            )
-        except Exception as e:
-            if verbose:
-                import traceback
+def _create_cli() -> Any:
+    """创建 CLI 命令."""
+    _check_cli_deps()
 
-                traceback.print_exc(file=sys.stderr)
-            raise click.ClickException(f"解码失败: {e}") from e
+    from rich.console import Console
 
-        if output_format == "tree":
-            if output_file:
-                with open(output_file, "w", encoding="utf-8") as f:
-                    _print_node_tree(result, file=f)
-                click.echo(f"结果已保存到: {output_file}", err=True)
-            else:
-                _print_node_tree(result)
-            return
+    console = Console()
+    error_console = Console(stderr=True)
 
-        # 格式化输出准备
-        def _json_default(obj: object) -> object:
-            if isinstance(obj, bytes | bytearray | memoryview):
-                return bytes(obj).hex()
-            return str(obj)
-
-        output_text: str | None = None
-
-        if output_format == "json":
-            # 始终生成 JSON 字符串，用于 Syntax 高亮或文件写入
-            output_text = json.dumps(
-                result, indent=2, ensure_ascii=False, default=_json_default
-            )
-        elif output_format == "pretty":
-            # 仅在需要文本输出时生成 pprint 字符串
-            if output_file or not Console:
-                import pprint
-
-                output_text = pprint.pformat(result, width=100)
-
-        # 执行输出
-        if output_file:
-            assert output_text is not None
-            output_path = Path(output_file)
-            output_path.write_text(output_text, encoding="utf-8")
-            click.echo(f"结果已保存到: {output_file}", err=True)
-
-        elif Console:
-            # 使用 Rich 进行高亮输出
-            console = Console()
-            if output_format == "json":
-                assert output_text is not None
-                syntax = Syntax(output_text, "json", theme="monokai", word_wrap=True)
-                console.print(syntax)
-            else:  # pretty
-                # Rich 直接支持 Python 对象高亮
-                console.print(result)
-
-        else:
-            # 降级模式 (无 Rich)
-            assert output_text is not None
-            click.echo(output_text)
-
-    @click.command(help="Tarsio 编解码命令行工具")
+    @click.command()
     @click.argument("encoded", required=False)
     @click.option(
         "-f",
         "--file",
-        "file_path",
-        type=click.Path(exists=True, dir_okay=False, path_type=Path),
+        type=click.Path(exists=True, path_type=Path),
         help="从文件读取十六进制编码数据",
     )
     @click.option(
         "--format",
-        "output_format",
+        "fmt",
         type=click.Choice(["pretty", "json", "tree"]),
         default="pretty",
         show_default=True,
@@ -299,9 +274,8 @@ else:
     @click.option(
         "-o",
         "--output",
-        "output_file",
-        type=click.Path(dir_okay=False, writable=True),
-        help="将输出保存到文件 (如不指定则输出到控制台)",
+        type=click.Path(path_type=Path),
+        help="将输出保存到文件",
     )
     @click.option(
         "-v",
@@ -309,71 +283,96 @@ else:
         is_flag=True,
         help="显示详细的解码过程信息",
     )
-    @click.option(
-        "--bytes-mode",
-        type=click.Choice(["auto", "string", "raw"]),
-        default="auto",
-        show_default=True,
-        help="字节处理模式: auto/string/raw",
-    )
     def cli(
         encoded: str | None,
-        file_path: Path | None,
-        output_format: str,
-        output_file: str | None,
+        file: Path | None,
+        fmt: str,
+        output: Path | None,
         verbose: bool,
-        bytes_mode: str,
     ) -> None:
-        """JCE 编解码命令行工具.
+        """Tars 编解码命令行工具.
 
         Examples:
-          # 直接解码十六进制数据
-          tarsio "0a0b0c"
-
-          # 从文件读取十六进制数据
-          tarsio -f input.hex
-
-          # 以 JSON 格式输出结果
-          tarsio -f input.hex --format json
-
-          # 以 Tree 格式输出 (需要 rich)
-          tarsio "0C" --format tree
+            tarsio "00 64"
+            tarsio -f payload.bin --format json
         """
-        # 互斥参数检查
-        if encoded and file_path:
-            raise click.UsageError("不能同时指定 ENCODED 数据和 --file 参数")
-        if not encoded and not file_path:
-            raise click.UsageError("必须指定 ENCODED 数据或 --file 参数")
+        # 检查输入
+        if encoded is None and file is None:
+            error_console.print("[red]Error:[/] 必须提供 ENCODED 参数或 --file 选项")
+            raise SystemExit(1)
 
-        # 获取二进制数据
-        if file_path:
-            try:
-                # 尝试hex文本模式
-                data = _read_hex_file(file_path, verbose)
-                if verbose:
-                    click.echo("[DEBUG] 从文件读取十六进制数据 (文本模式)", err=True)
-            except (UnicodeDecodeError, ValueError):
-                # 降级到二进制模式
-                data = _read_binary_file(file_path, verbose)
-                if verbose:
-                    click.echo("[DEBUG] 从文件读取二进制数据 (二进制模式)", err=True)
+        if encoded is not None and file is not None:
+            error_console.print(
+                "[red]Error:[/] 不能同时使用 ENCODED 参数和 --file 选项"
+            )
+            raise SystemExit(1)
+
+        # 读取数据
+        try:
+            if file is not None:
+                raw_content = file.read_bytes()
+                if is_hex_file(raw_content):
+                    data = parse_hex_string(raw_content.decode("ascii"))
+                    if verbose:
+                        console.print("[dim][INFO] 文件格式: hex 文本[/]")
+                else:
+                    data = raw_content
+                    if verbose:
+                        console.print("[dim][INFO] 文件格式: 二进制[/]")
+            else:
+                assert encoded is not None
+                data = parse_hex_string(encoded)
+        except ValueError as e:
+            error_console.print(f"[red]Error:[/] 无效的 hex 数据: {e}")
+            raise SystemExit(1) from e
+
+        # Verbose 输出
+        if verbose:
+            console.print(f"[dim][INFO] 输入大小: {len(data)} bytes[/]")
+            hex_str = data.hex()
+            formatted_hex = " ".join(
+                hex_str[i : i + 2] for i in range(0, len(hex_str), 2)
+            )
+            if len(formatted_hex) > 100:
+                formatted_hex = formatted_hex[:100] + "..."
+            console.print(f"[dim][DEBUG] Hex: {formatted_hex}[/]")
+
+        # 解码
+        try:
+            raw_decoded = decode_raw(data)
+            # 对于 JSON/Pretty 格式,我们希望直接替换 bytes 为解码后的结构
+            # 对于 Tree 格式,我们在 build_tree 中动态探测并展示为子节点(保留 SimpleList 标签)
+            if fmt != "tree":
+                decoded = deep_probe(raw_decoded)
+            else:
+                decoded = raw_decoded
+        except Exception as e:
+            error_console.print(f"[red]Error:[/] 解码失败: {e}")
+            raise SystemExit(1) from e
+
+        # 输出
+        if output is not None:
+            # 保存到文件
+            if fmt == "json":
+                result = json.dumps(
+                    decoded, cls=BytesEncoder, indent=2, ensure_ascii=False
+                )
+            else:
+                import pprint as pp
+
+                result = pp.pformat(decoded, width=100)
+            output.write_text(result, encoding="utf-8")
+            console.print(f"[green]输出已保存到:[/] {output}")
         else:
-            # 命令行参数: hex字符串
-            assert encoded is not None
-            try:
-                data = bytes.fromhex(encoded)
-            except ValueError as e:
-                if verbose:
-                    import traceback
+            format_output(decoded, fmt)
 
-                    traceback.print_exc(file=sys.stderr)
-                raise click.BadParameter(f"无效的十六进制格式 - {e}") from e
+    return cli
 
-        _decode_and_print(data, output_format, output_file, verbose, bytes_mode)
 
-    def main() -> None:
-        """入口函数."""
-        cli()
+def main() -> None:
+    """入口函数."""
+    cli = _create_cli()
+    cli()
 
 
 if __name__ == "__main__":

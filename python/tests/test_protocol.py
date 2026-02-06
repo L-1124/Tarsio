@@ -1,147 +1,305 @@
-"""Tarsio 协议兼容性测试.
+"""测试 Tars 协议编解码的核心功能.
 
-该文件包含确定的输入和预期的十六进制输出。
-注意：
-1. Python float 默认编码为 JCE DOUBLE (8字节)。
-2. 长度字段 (Length) 本身也是 JCE Integer，因此包含 Tag/Type 头部 (通常是 00)。
-3. 根对象如果是 dict[int, Any]，会被视为 Struct (Tag=Key) 而不是 Map。
+此文件是库的**根本性测试**，必须保证 100% 通过。
+它定义了 Tars 协议实现的基准，任何破坏此文件测试用例的修改均被视为破坏性变更。
 """
 
+from typing import Annotated, Optional
+
 import pytest
-from tarsio import Field, Option, Struct, dumps
+from tarsio import Struct, decode, encode
 
-# --- 辅助结构体定义 ---
-
-
-class User(Struct):
-    """基础用户结构体."""
-
-    uid: int = Field(id=0)
-    name: str = Field(id=1)
+# ==========================================
+# 协议测试专用结构体
+# ==========================================
 
 
-class ComplexStruct(Struct):
-    """包含嵌套和默认值的复杂结构体."""
+class SimpleInt(Struct):
+    """仅包含单个整数字段的结构体."""
 
-    flag: bool = Field(id=0)
-    nums: list[int] = Field(id=1)
-    extra: dict[str, str] | None = Field(id=2, default=None)
+    val: Annotated[int, 0]
 
 
-class MapContainer(Struct):
-    """专门用于测试 Map 编码的容器."""
+class SimpleString(Struct):
+    """仅包含单个字符串字段的结构体."""
 
-    # 使用 Tag 0，类型为 Map
-    data: dict[int, list[int]] = Field(id=0)
-
-
-# --- 测试数据 ---
-
-PRIMITIVE_CASES = [
-    # Zero Tag (Tag 0, Type 12) -> 0C
-    (0, "0C", "Zero Tag"),
-    # INT1 (Tag 0, Type 0) -> 00 + 01
-    (1, "0001", "INT1 正数"),
-    (-1, "00FF", "INT1 负数"),
-    # INT2 (Tag 0, Type 1) -> 01 + 0100 (256 Big Endian)
-    (256, "010100", "INT2 大端序"),
-    # INT4 (Tag 0, Type 2) -> 02 + 00010000 (65536)
-    (65536, "0200010000", "INT4"),
-    # Float (默认转为 DOUBLE)
-    # Python float -> JCE DOUBLE (Tag 0, Type 5)
-    # 1.5 -> 0x3FF8000000000000 (IEEE 754 Double)
-    # 结果: 05 + 3FF8000000000000
-    (1.5, "053FF8000000000000", "Float (转为 Double)"),
-    # String1 (Tag 0, Type 6) -> 06 + 长度(01) + 'a'
-    ("a", "060161", "String1 ASCII"),
-    ("", "0600", "String1 空"),
-    ("你", "0603E4BDA0", "String1 UTF-8"),
-    # SimpleList (Bytes)
-    # Tag 0, Type 13 (SimpleList) -> 0D
-    # 头(Type 0, Tag 0) -> 00
-    # 长度(2) 转为 INT1(Tag 0) -> 00 02  <-- 修正点: 长度也是 Integer，带头部 00
-    # Data -> CA FE
-    (b"\xca\xfe", "0D000002CAFE", "SimpleList (Bytes)"),
-]
-
-STRUCT_CASES = [
-    # User(uid=100, name="test")
-    # Tag 0: 00 64
-    # Tag 1: 16 04 74657374
-    (User(uid=100, name="test"), "0064160474657374", "简单结构体"),
-    # ComplexStruct(flag=True, nums=[1, 2])
-    # Tag 0 (flag): 00 01
-    # Tag 1 (nums): LIST(Type 9) -> 19
-    #   长度 2 (转为 INT1 Tag 0) -> 00 02  <-- 修正点: 长度头部
-    #   项 0: 00 01
-    #   项 1: 00 02
-    (
-        ComplexStruct(flag=True, nums=[1, 2]),
-        "000119000200010002",
-        "包含列表的复杂结构体",
-    ),
-]
-
-OPTION_CASES = [
-    # 小端序 (Little Endian)
-    # 256 -> 00 01 (Tag 0, Type 1 INT2) -> 01 0001
-    (256, "010001", Option.LITTLE_ENDIAN, "小端序选项"),
-]
-
-# --- 测试函数 ---
+    val: Annotated[str, 0]
 
 
-@pytest.mark.parametrize(("value", "expected", "desc"), PRIMITIVE_CASES)
-def test_protocol_primitives(value, expected, desc):
-    """基础类型的序列化结果应严格符合协议标准."""
-    actual = dumps(value)
-    assert actual.hex().upper() == expected, f"Failed: {desc}"
+class TwoFields(Struct):
+    """包含两个字段的结构体."""
+
+    id: Annotated[int, 0]
+    name: Annotated[str, 1]
 
 
-@pytest.mark.parametrize(("obj", "expected", "desc"), STRUCT_CASES)
-def test_protocol_structs(obj, expected, desc):
-    """结构体的序列化结果应严格符合协议标准."""
-    actual = dumps(obj)
-    assert actual.hex().upper() == expected, f"Failed: {desc}"
+class NestedStruct(Struct):
+    """嵌套结构体."""
+
+    val: Annotated[int, 0]
+    next: Annotated[Optional["NestedStruct"], 1]
 
 
-@pytest.mark.parametrize(("value", "expected", "option", "desc"), OPTION_CASES)
-def test_protocol_options(value, expected, option, desc):
-    """不同选项下的序列化结果应符合预期."""
-    actual = dumps(value, option=option)
-    assert actual.hex().upper() == expected, f"Failed: {desc}"
+# ==========================================
+# 编码测试 - 整数
+# ==========================================
 
 
-def test_protocol_omit_default():
-    """开启 OMIT_DEFAULT 选项时应省略与默认值相等的字段."""
+@pytest.mark.parametrize(
+    ("val", "expected_hex"),
+    [
+        (0, "0c"),  # ZeroTag
+        (1, "0001"),  # Int1
+        (127, "007f"),  # Int1
+        (255, "0100ff"),  # Int2 (255 > 127, needs Int2)
+        (256, "010100"),  # Int2
+        (0x7FFF, "017fff"),  # Int2
+        (-1, "00ff"),  # Int1 (signed -1 = unsigned 0xff)
+    ],
+    ids=[
+        "zero",
+        "one",
+        "max_int1_signed",
+        "int2_255",
+        "int2_256",
+        "max_int2",
+        "negative_one",
+    ],
+)
+def test_encode_int_values(val: int, expected_hex: str) -> None:
+    """不同范围整数应该编码为正确的字节序列."""
+    # Arrange
+    obj = SimpleInt(val)
 
-    class DefaultConfig(Struct):
-        a: int = Field(id=0, default=1)
-        b: int = Field(id=1, default=2)
+    # Act
+    result = encode(obj)
 
-    # 全是默认值 -> 空
-    obj1 = DefaultConfig(a=1, b=2)
-    assert len(dumps(obj1, option=Option.OMIT_DEFAULT)) == 0
-
-    # 部分默认值 -> 10 03 (Tag 1, Val 3)
-    obj2 = DefaultConfig(a=1, b=3)
-    assert dumps(obj2, option=Option.OMIT_DEFAULT).hex().upper() == "1003"
+    # Assert
+    assert result.hex() == expected_hex
 
 
-def test_protocol_nested_map():
-    """Map 的序列化结构 (Key-Value Pairs) 应符合协议标准."""
-    # 输入: {10: [1]}
-    # Map (Tag 0): Type 8 -> 08
-    # 长度 1 (转为 INT1 Tag 0) -> 00 01
-    # 键 (Tag 0): INT1(10) -> 00 0A
-    # 值 (Tag 1): LIST(Type 9) -> 19
-    #   列表长度 1 (转为 INT1 Tag 0) -> 00 01
-    #   项 (Tag 0): INT1(1) -> 00 01
+# ==========================================
+# 编码测试 - 字符串
+# ==========================================
 
-    container = MapContainer(data={10: [1]})
 
-    # 08 0001 000A 19 0001 0001
-    expected = "080001000A1900010001"
+@pytest.mark.parametrize(
+    ("val", "expected_hex"),
+    [
+        ("", "0600"),
+        ("A", "060141"),
+        ("Hello", "060548656c6c6f"),
+        ("你好", "0606e4bda0e5a5bd"),
+    ],
+    ids=[
+        "empty_string",
+        "single_char",
+        "ascii_hello",
+        "chinese_nihao",
+    ],
+)
+def test_encode_string_values(val: str, expected_hex: str) -> None:
+    """字符串应该正确编码为 UTF-8 字节序列."""
+    # Arrange
+    obj = SimpleString(val)
 
-    actual = dumps(container)
-    assert actual.hex().upper() == expected
+    # Act
+    result = encode(obj)
+
+    # Assert
+    assert result.hex() == expected_hex
+
+
+# ==========================================
+# 编码测试 - 复合结构
+# ==========================================
+
+
+def test_encode_two_fields_struct() -> None:
+    """多字段结构体应该按照 tag 顺序正确编码."""
+    # Arrange
+    obj = TwoFields(10, "Alice")
+    # Tag 0: Int1(10) -> 00 0a
+    # Tag 1: String1(5, "Alice") -> 16 05 416c696365
+    expected_hex = "000a1605416c696365"
+
+    # Act
+    result = encode(obj)
+
+    # Assert
+    assert result.hex() == expected_hex
+
+
+def test_encode_nested_struct() -> None:
+    """嵌套结构体应该正确编码 StructBegin/StructEnd."""
+    # Arrange
+    obj = NestedStruct(1, NestedStruct(2, None))
+    # Tag 0: Int1(1) -> 00 01
+    # Tag 1: StructBegin -> 1a
+    #   Tag 0: Int1(2) -> 00 02
+    #   StructEnd -> 0b
+    # Result: 00 01 1a 00 02 0b
+    expected_hex = "00011a00020b"
+
+    # Act
+    result = encode(obj)
+
+    # Assert
+    assert result.hex() == expected_hex
+
+
+def test_encode_deeply_nested_struct() -> None:
+    """深层嵌套结构体应该正确编码."""
+    # Arrange
+    obj = NestedStruct(1, NestedStruct(2, NestedStruct(3, None)))
+    # Tag 0: Int1(1) -> 00 01
+    # Tag 1: StructBegin -> 1a
+    #   Tag 0: Int1(2) -> 00 02
+    #   Tag 1: StructBegin -> 1a
+    #     Tag 0: Int1(3) -> 00 03
+    #     StructEnd -> 0b
+    #   StructEnd -> 0b
+    expected_hex = "00011a00021a00030b0b"
+
+    # Act
+    result = encode(obj)
+
+    # Assert
+    assert result.hex() == expected_hex
+
+
+# ==========================================
+# 解码测试 - 整数
+# ==========================================
+
+
+@pytest.mark.parametrize(
+    ("hex_data", "expected_val"),
+    [
+        ("0c", 0),  # ZeroTag
+        ("0001", 1),  # Int1
+        ("007f", 127),  # Int1
+        ("0100ff", 255),  # Int2
+        ("017fff", 0x7FFF),  # Int2
+    ],
+    ids=[
+        "zero",
+        "one",
+        "max_int1_signed",
+        "int2_255",
+        "max_int2",
+    ],
+)
+def test_decode_int_values(hex_data: str, expected_val: int) -> None:
+    """字节序列应该正确解码为整数值."""
+    # Arrange
+    data = bytes.fromhex(hex_data)
+
+    # Act
+    result = decode(SimpleInt, data)
+
+    # Assert
+    assert result.val == expected_val
+
+
+# ==========================================
+# 解码测试 - 字符串
+# ==========================================
+
+
+@pytest.mark.parametrize(
+    ("hex_data", "expected_val"),
+    [
+        ("0600", ""),
+        ("060141", "A"),
+        ("060548656c6c6f", "Hello"),
+        ("0606e4bda0e5a5bd", "你好"),
+    ],
+    ids=[
+        "empty_string",
+        "single_char",
+        "ascii_hello",
+        "chinese_nihao",
+    ],
+)
+def test_decode_string_values(hex_data: str, expected_val: str) -> None:
+    """字节序列应该正确解码为字符串."""
+    # Arrange
+    data = bytes.fromhex(hex_data)
+
+    # Act
+    result = decode(SimpleString, data)
+
+    # Assert
+    assert result.val == expected_val
+
+
+def test_decode_invalid_utf8_string_raises_value_error() -> None:
+    """无效 UTF-8 字符串应抛出 ValueError."""
+    # Arrange
+    data = bytes.fromhex("0601ff")
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="Invalid UTF-8 string"):
+        decode(SimpleString, data)
+
+
+# ==========================================
+# 解码测试 - 复合结构
+# ==========================================
+
+
+def test_decode_two_fields_struct() -> None:
+    """多字段结构体应该正确解码."""
+    # Arrange
+    hex_data = "000a1605416c696365"
+    data = bytes.fromhex(hex_data)
+
+    # Act
+    result = decode(TwoFields, data)
+
+    # Assert
+    assert result.id == 10
+    assert result.name == "Alice"
+
+
+def test_decode_nested_struct() -> None:
+    """嵌套结构体应该正确解码."""
+    # Arrange
+    hex_data = "00011a00020b"
+    data = bytes.fromhex(hex_data)
+
+    # Act
+    result = decode(NestedStruct, data)
+
+    # Assert
+    assert result.val == 1
+    assert result.next is not None
+    assert result.next.val == 2
+    assert result.next.next is None
+
+
+def test_decode_skips_unknown_tag() -> None:
+    """未知 tag 应被跳过而不影响已知字段."""
+    # Arrange
+    # TwoFields(10, "Alice") + unknown tag 2 (Int1 = 7)
+    hex_data = "000a1605416c6963652007"
+    data = bytes.fromhex(hex_data)
+
+    # Act
+    result = decode(TwoFields, data)
+
+    # Assert
+    assert result.id == 10
+    assert result.name == "Alice"
+
+
+def test_decode_with_type_mismatch_raises_value_error() -> None:
+    """类型不匹配应抛出 ValueError."""
+    # Arrange
+    # Tag 0 as String1 "A" while schema expects int
+    data = bytes.fromhex("060141")
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="Failed to read int"):
+        decode(SimpleInt, data)

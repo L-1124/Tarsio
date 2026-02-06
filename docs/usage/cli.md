@@ -1,71 +1,71 @@
-# 命令行工具 (CLI)
+# CLI 工具
 
-Tarsio 内置了一个强大的命令行工具，用于快速检查、调试和转换 JCE 编码的数据。
+`tarsio` 是一个命令行工具，用于查看、调试与转换 Tars 二进制数据。
+支持 Hex 字符串与二进制文件输入，提供多种可视化输出格式。
 
-## 启用 CLI
+## 基础用法
 
-CLI 依赖于 `click` 库。如果你在安装时选择了 `[cli]` 额外依赖，就可以直接使用：
+### 解码 Hex 字符串
 
-```bash title="Terminal"
-tarsio --help
-```
-
-## 使用方法
-
-### 1. 解码十六进制字符串
-
-直接将 hex 字符串作为参数传递：
-
-```bash title="Terminal"
-# 解码 Struct (默认)
+```bash
+# 解码 Tag 0 (Int) = 100
 $ tarsio "00 64"
-# > {0: 100}
-
-# 解码 Map (需要完整 Map 头)
-$ tarsio "08 01 00 64"
-# > {0: 100}
+{0: 100}
 ```
 
-### 2. 读取文件
+### 读取文件
 
-使用 `-f` 或 `--file` 参数读取包含纯二进制数据或 hex 文本的文件：
+使用 `-f` 参数读取文件（自动检测纯二进制或 Hex 文本）：
 
-```bash title="Terminal"
+```bash
 tarsio -f payload.bin
 ```
 
-### 3. 输出格式化
+## 输出格式
 
-默认输出为 Python `pprint` 格式。你可以通过 `--format` 参数选择不同的输出风格：
+通过 `--format` 参数控制输出。
 
-* **pretty**: (默认) Python 字典格式。
-* **json**: 标准 JSON 格式
-* **tree**: 层次化树状视图
+### 1. Pretty (默认)
 
-### 4. 详细模式
+打印 Python 字典风格的字符串。
 
-使用 `-v` 或 `--verbose` 查看详细的调试信息，包括原始 hex 数据、解码字节数等。
-
-```bash title="Terminal"
-$ tarsio "00 64" -v
-# [INFO] Input size: 2 bytes
-# [DEBUG] Hex: 00 64
-# {0: 100}
+```text
+{0: 100, 1: 'hello'}
 ```
 
-## 参数参考
+### 2. JSON
 
-```text title="Help Output"
-Usage: tarsio [OPTIONS] [ENCODED]
+输出标准 JSON。无法映射的类型（如 bytes）会转换为 Hex 字符串。
 
-  JCE 编解码命令行工具.
+```bash
+tarsio "..." --format json
+```
 
-Options:
-  -f, --file FILE                从文件读取十六进制编码数据
-  --format [pretty|json|tree]    输出格式  [default: pretty]
-  -o, --output FILE       将输出保存到文件
-  -v, --verbose           显示详细的解码过程信息
-  --bytes-mode [auto|string|raw]
-                          字节处理模式  [default: auto]
-  --help                  Show this message and exit.
+### 3. Tree (推荐)
+
+以树状图展示结构、类型与长度信息。适合分析复杂包结构。
+
+```bash
+tarsio "..." --format tree
+```
+
+输出示例：
+
+```text
+Struct Root
+└── Struct
+    ├── [0] int: 1001
+    ├── [1] String(len=5): 'Alice'
+    └── [2] SimpleList(len=12): ...
+```
+
+## 智能探测 (Smart Probing)
+
+CLI 会自动尝试解析 `SimpleList` (vector<byte>) 内部的数据。
+如果字节数组内部包含完整的 Tars 结构，Tree 视图会自动展开它，无需手动二次解码。
+
+## 帮助信息
+
+```bash
+tarsio --help
 ```
