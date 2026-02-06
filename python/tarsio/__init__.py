@@ -1,6 +1,8 @@
 from ._core import (
     Meta,
     Struct,
+    StructConfig,
+    StructMeta,
     ValidationError,
     decode,
     decode_raw,
@@ -11,9 +13,12 @@ from ._core import (
 
 __version__ = "0.4.0"
 
+
 __all__ = [
     "Meta",
     "Struct",
+    "StructConfig",
+    "StructMeta",
     "ValidationError",
     "decode",
     "decode_raw",
