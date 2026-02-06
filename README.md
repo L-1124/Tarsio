@@ -2,139 +2,50 @@
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Pydantic v2](https://img.shields.io/badge/pydantic-v2-blue.svg)](https://docs.pydantic.dev/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://L-1124.github.io/Tarsio/)
 
-**Tarsio** 是一个 Python Tars (JCE) 协议实现，提供 **Pydantic 风格** 的 API 体验。
+`Tarsio` 是一个高性能的 Python Tars (JCE) 协议库，由 Rust 核心驱动。它提供：
 
-## Tars 与 JCE 的关系
+* 🚀 面向 JCE 的高性能编解码实现
+* 🎉 丰富的 Python 类型支持，可扩展
+* 🔍 基于 `typing.Annotated` 的 Schema 校验与约束
+* ✨ 轻量且快速的 `Struct` 类型用于结构化数据
+* 🧩 支持 Schema (Struct) 与无 Schema (dict) 两种模式
+* 🛡️ 递归深度与容器大小限制，提升解码安全性
 
-* **Tars**: 腾讯开源的高性能微服务 RPC 框架。
-* **JCE (Jce Encoding)**: Tars 框架底层使用的二进制序列化协议（类似 Protobuf，但支持更丰富的类型系统）。
+* * *
 
-## 📖 官方文档
+`Tarsio` 既可以作为纯编解码库使用，也可以覆盖完整的“定义 Schema -> 编码 -> 解码”流程：
 
-详细的使用指南和 API 参考请查阅 [文档](https://L-1124.github.io/Tarsio/)。
-
-## ✨ 核心特性
-
-* **🛡️ 类型安全**: 提供 Pydantic 风格的类型提示和运行时验证，无需引入重量级依赖。
-* **⚡ 高性能**: **Rust 核心驱动**，提供极速的编解码性能；支持智能整数压缩、零值优化、字节数组优化、零拷贝读取。
-* **🧩 灵活性**: 支持 Schema (Struct) 和无 Schema (dict/StructDict) 两种模式。
-* **🌊 流式处理**: 提供 [`LengthPrefixedWriter/Reader`](docs/usage/streams.md) 支持增量打包和长度前缀协议。
-* **📂 文件支持**: 提供 `dump`/`load` 直接读写文件类对象（IO[bytes]）。
-* **🔌 上下文**: 支持序列化上下文传递 (`context`) 和字段钩子 (`@field_serializer`).
-* **🧬 泛型支持**: 完整支持 Python `Generic[T]` 类型系统。
-* **🛠️ CLI 工具**: 基于 Click 的强大命令行工具，支持文件读写、格式化输出和调试。
-* **🛡️ 安全防护**: 递归深度限制、容器大小限制，防止 DoS 攻击。
-
-## 📦 安装
-
-```bash
-# 使用 uv (推荐)
-$ uv add "git+https://github.com/L-1124/Tarsio.git"
-
-# 使用 pip
-$ pip install git+https://github.com/L-1124/Tarsio.git
-```
-
-## 🚀 快速开始
-
-### 基础示例
+定义你的消息 Schema（使用标准 Python 类型注解）：
 
 ```python
-from tarsio import Field, Struct, dumps, loads
-
-# 定义数据模型
-class User(Struct):
-    uid: int = Field(id=0)
-    name: str = Field(id=1)
-    tags: list[str] = Field(id=2, default_factory=list)
-
-# 序列化
-user = User(uid=1001, name="Alice", tags=["admin"])
-encoded = dumps(user)
-print(f"Encoded hex: {encoded.hex().upper()}")
-# > Encoded hex: 0003E91605416C696365290001160561646D696E
-
-# 反序列化
-restored = loads(encoded, User)
-assert restored.name == "Alice"
-assert restored.tags == ["admin"]
+>>> from typing import Annotated
+>>> from tarsio import Struct, encode, decode
+>>>
+>>> class User(Struct):
+...     uid: Annotated[int, 0]
+...     name: Annotated[str, 1]
+...     tags: Annotated[list[str], 2] = []
 ```
 
-### 流式处理 (TCP 粘包/拆包)
-
-针对网络流式数据，Tarsio 提供了 `LengthPrefixedWriter` 和 `LengthPrefixedReader`，支持处理常见的“长度+数据”协议格式。
+编码数据为 JCE 二进制：
 
 ```python
-from tarsio.stream import LengthPrefixedWriter, LengthPrefixedReader
-
-# 1. 写入 (Writer) - 自动添加长度头
-writer = LengthPrefixedWriter(length_type=4)
-writer.pack(User(uid=1, name="A"))
-writer.pack(User(uid=2, name="B"))
-data = writer.get_buffer()
-
-# 2. 读取 (Reader) - 处理粘包/拆包
-reader = LengthPrefixedReader(target=User, length_type=4)
-reader.feed(data) # 模拟接收数据
-
-for user in reader:
-    print(f"Received user: {user.name}")
+>>> alice = User(uid=1, name="alice", tags=["admin"])
+>>> payload = encode(alice)
 ```
 
-### 字段钩子与上下文
-
-通过 `@field_serializer` 和 `context` 参数，你可以灵活控制字段的序列化逻辑（例如加密敏感字段）。
+解码并进行 Schema 校验：
 
 ```python
-from tarsio import Struct, Field, field_serializer, SerializationInfo, dumps
-
-class SecretConfig(Struct):
-    password: str = Field(id=0)
-
-    @field_serializer("password")
-    def encrypt_password(self, value, info: SerializationInfo):
-        # 从上下文获取密钥进行加密
-        key = info.context.get("key", "default")
-        return f"encrypted({value}, {key})"
-
-cfg = SecretConfig(password="123456")
-encoded = dumps(cfg, context={"key": "my-secret-key"})
+>>> decode(User, payload)
+User(uid=1, name='alice', tags=['admin'])
 ```
 
-## 🛠️ CLI 工具
+更多使用方式请查看文档。
 
-安装 `git+https://github.com/L-1124/Tarsio.git[cli]` 后，你可以使用 `tarsio` 命令直接在终端调试数据。
+## LICENSE
 
-```bash
-# 解码 Hex 字符串
-$ tarsio "0C 00 01"
-
-# 从文件读取并以 JSON 格式输出
-$ tarsio -f data.bin --format json
-
-
-# 查看详细的解码过程 (Verbose 模式)
-$ tarsio "0C" -v
-
-# 以 Tree 格式输出
-$ tarsio "0C" --format tree
-```
-
-## 🤝 开发与贡献
-
-1. 克隆仓库：`git clone https://github.com/L-1124/Tarsio.git`
-2. 安装环境：`uv sync`
-3. 运行测试：`uv run pytest`
-4. 代码检查：`uv run ruff check .`
-
-## 📄 协议文档
-
-详细的 JCE 协议规范请参阅 [JCE_PROTOCOL.md](JCE_PROTOCOL.md)。
-
-## ⚖️ 许可
-
-本项目采用 **MIT 许可证**。详情请参阅 [LICENSE](LICENSE) 文件。
+MIT. See the LICENSE file.

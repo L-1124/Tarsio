@@ -27,7 +27,7 @@
 ### 1. 架构边界
 
 * **Rust (src)**: 处理所有字节操作、内存管理、WireType 逻辑。禁止 `panic!`。
-* **Python (python)**: 仅负责类型定义和 API 暴露。运行时通过 `typing` 构建 Schema 传给 Rust。
+* **Python (python)**: 提供 `typing.Annotated` 风格的 API。运行时通过类型注解构建 Schema 传给 Rust。实际的 `Struct`、`Meta`、`encode`、`decode` 等均为 Rust PyO3 绑定对象，Python 层仅负责导出和 CLI 工具。
 
 ### 2. 测试规范 (严格遵守)
 
