@@ -66,7 +66,11 @@ class Meta:
     max_len: int | None
     pattern: str | None
 
-@dataclass_transform()
+@dataclass_transform(
+    kw_only_default=False,
+    frozen_default=False,
+    eq_default=True,
+)
 class Struct:
     """由 Rust Schema 编译器驱动的 Tarsio Struct 基类.
 
@@ -99,18 +103,23 @@ class Struct:
         cls,
         frozen: bool = False,
         forbid_unknown_tags: bool = False,
+        eq: bool = True,
+        repr_omit_defaults: bool = False,
+        kw_only: bool = False,
         **kwargs: Any,
     ) -> None:
-        """根据类型注解编译 Schema 并将其注册到 Rust 后端.
+        """初始化 `Struct` 子类.
 
         Args:
-            frozen: 如果为 True,则实例不可变且可哈希。
-            forbid_unknown_tags: 如果为 True,反序列化时遇到未知 Tag 会报错。
-            **kwargs: 其他传递给基类的参数。
+            frozen: 是否冻结实例 (不可变且可哈希). 默认 False.
+            forbid_unknown_tags: 是否禁止未知 Tag. 默认 False.
+            eq: 是否生成 __eq__ 方法. 默认 True.
+            repr_omit_defaults: __repr__ 是否省略默认值. 默认 False.
+            kw_only: 是否强制关键字参数. 默认 False.
         """
         ...
 
-    def __eq__(self, other: object) -> bool: ...
+    def __eq__(self, other: _StructT) -> bool: ...
     def __hash__(self) -> int: ...
     def encode(self) -> bytes:
         """将当前实例序列化为 Tars 二进制格式.

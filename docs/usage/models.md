@@ -120,5 +120,39 @@ class Config(Struct, frozen=True, forbid_unknown_tags=True):
     ...
 ```
 
-* **frozen**: `bool` (默认 False)。设为 `True` 后实例不可变，且可哈希（可作为 dict key）。
-* **forbid_unknown_tags**: `bool` (默认 False)。设为 `True` 时，若解码遇到未知 Tag 则报错。
+* **frozen**: `bool` (默认 `False`)。
+    * 设为 `True` 后实例变为不可变 (Immutable)，禁止修改属性。
+    * 同时会生成 `__hash__` 方法，使实例可哈希（可作为 `dict` 的 Key 或放入 `set`）。
+* **forbid_unknown_tags**: `bool` (默认 `False`)。
+    * 设为 `True` 时，若解码数据中包含 Schema 未定义的 Tag，将抛出 `ValueError`。
+    * 设为 `False` 时，会自动忽略未知 Tag（向前兼容）。
+* **eq**: `bool` (默认 `True`)。
+    * 设为 `True` 时，会生成 `__eq__` 方法，基于字段内容进行相等性比较。
+    * 设为 `False` 时，回退到 Python 默认的对象身份比较 (Identity Comparison, `id(a) == id(b)`)。
+* **repr_omit_defaults**: `bool` (默认 `False`)。
+    * 设为 `True` 时，`__repr__` 输出将自动省略那些值等于默认值的字段，使日志输出更简洁。
+
+### 示例
+
+```python
+class Point(Struct, frozen=True, eq=True):
+    x: Annotated[int, 0]
+    y: Annotated[int, 1]
+
+p1 = Point(1, 2)
+p2 = Point(1, 2)
+assert p1 == p2
+assert hash(p1) == hash(p2)
+```
+
+```python
+class Config(Struct, repr_omit_defaults=True):
+    host: Annotated[str, 0] = "localhost"
+    port: Annotated[int, 1] = 8080
+    debug: Annotated[bool, 2] = False
+
+# 仅输出非默认值字段
+conf = Config(port=9090)
+print(conf)
+# > Config(port=9090)
+```

@@ -330,3 +330,73 @@ def test_decode_raises_on_unknown_tag_if_forbidden() -> None:
     # Usually unknown tags raise ValueError or similar when forbidden
     with pytest.raises(ValueError, match="Unknown tag"):
         V1Strict.decode(data)
+
+
+# ==========================================
+# eq, repr_omit_defaults
+# ==========================================
+
+
+def test_struct_eq_option() -> None:
+    """eq=False 时应回退到对象身份比较."""
+
+    class NoEq(Struct, eq=False):
+        id: Annotated[int, 0]
+
+    class YesEq(Struct, eq=True):
+        id: Annotated[int, 0]
+
+    # eq=False
+    a = NoEq(1)
+    b = NoEq(1)
+    assert a != b
+
+    # eq=True (default)
+    c = YesEq(1)
+    d = YesEq(1)
+    assert c == d
+
+
+def test_struct_repr_omit_defaults_option() -> None:
+    """repr_omit_defaults=True 时 repr 应省略默认值字段."""
+
+    class CleanRepr(Struct, repr_omit_defaults=True):
+        id: Annotated[int, 0]
+        name: Annotated[str, 1] = "default"
+        opt: Annotated[str | None, 2] = None
+
+    # Case 1: All defaults
+    obj1 = CleanRepr(100)
+    assert "id=100" in repr(obj1)
+    assert "name=" not in repr(obj1)
+    assert "opt=" not in repr(obj1)
+
+    # Case 2: Partial defaults
+    obj2 = CleanRepr(100, name="custom")
+    assert "id=100" in repr(obj2)
+    assert "name='custom'" in repr(obj2)
+    assert "opt=" not in repr(obj2)
+
+    # Case 3: No defaults omitted (control group)
+    class FullRepr(Struct, repr_omit_defaults=False):
+        id: Annotated[int, 0]
+        name: Annotated[str, 1] = "default"
+
+    obj3 = FullRepr(100)
+    assert "name='default'" in repr(obj3)
+
+
+def test_struct_kw_only_option() -> None:
+    """kw_only=True 时强制使用关键字参数."""
+
+    class KwOnly(Struct, kw_only=True):
+        id: Annotated[int, 0]
+        name: Annotated[str, 1]
+
+    # Success
+    obj = KwOnly(id=1, name="A")
+    assert obj.id == 1
+
+    # Failure: Positional args
+    with pytest.raises(TypeError, match="takes 0 positional arguments"):
+        KwOnly(1, "A")  # type: ignore

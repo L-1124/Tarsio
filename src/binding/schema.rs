@@ -158,6 +158,9 @@ pub struct StructDef {
     pub name_to_tag: HashMap<String, u8>,
     pub frozen: bool,
     pub forbid_unknown_tags: bool,
+    pub eq: bool,
+    pub repr_omit_defaults: bool,
+    pub kw_only: bool,
 }
 
 impl StructDef {
@@ -299,6 +302,9 @@ impl Struct {
 
         let mut frozen = false;
         let mut forbid_unknown_tags = false;
+        let mut eq = true;
+        let mut repr_omit_defaults = false;
+        let mut kw_only = false;
 
         if let Some(k) = kwargs {
             if let Some(v) = k.get_item("frozen")? {
@@ -308,6 +314,18 @@ impl Struct {
             if let Some(v) = k.get_item("forbid_unknown_tags")? {
                 forbid_unknown_tags = v.extract::<bool>()?;
                 k.del_item("forbid_unknown_tags")?;
+            }
+            if let Some(v) = k.get_item("eq")? {
+                eq = v.extract::<bool>()?;
+                k.del_item("eq")?;
+            }
+            if let Some(v) = k.get_item("repr_omit_defaults")? {
+                repr_omit_defaults = v.extract::<bool>()?;
+                k.del_item("repr_omit_defaults")?;
+            }
+            if let Some(v) = k.get_item("kw_only")? {
+                kw_only = v.extract::<bool>()?;
+                k.del_item("kw_only")?;
             }
         }
 
@@ -555,6 +573,9 @@ impl Struct {
                 name_to_tag,
                 frozen,
                 forbid_unknown_tags,
+                eq,
+                repr_omit_defaults,
+                kw_only,
             };
 
             // 注册全局结构定义(class 已纳入 StructDef)
@@ -584,6 +605,13 @@ impl Struct {
             };
 
             // 使用 Python 的 repr() 获取值的字符串表示
+            if def.repr_omit_defaults {
+                if let Some(default_val) = &field.default_value {
+                    if val.eq(default_val)? {
+                        continue;
+                    }
+                }
+            }
             let val_repr = val.repr()?.extract::<String>()?;
             fields_str.push(format!("{}={}", field.name, val_repr));
         }
@@ -606,15 +634,19 @@ impl Struct {
                 let cls1 = slf.get_type();
                 let cls2 = other.get_type();
 
-                if !cls1.is(&cls2) {
-                    return Ok(false.into_pyobject(py)?.to_owned().into_any().unbind());
-                }
-
                 let type_ptr = cls1.as_ptr() as usize;
                 let def = match get_schema(type_ptr) {
                     Some(d) => d,
                     None => return Ok(false.into_pyobject(py)?.to_owned().into_any().unbind()),
                 };
+
+                if !def.eq {
+                    return Ok(py.NotImplemented());
+                }
+
+                if !cls1.is(&cls2) {
+                    return Ok(false.into_pyobject(py)?.to_owned().into_any().unbind());
+                }
 
                 for field in &def.fields_sorted {
                     let v1 = slf.getattr(field.name.as_str())?;
@@ -627,6 +659,9 @@ impl Struct {
             }
             CompareOp::Ne => {
                 let eq = Self::__richcmp__(slf, other, CompareOp::Eq)?;
+                if eq.bind(py).is(&py.NotImplemented()) {
+                    return Ok(py.NotImplemented());
+                }
                 let is_eq: bool = eq.bind(py).extract()?;
                 Ok((!is_eq).into_pyobject(py)?.to_owned().into_any().unbind())
             }
@@ -702,6 +737,13 @@ fn construct_instance(
     // 位置参数按字段顺序映射到 args
     let num_positional = args.len();
     let given_args = args;
+
+    if def.kw_only && num_positional > 0 {
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "__init__() takes 0 positional arguments but {} were given",
+            num_positional
+        )));
+    }
 
     if num_positional > def.fields_sorted.len() {
         let expected = def.fields_sorted.len() + 1;
