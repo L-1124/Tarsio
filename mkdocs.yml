@@ -50,10 +50,12 @@ nav:
   - 简介: index.md
   - 使用指南:
     - 定义模型: usage/models.md
+    - 类型内省: usage/inspect.md
     - 序列化: usage/serialization.md
     - CLI 工具: usage/cli.md
   - API 参考:
     - Struct API: api/struct.md
+    - Inspect API: api/inspect.md
     - Functional API: api/functions.md
 
 markdown_extensions:
@@ -89,6 +91,5 @@ plugins:
               - griffe_inherited_docstrings
               - unpack_typeddict
           inventories:
-          - https://docs.pydantic.dev/latest/objects.inv
           - https://docs.python.org/3/objects.inv
-          paths: [.]
+          paths: [., python]

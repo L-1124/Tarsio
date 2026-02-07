@@ -25,12 +25,12 @@ from tarsio import Struct, encode, decode
 class User(Struct):
     id: Annotated[int, 0]
     name: Annotated[str, 1]
-    groups: Annotated[set[str], 2] = set()
+    groups: Annotated[list[str], 2] = []
 
 # 2. 创建对象
-alice = User(id=1001, name="Alice", groups={"admin", "dev"})
+alice = User(id=1001, name="Alice", groups=["admin", "dev"])
 print(alice)
-# > User(id=1001, name='Alice', groups={'admin', 'dev'})
+# > User(id=1001, name='Alice', groups=['admin', 'dev'])
 
 # 3. 编码 (Encode)
 data = encode(alice)

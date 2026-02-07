@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyTuple, PyType};
 
-use crate::binding::schema::{SchemaConfig, compile_schema_for_class};
+use crate::binding::schema::{SchemaConfig, compile_schema_from_class};
 
 #[pyfunction]
 #[pyo3(signature = (mcls, name, bases, namespace, **kwargs))]
@@ -119,7 +119,7 @@ pub fn _tarsio_structmeta_new<'py>(
     let new_cls_any = type_obj.call_method("__new__", (mcls, name, bases, namespace), None)?;
     let new_cls = new_cls_any.cast::<PyType>()?.clone();
 
-    let _ = compile_schema_for_class(
+    let _ = compile_schema_from_class(
         py,
         &new_cls,
         SchemaConfig {

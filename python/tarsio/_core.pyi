@@ -9,6 +9,8 @@ from typing import Any, ClassVar, TypeAlias, TypeVar
 
 from typing_extensions import dataclass_transform
 
+from . import inspect
+
 _StructT = TypeVar("_StructT")
 _SM = TypeVar("_SM", bound="StructMeta")
 TarsDict: TypeAlias = dict[int, Any]
@@ -24,6 +26,7 @@ __all__ = [
     "decode_raw",
     "encode",
     "encode_raw",
+    "inspect",
     "probe_struct",
 ]
 
@@ -97,9 +100,8 @@ class Meta:
 class StructMeta(type):
     """Struct 的元类.
 
-    负责在类创建期编译 Schema、处理默认值与 `__slots__`。
-    仅支持 Tars/JCE 相关配置项，以下 msgspec 配置**不支持**：
-    `tag/tag_field/rename/array_like/gc/cache_hash`，传入会抛 `TypeError`。
+    用于在定义 `Struct` 子类时，在类创建期编译并注册 Schema，并生成相应的构造行为与
+    运行时元信息（如 `__struct_fields__`、`__struct_config__`、`__signature__`）。
     """
 
     __struct_fields__: ClassVar[tuple[str, ...]]
@@ -151,8 +153,8 @@ class StructMeta(type):
 class StructConfig:
     """Struct 的配置对象.
 
-    可通过 `Struct.__struct_config__` 或实例的 `__struct_config__` 访问。
-    不支持的配置项会保持默认值（False/None）。
+    该对象反映 `Struct` 子类在定义时传入的配置选项，可通过
+    `Struct.__struct_config__` 或实例的 `__struct_config__` 访问。
     """
 
     frozen: bool
@@ -171,12 +173,47 @@ class StructConfig:
     rename: Any | None
 
 class Struct(metaclass=StructMeta):
-    """Tarsio Struct 基类.
+    """高性能可序列化结构体基类.
 
-    使用 `typing.Annotated[T, tag]` 声明字段与 Tag。
-    运行时提供 `__struct_fields__`（按 Tag 顺序）与 `__struct_config__`。
+    `Struct` 用于定义可编码/解码的 Tars/JCE 数据结构。字段通过类型注解声明，并必须通过
+    `typing.Annotated` 显式绑定 Tag：
+
+    - `Annotated[T, tag]`：使用 0-255 的整数 Tag.
+    - `Annotated[T, Meta(...)]`：使用 `Meta(tag=...)` 并携带额外约束（如 `gt/min_len`）。
+
+    字段可以提供默认值。带默认值的字段在构造函数中表现为可选参数；当字段是 Optional 且未
+    显式提供默认值时，其默认值视为 `None`。
+
+    Struct 会提供/生成以下能力：
+
+    - `__init__`：支持按 Tag 顺序的 positional 参数，以及按字段名的 keyword 参数。
+    - `__eq__`：当 `eq=True` 时生成相等比较。
+    - `__repr__`：生成可读的 repr；当 `repr_omit_defaults=True` 时省略默认值字段。
+    - `__copy__`：生成浅拷贝。
+    - 排序比较：当 `order=True` 时生成 `__lt__/__le__/__gt__/__ge__`。
+    - Hash：当 `frozen=True` 时提供 `__hash__`（使实例可哈希）。
+
+    运行时元信息：
+
+    - `__struct_fields__`：字段名元组，按 Tag 升序排列。
+    - `__struct_config__`：配置对象（见 `StructConfig`）。
+
+    Configuration:
+        可在定义 `Struct` 子类时传入关键字参数控制行为：
+
+        - frozen (bool, default False): 是否冻结实例。冻结后禁止属性赋值，并提供 `__hash__`。
+        - order (bool, default False): 是否生成排序比较方法。
+        - eq (bool, default True): 是否生成 `__eq__`。
+        - kw_only (bool, default False): 是否将所有字段设为仅关键字参数。
+        - omit_defaults (bool, default False): 编码时是否省略值等于默认值的字段。
+        - repr_omit_defaults (bool, default False): repr 是否省略值等于默认值的字段。
+        - forbid_unknown_tags (bool, default False): 解码时是否禁止出现未知 Tag.
+        - dict (bool, default False): 是否为实例保留 `__dict__`（允许附加额外属性）。
+        - weakref (bool, default False): 是否支持弱引用。
 
     Examples:
+        基本用法：
+
         ```python
         from typing import Annotated
         from tarsio import Struct
@@ -190,6 +227,17 @@ class Struct(metaclass=StructMeta):
         data = user.encode()
         restored = User.decode(data)
         assert restored == user
+        ```
+
+        启用配置项：
+
+        ```python
+        from typing import Annotated
+        from tarsio import Struct
+
+        class Point(Struct, frozen=True, order=True):
+            x: Annotated[int, 0]
+            y: Annotated[int, 1]
         ```
     """
 

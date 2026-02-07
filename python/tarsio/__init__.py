@@ -8,6 +8,7 @@ from ._core import (
     decode_raw,
     encode,
     encode_raw,
+    inspect,
     probe_struct,
 )
 
@@ -24,5 +25,6 @@ __all__ = [
     "decode_raw",
     "encode",
     "encode_raw",
+    "inspect",
     "probe_struct",
 ]

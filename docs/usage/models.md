@@ -3,9 +3,6 @@
 使用 `Struct` 与 `Annotated` 定义 Tars 结构体。
 本页介绍如何定义字段类型、添加元数据约束、配置默认值以及处理嵌套结构。
 
-> **实现说明**: `Struct` 基类由 Rust 扩展实现，类创建期由 `StructMeta` 编译 Schema 与处理 `__slots__`。
-> `tarsio.Struct` 由 Rust 侧创建并从 `tarsio._core` 公开导出。
-
 ## 基础定义
 
 使用 Python 标准库 `typing.Annotated` 将 JCE Tag 绑定到类型上。
@@ -28,15 +25,15 @@ class User(Struct):
 
 Tarsio 支持以下标准 Python 类型与 Tars 类型的映射：
 
-| Python 类型 | Tars 类型 | 说明 |
-| :--- | :--- | :--- |
-| `int` | `int8` / `int16` / `int32` / `int64` | 根据数值大小自动选择最紧凑的编码 |
-| `float` | `float` / `double` | 对应 JCE 的浮点数 |
-| `bool` | `int8` (0 或 1) | Tars 无原生 bool，映射为 0/1 |
-| `str` | `String1` / `String4` | 自动处理长度前缀 |
-| `bytes` | `SimpleList` | 对应 `vector<byte>` |
-| `list[T]` | `List<T>` | 列表 |
-| `dict[K, V]` | `Map<K, V>` | 映射 |
+| Python 类型  | Tars 类型                            |               说明               |
+|:-------------|:-------------------------------------|:--------------------------------:|
+| `int`        | `int8` / `int16` / `int32` / `int64` | 根据数值大小自动选择最紧凑的编码 |
+| `float`      | `float` / `double`                   |         对应 JCE 的浮点数        |
+| `bool`       | `int8` (0 或 1)                      |   Tars 无原生 bool，映射为 0/1   |
+| `str`        | `String1` / `String4`                |         自动处理长度前缀         |
+| `bytes`      | `SimpleList`                         |        对应 `vector<byte>`       |
+| `list[T]`    | `List<T>`                            |               列表               |
+| `dict[K, V]` | `Map<K, V>`                          |               映射               |
 
 ### 容器类型示例
 
@@ -122,44 +119,6 @@ class User(Struct):
 class Config(Struct, frozen=True, forbid_unknown_tags=True):
     ...
 ```
-
-* **frozen**: `bool` (默认 `False`)。
-    * 设为 `True` 后实例变为不可变 (Immutable)，禁止修改属性。
-    * 同时会生成 `__hash__` 方法，使实例可哈希（可作为 `dict` 的 Key 或放入 `set`）。
-* **forbid_unknown_tags**: `bool` (默认 `False`)。
-    * 设为 `True` 时，若解码数据中包含 Schema 未定义的 Tag，将抛出 `ValueError`。
-    * 设为 `False` 时，会自动忽略未知 Tag（向前兼容）。
-* **eq**: `bool` (默认 `True`)。
-    * 设为 `True` 时，会生成 `__eq__` 方法，基于字段内容进行相等性比较。
-    * 设为 `False` 时，回退到 Python 默认的对象身份比较 (Identity Comparison, `id(a) == id(b)`)。
-* **order**: `bool` (默认 `False`)。
-    * 设为 `True` 时，会生成 `__lt__`/`__le__`/`__gt__`/`__ge__` 方法。
-    * 比较顺序按 **Tag 顺序** 逐字段进行。
-* **omit_defaults**: `bool` (默认 `False`)。
-    * 设为 `True` 时，编码会省略值等于默认值的字段以减少体积。
-* **repr_omit_defaults**: `bool` (默认 `False`)。
-    * 设为 `True` 时，`__repr__` 输出将自动省略那些值等于默认值的字段，使日志输出更简洁。
-* **kw_only**: `bool` (默认 `False`)。
-    * 设为 `True` 时，构造函数仅接受关键字参数（禁止位置参数），降低误用概率。
-* **dict**: `bool` (默认 `False`)。
-    * 设为 `False` 时，实例默认使用 `__slots__` 存储字段，不包含 `__dict__`，更省内存。
-    * 设为 `True` 时，实例会包含 `__dict__`，允许动态挂载未声明的属性（适合保存私有运行时状态）。
-* **weakref**: `bool` (默认 `False`)。
-    * 设为 `True` 时，实例支持 `weakref.ref(obj)`。
-
-> **注意**: `tag/tag_field/rename/array_like/gc/cache_hash` 等 msgspec 扩展配置当前不支持，
-> 使用时将抛出 `TypeError`。
-
-## 元数据与签名
-
-`Struct` 类会暴露以下运行时元数据：
-
-* ****struct_fields****: `tuple[str, ...]`
-    * 字段名列表，按 **Tag 顺序** 排列。
-* ****struct_config****: `StructConfig`
-    * 当前结构体的配置对象，可从 `tarsio.StructConfig` 获取类型。
-* ****signature****: `inspect.Signature`
-    * 构造函数签名，按 **Tag 顺序** 生成；当必填字段出现在默认值字段之后时，后续字段会被标记为仅关键字参数。
 
 ### 示例
 
