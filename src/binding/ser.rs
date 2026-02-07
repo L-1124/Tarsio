@@ -1,9 +1,8 @@
-use std::cell::RefCell;
-
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyBytes, PyDict, PyFloat, PyList, PySequence, PyString, PyType};
+use std::cell::RefCell;
 
 use bytes::BufMut;
 
@@ -16,6 +15,73 @@ const MAX_DEPTH: usize = 100;
 
 thread_local! {
     static ENCODE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(128));
+}
+
+struct PySequenceFast {
+    ptr: *mut ffi::PyObject,
+    is_list: bool,
+}
+
+impl PySequenceFast {
+    fn new(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let err = c"Expected a sequence";
+        let ptr = unsafe { ffi::PySequence_Fast(obj.as_ptr(), err.as_ptr()) };
+        if ptr.is_null() {
+            return Err(PyErr::fetch(obj.py()));
+        }
+        let is_list = unsafe { ffi::PyList_Check(ptr) != 0 };
+        let is_tuple = unsafe { ffi::PyTuple_Check(ptr) != 0 };
+        if !is_list && !is_tuple {
+            unsafe {
+                ffi::Py_DECREF(ptr);
+            }
+            return Err(PyTypeError::new_err("Expected a sequence"));
+        }
+        Ok(Self { ptr, is_list })
+    }
+
+    fn len(&self, py: Python<'_>) -> PyResult<usize> {
+        let len = unsafe {
+            if self.is_list {
+                ffi::PyList_Size(self.ptr)
+            } else {
+                ffi::PyTuple_Size(self.ptr)
+            }
+        };
+        if len < 0 {
+            return Err(PyErr::fetch(py));
+        }
+        Ok(len as usize)
+    }
+
+    fn get_item<'py>(&self, py: Python<'py>, idx: usize) -> PyResult<Bound<'py, PyAny>> {
+        let item_ptr = unsafe {
+            if self.is_list {
+                ffi::PyList_GetItem(self.ptr, idx as isize)
+            } else {
+                ffi::PyTuple_GetItem(self.ptr, idx as isize)
+            }
+        };
+        if item_ptr.is_null() {
+            return Err(PyErr::fetch(py));
+        }
+        Ok(unsafe { Bound::from_borrowed_ptr(py, item_ptr) })
+    }
+}
+
+impl Drop for PySequenceFast {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::Py_DECREF(self.ptr);
+        }
+    }
+}
+
+fn is_exact_list_or_tuple(obj: &Bound<'_, PyAny>) -> bool {
+    // 仅对精确 list/tuple 走 PySequence_Fast，避免子类被物化
+    unsafe {
+        ffi::PyList_CheckExact(obj.as_ptr()) != 0 || ffi::PyTuple_CheckExact(obj.as_ptr()) != 0
+    }
 }
 
 /// 将一个已注册的 Struct 实例编码为 Tars 二进制数据(Schema API).
@@ -214,13 +280,22 @@ fn serialize_impl(
             }
 
             writer.write_tag(tag, TarsType::List);
-            let seq = val.extract::<Bound<'_, PySequence>>()?;
-            let len = seq.len()?;
-            writer.write_int(0, len as i64);
-
-            for i in 0..len {
-                let item = seq.get_item(i)?;
-                serialize_impl(writer, 0, inner, &item, depth + 1)?;
+            if is_exact_list_or_tuple(val) {
+                let seq_fast = PySequenceFast::new(val)?;
+                let len = seq_fast.len(val.py())?;
+                writer.write_int(0, len as i64);
+                for i in 0..len {
+                    let item = seq_fast.get_item(val.py(), i)?;
+                    serialize_impl(writer, 0, inner, &item, depth + 1)?;
+                }
+            } else {
+                let seq = val.extract::<Bound<'_, PySequence>>()?;
+                let len = seq.len()?;
+                writer.write_int(0, len as i64);
+                for i in 0..len {
+                    let item = seq.get_item(i)?;
+                    serialize_impl(writer, 0, inner, &item, depth + 1)?;
+                }
             }
         }
         TypeExpr::Map(k_type, v_type) => {
@@ -435,13 +510,23 @@ fn serialize_any(
     }
 
     if value.is_instance_of::<PyList>() || value.is_instance_of::<PySequence>() {
-        let seq = value.extract::<Bound<'_, PySequence>>()?;
         writer.write_tag(tag, TarsType::List);
-        let len = seq.len()?;
-        writer.write_int(0, len as i64);
-        for i in 0..len {
-            let item = seq.get_item(i)?;
-            serialize_any(writer, 0, &item, depth + 1)?;
+        if is_exact_list_or_tuple(value) {
+            let seq_fast = PySequenceFast::new(value)?;
+            let len = seq_fast.len(value.py())?;
+            writer.write_int(0, len as i64);
+            for i in 0..len {
+                let item = seq_fast.get_item(value.py(), i)?;
+                serialize_any(writer, 0, &item, depth + 1)?;
+            }
+        } else {
+            let seq = value.extract::<Bound<'_, PySequence>>()?;
+            let len = seq.len()?;
+            writer.write_int(0, len as i64);
+            for i in 0..len {
+                let item = seq.get_item(i)?;
+                serialize_any(writer, 0, &item, depth + 1)?;
+            }
         }
         return Ok(());
     }

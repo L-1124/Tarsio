@@ -9,7 +9,7 @@ __pycache__/
 *.so
 *.pyd
 *.dylib
-
+*.pdb
 
 # Distribution / packaging
 .Python

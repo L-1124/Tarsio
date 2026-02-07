@@ -1,8 +1,8 @@
-use std::cell::RefCell;
-
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyBytes, PyDict, PyFloat, PyList, PySequence, PyString};
+use std::cell::RefCell;
 
 use bytes::BufMut;
 
@@ -15,6 +15,71 @@ const MAX_DEPTH: usize = 100;
 
 thread_local! {
     static RAW_ENCODE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(128));
+}
+
+struct PySequenceFast {
+    ptr: *mut ffi::PyObject,
+    is_list: bool,
+}
+
+impl PySequenceFast {
+    fn new(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let err = c"Expected a sequence";
+        let ptr = unsafe { ffi::PySequence_Fast(obj.as_ptr(), err.as_ptr()) };
+        if ptr.is_null() {
+            return Err(PyErr::fetch(obj.py()));
+        }
+        let is_list = unsafe { ffi::PyList_Check(ptr) != 0 };
+        let is_tuple = unsafe { ffi::PyTuple_Check(ptr) != 0 };
+        if !is_list && !is_tuple {
+            unsafe {
+                ffi::Py_DECREF(ptr);
+            }
+            return Err(PyTypeError::new_err("Expected a sequence"));
+        }
+        Ok(Self { ptr, is_list })
+    }
+
+    fn len(&self, py: Python<'_>) -> PyResult<usize> {
+        let len = unsafe {
+            if self.is_list {
+                ffi::PyList_Size(self.ptr)
+            } else {
+                ffi::PyTuple_Size(self.ptr)
+            }
+        };
+        if len < 0 {
+            return Err(PyErr::fetch(py));
+        }
+        Ok(len as usize)
+    }
+
+    fn get_item<'py>(&self, py: Python<'py>, idx: usize) -> PyResult<Bound<'py, PyAny>> {
+        let item_ptr = unsafe {
+            if self.is_list {
+                ffi::PyList_GetItem(self.ptr, idx as isize)
+            } else {
+                ffi::PyTuple_GetItem(self.ptr, idx as isize)
+            }
+        };
+        if item_ptr.is_null() {
+            return Err(PyErr::fetch(py));
+        }
+        Ok(unsafe { Bound::from_borrowed_ptr(py, item_ptr) })
+    }
+}
+
+impl Drop for PySequenceFast {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::Py_DECREF(self.ptr);
+        }
+    }
+}
+
+fn is_exact_tuple(obj: &Bound<'_, PyAny>) -> bool {
+    // 仅对精确 tuple 走 PySequence_Fast，避免子类被物化
+    unsafe { ffi::PyTuple_CheckExact(obj.as_ptr()) != 0 }
 }
 
 /// 将 TarsDict 编码为 Tars 二进制数据.
@@ -178,14 +243,23 @@ fn encode_value(
     }
 
     if value.is_instance_of::<PySequence>() && !value.is_instance_of::<PyList>() {
-        let seq = value.extract::<Bound<'_, PySequence>>()?;
         writer.write_tag(tag, TarsType::List);
-        let len = seq.len()?;
-        writer.write_int(0, len as i64);
-
-        for i in 0..len {
-            let item = seq.get_item(i)?;
-            encode_value(writer, 0, &item, depth + 1)?;
+        if is_exact_tuple(value) {
+            let seq_fast = PySequenceFast::new(value)?;
+            let len = seq_fast.len(value.py())?;
+            writer.write_int(0, len as i64);
+            for i in 0..len {
+                let item = seq_fast.get_item(value.py(), i)?;
+                encode_value(writer, 0, &item, depth + 1)?;
+            }
+        } else {
+            let seq = value.extract::<Bound<'_, PySequence>>()?;
+            let len = seq.len()?;
+            writer.write_int(0, len as i64);
+            for i in 0..len {
+                let item = seq.get_item(i)?;
+                encode_value(writer, 0, &item, depth + 1)?;
+            }
         }
         return Ok(());
     }
@@ -307,31 +381,58 @@ fn decode_list_value<'py>(
     }
     let len = len as usize;
 
-    let list = PyList::empty(py);
+    let list = unsafe {
+        // SAFETY: PyList_New 返回新引用并预留 len 个槽位。若返回空指针则抛错。
+        let ptr = ffi::PyList_New(len as isize);
+        if ptr.is_null() {
+            return Err(PyErr::fetch(py));
+        }
+        Bound::from_owned_ptr(py, ptr)
+    };
     let mut bytes_candidate: Vec<u8> = Vec::with_capacity(len);
     let mut is_bytes = true;
 
-    for _ in 0..len {
+    for idx in 0..len {
         let (_, item_type) = reader
             .read_head()
             .map_err(|e| PyValueError::new_err(format!("Failed to read list item head: {e}")))?;
-        let item = decode_value(py, reader, item_type, depth + 1)?;
-        if is_bytes {
-            if item_type == TarsType::Int1 || item_type == TarsType::ZeroTag {
-                if let Ok(v) = item.extract::<i64>() {
-                    if (0..=255).contains(&v) {
-                        bytes_candidate.push(v as u8);
+        let item = match item_type {
+            TarsType::ZeroTag
+            | TarsType::Int1
+            | TarsType::Int2
+            | TarsType::Int4
+            | TarsType::Int8 => {
+                let v = reader
+                    .read_int(item_type)
+                    .map_err(|e| PyValueError::new_err(format!("Failed to read int: {e}")))?;
+                if is_bytes {
+                    if item_type == TarsType::Int1 || item_type == TarsType::ZeroTag {
+                        if (0..=255).contains(&v) {
+                            bytes_candidate.push(v as u8);
+                        } else {
+                            is_bytes = false;
+                        }
                     } else {
                         is_bytes = false;
                     }
-                } else {
+                }
+                v.into_pyobject(py)?.into_any()
+            }
+            _ => {
+                if is_bytes {
                     is_bytes = false;
                 }
-            } else {
-                is_bytes = false;
+                decode_value(py, reader, item_type, depth + 1)?
             }
+        };
+        let set_res = unsafe {
+            // SAFETY: PyList_SetItem 会“偷”引用, item.into_ptr 转移所有权。
+            // 每个索引只写入一次,与 PyList_New 的预分配长度一致。
+            ffi::PyList_SetItem(list.as_ptr(), idx as isize, item.into_ptr())
+        };
+        if set_res != 0 {
+            return Err(PyErr::fetch(py));
         }
-        list.append(item)?;
     }
 
     if is_bytes {

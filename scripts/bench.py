@@ -359,6 +359,11 @@ def build_scenarios(randomize: bool = False) -> list[Scenario]:
 
     raw_deep_nested = build_deep_nested_raw(30)
 
+    # 序列类型专项基准
+    list_subclass = type("_BenchList", (list,), {})
+    raw_range = {0: range(10_000)}
+    raw_list_subclass = {0: list_subclass(range(10_000))}
+
     return [
         Scenario(
             "struct_small", small, encode, lambda d: decode(_Small, d), "基础字段"
@@ -411,6 +416,14 @@ def build_scenarios(randomize: bool = False) -> list[Scenario]:
             encode_raw,
             decode_raw,
             "原始小对象",
+        ),
+        Scenario("raw_range", raw_range, encode_raw, decode_raw, "原始 range 序列"),
+        Scenario(
+            "raw_list_subclass",
+            raw_list_subclass,
+            encode_raw,
+            decode_raw,
+            "原始 list 子类",
         ),
         Scenario(
             "raw_deep_nested", raw_deep_nested, encode_raw, decode_raw, "原始深度嵌套"
@@ -592,6 +605,8 @@ def run_flamegraph(args: argparse.Namespace) -> int:
             return 1
 
     print(f"Using profiler: {tool}")
+
+    _ensure_pdb_symbols()
 
     # Determine the python executable to profile
     target_python = sys.executable
@@ -816,6 +831,43 @@ def parse_args() -> argparse.Namespace:
         args.profile = True
 
     return args
+
+
+def _ensure_pdb_symbols() -> None:
+    """Windows Only: 尝试将 target/release 下的 .pdb 复制到 .pyd 同目录."""
+    if sys.platform != "win32":
+        return
+
+    try:
+        from tarsio import _core
+
+        pyd_path = _core.__file__
+        if not pyd_path:
+            return
+
+        # Locate project root (assuming script is in scripts/)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        # Check target/release/tarsio_core.pdb
+        pdb_src = os.path.join(project_root, "target", "release", "tarsio_core.pdb")
+
+        if not os.path.exists(pdb_src):
+            return
+
+        # 保持原始文件名，不要重命名为 .pyd 的名称
+        pdb_dest = os.path.join(os.path.dirname(pyd_path), "tarsio_core.pdb")
+
+        # Only copy if source PDB is newer or destination missing
+        src_mtime = os.path.getmtime(pdb_src)
+        if not os.path.exists(pdb_dest) or src_mtime > os.path.getmtime(pdb_dest):
+            print(f"Updating symbols: {pdb_dest}")
+            try:
+                shutil.copy2(pdb_src, pdb_dest)
+            except (PermissionError, OSError) as e:
+                print(f"Warning: Failed to update symbols: {e}")
+
+    except Exception:
+        pass
 
 
 def main() -> int:

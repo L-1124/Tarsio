@@ -426,19 +426,35 @@ fn deserialize_value<'py>(
             }
             let len = len as usize;
 
-            let list = PyList::empty(py);
-            for _ in 0..len {
+            let list_any = unsafe {
+                // SAFETY: PyList_New 返回新引用并预留 len 个槽位。若返回空指针则抛错。
+                let ptr = ffi::PyList_New(len as isize);
+                if ptr.is_null() {
+                    return Err(PyErr::fetch(py));
+                }
+                Bound::from_owned_ptr(py, ptr)
+            };
+            for idx in 0..len {
                 let (_, item_type) = reader.read_head().map_err(|e| {
                     PyValueError::new_err(format!("Failed to read list item head: {}", e))
                 })?;
                 let item = deserialize_value(py, reader, item_type, inner, depth + 1)?;
-                list.append(item)?;
+                let set_res = unsafe {
+                    // SAFETY: PyList_SetItem 会“偷”引用, item.into_ptr 转移所有权。
+                    // 每个索引只写入一次,与 PyList_New 的预分配长度一致。
+                    ffi::PyList_SetItem(list_any.as_ptr(), idx as isize, item.into_ptr())
+                };
+                if set_res != 0 {
+                    return Err(PyErr::fetch(py));
+                }
             }
 
             if matches!(type_expr, TypeExpr::Tuple(_)) {
+                let list_any_clone = list_any.clone();
+                let list = list_any_clone.cast::<PyList>()?;
                 Ok(list.to_tuple().into_any())
             } else {
-                Ok(list.into_any())
+                Ok(list_any)
             }
         }
         TypeExpr::Map(k_type, v_type) => {
@@ -625,38 +641,65 @@ fn decode_any_list<'py>(
         return Err(PyValueError::new_err("Invalid list size"));
     }
     let len = len as usize;
-    let list = PyList::empty(py);
+    let list_any = unsafe {
+        // SAFETY: PyList_New 返回新引用并预留 len 个槽位。若返回空指针则抛错。
+        let ptr = ffi::PyList_New(len as isize);
+        if ptr.is_null() {
+            return Err(PyErr::fetch(py));
+        }
+        Bound::from_owned_ptr(py, ptr)
+    };
     let mut bytes_candidate: Vec<u8> = Vec::with_capacity(len);
     let mut is_bytes = true;
 
-    for _ in 0..len {
+    for idx in 0..len {
         let (_, item_type) = reader
             .read_head()
             .map_err(|e| PyValueError::new_err(format!("Failed to read list item head: {e}")))?;
-        let item = decode_any_value(py, reader, item_type, depth + 1)?;
-        if is_bytes {
-            if item_type == TarsType::Int1 || item_type == TarsType::ZeroTag {
-                if let Ok(v) = item.extract::<i64>() {
-                    if (0..=255).contains(&v) {
-                        bytes_candidate.push(v as u8);
+        let item = match item_type {
+            TarsType::ZeroTag
+            | TarsType::Int1
+            | TarsType::Int2
+            | TarsType::Int4
+            | TarsType::Int8 => {
+                let v = reader
+                    .read_int(item_type)
+                    .map_err(|e| PyValueError::new_err(format!("Failed to read int: {e}")))?;
+                if is_bytes {
+                    if item_type == TarsType::Int1 || item_type == TarsType::ZeroTag {
+                        if (0..=255).contains(&v) {
+                            bytes_candidate.push(v as u8);
+                        } else {
+                            is_bytes = false;
+                        }
                     } else {
                         is_bytes = false;
                     }
-                } else {
+                }
+                v.into_pyobject(py)?.into_any()
+            }
+            _ => {
+                if is_bytes {
                     is_bytes = false;
                 }
-            } else {
-                is_bytes = false;
+                decode_any_value(py, reader, item_type, depth + 1)?
             }
+        };
+        let set_res = unsafe {
+            // SAFETY: PyList_SetItem 会“偷”引用, item.into_ptr 转移所有权。
+            // 每个索引只写入一次,与 PyList_New 的预分配长度一致。
+            ffi::PyList_SetItem(list_any.as_ptr(), idx as isize, item.into_ptr())
+        };
+        if set_res != 0 {
+            return Err(PyErr::fetch(py));
         }
-        list.append(item)?;
     }
 
     if is_bytes {
         return Ok(PyBytes::new(py, &bytes_candidate).into_any());
     }
 
-    Ok(list.into_any())
+    Ok(list_any)
 }
 
 fn decode_any_simple_list<'py>(
