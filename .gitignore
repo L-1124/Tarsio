@@ -118,3 +118,7 @@ venv.bak/
 .sisyphus/
 
 .trae/
+
+# Bench outputs
+bench_results.json
+python/bench/*.json
