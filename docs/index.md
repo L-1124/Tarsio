@@ -6,6 +6,7 @@ Tarsio 是一个 Rust 核心驱动的高性能 Python Tars (JCE) 协议库。
 ## 导航
 
 * **[使用指南](usage/models.md)**: 学习如何定义模型、编解码数据。
+* **[支持类型](usage/types.md)**: 查看内置、typing 与标准库的支持范围。
 * **[API 参考](api/struct.md)**: 查阅类与函数的详细说明。
 
 ## 安装
