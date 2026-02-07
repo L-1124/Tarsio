@@ -136,6 +136,8 @@ fn deserialize_struct<'py>(
     match def.kind {
         StructKind::TarsStruct => {
             let instance = unsafe {
+                // SAFETY: class_obj 由 Schema 持有,生命周期覆盖本次反序列化。
+                // 这里使用 PyType_GenericAlloc 创建未初始化对象,后续逐字段写入。
                 let type_ptr = class_obj.as_ptr() as *mut ffi::PyTypeObject;
                 let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
                 if obj_ptr.is_null() {
@@ -146,6 +148,8 @@ fn deserialize_struct<'py>(
             for (idx, field) in def.fields_sorted.iter().enumerate() {
                 if let Some(val) = values[idx].as_ref() {
                     unsafe {
+                        // SAFETY: name_py/val 均由 PyO3 管理引用计数。
+                        // 若设置属性失败,显式 drop 以确保引用及时释放,避免半初始化对象泄漏。
                         let name_py = field.name.as_str().into_pyobject(py)?;
                         let res = ffi::PyObject_GenericSetAttr(
                             instance.as_ptr(),
@@ -153,7 +157,9 @@ fn deserialize_struct<'py>(
                             val.as_ptr(),
                         );
                         if res != 0 {
-                            return Err(PyErr::fetch(py));
+                            let err = PyErr::fetch(py);
+                            drop(instance);
+                            return Err(err);
                         }
                     }
                 }
@@ -385,6 +391,7 @@ fn deserialize_value<'py>(
         TypeExpr::Union(variants) => decode_union_value(py, reader, type_id, variants, depth),
         TypeExpr::Struct(ptr) => {
             let obj_ptr = *ptr as *mut ffi::PyObject;
+            // SAFETY: ptr 指向 Schema 内部持有的 PyType,生命周期受 Py<PyType> 保障。
             let nested_any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
             let nested_cls = nested_any.cast::<PyType>()?;
             let nested_def = ensure_schema_for_class(py, nested_cls)?;
