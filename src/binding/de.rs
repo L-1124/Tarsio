@@ -323,12 +323,19 @@ fn deserialize_value<'py>(
         TypeExpr::List(inner) | TypeExpr::Tuple(inner) => {
             // 处理 SimpleList(字节数组)
             if type_id == TarsType::SimpleList {
-                let _sub_type = reader.read_u8().map_err(|e| {
+                let sub_type = reader.read_u8().map_err(|e| {
                     PyValueError::new_err(format!("Failed to read SimpleList subtype: {}", e))
                 })?;
+                if sub_type != 0 {
+                    return Err(PyValueError::new_err("SimpleList must contain Byte (0)"));
+                }
                 let len = reader.read_size().map_err(|e| {
                     PyValueError::new_err(format!("Failed to read SimpleList size: {}", e))
-                })? as usize;
+                })?;
+                if len < 0 {
+                    return Err(PyValueError::new_err("Invalid SimpleList size"));
+                }
+                let len = len as usize;
                 let bytes = reader.read_bytes(len).map_err(|e| {
                     PyValueError::new_err(format!("Failed to read SimpleList bytes: {}", e))
                 })?;
@@ -338,8 +345,11 @@ fn deserialize_value<'py>(
             // 普通列表
             let len = reader
                 .read_size()
-                .map_err(|e| PyValueError::new_err(format!("Failed to read list size: {}", e)))?
-                as usize;
+                .map_err(|e| PyValueError::new_err(format!("Failed to read list size: {}", e)))?;
+            if len < 0 {
+                return Err(PyValueError::new_err("Invalid list size"));
+            }
+            let len = len as usize;
 
             let list = PyList::empty(py);
             for _ in 0..len {
@@ -359,8 +369,11 @@ fn deserialize_value<'py>(
         TypeExpr::Map(k_type, v_type) => {
             let len = reader
                 .read_size()
-                .map_err(|e| PyValueError::new_err(format!("Failed to read map size: {}", e)))?
-                as usize;
+                .map_err(|e| PyValueError::new_err(format!("Failed to read map size: {}", e)))?;
+            if len < 0 {
+                return Err(PyValueError::new_err("Invalid map size"));
+            }
+            let len = len as usize;
 
             let dict = PyDict::new(py);
             for _ in 0..len {

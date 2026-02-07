@@ -298,8 +298,11 @@ fn decode_list_value<'py>(
     }
     let len = reader
         .read_size()
-        .map_err(|e| PyValueError::new_err(format!("Failed to read list size: {e}")))?
-        as usize;
+        .map_err(|e| PyValueError::new_err(format!("Failed to read list size: {e}")))?;
+    if len < 0 {
+        return Err(PyValueError::new_err("Invalid list size"));
+    }
+    let len = len as usize;
 
     let list = PyList::empty(py);
     let mut bytes_candidate: Vec<u8> = Vec::with_capacity(len);
@@ -349,8 +352,11 @@ fn decode_simple_list<'py>(
 
     let len = reader
         .read_size()
-        .map_err(|e| PyValueError::new_err(format!("Failed to read SimpleList size: {e}")))?
-        as usize;
+        .map_err(|e| PyValueError::new_err(format!("Failed to read SimpleList size: {e}")))?;
+    if len < 0 {
+        return Err(PyValueError::new_err("Invalid SimpleList size"));
+    }
+    let len = len as usize;
 
     let bytes = reader
         .read_bytes(len)
@@ -406,8 +412,11 @@ fn decode_map_value<'py>(
     }
     let len = reader
         .read_size()
-        .map_err(|e| PyValueError::new_err(format!("Failed to read map size: {e}")))?
-        as usize;
+        .map_err(|e| PyValueError::new_err(format!("Failed to read map size: {e}")))?;
+    if len < 0 {
+        return Err(PyValueError::new_err("Invalid map size"));
+    }
+    let len = len as usize;
     let dict = PyDict::new(py);
 
     for _ in 0..len {

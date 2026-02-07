@@ -84,6 +84,34 @@ def test_raw_string_invalid_utf8_raises_value_error() -> None:
         decode_raw(data)
 
 
+def test_raw_simplelist_invalid_subtype_raises_value_error() -> None:
+    """验证 SimpleList 子类型非法时抛出 ValueError."""
+    data = bytes([0x0D, 0x01, 0x00, 0x01, 0x00])
+    with pytest.raises(ValueError, match="SimpleList must contain Byte"):
+        decode_raw(data)
+
+
+def test_raw_simplelist_negative_size_raises_value_error() -> None:
+    """验证 SimpleList 负长度时抛出 ValueError."""
+    data = bytes([0x0D, 0x00, 0x00, 0xFF])
+    with pytest.raises(ValueError, match="Invalid SimpleList size"):
+        decode_raw(data)
+
+
+def test_raw_list_negative_size_raises_value_error() -> None:
+    """验证 List 负长度时抛出 ValueError."""
+    data = bytes([0x09, 0x00, 0xFF])
+    with pytest.raises(ValueError, match="Invalid list size"):
+        decode_raw(data)
+
+
+def test_raw_map_negative_size_raises_value_error() -> None:
+    """验证 Map 负长度时抛出 ValueError."""
+    data = bytes([0x08, 0x00, 0xFF])
+    with pytest.raises(ValueError, match="Invalid map size"):
+        decode_raw(data)
+
+
 def _nest_list(depth: int) -> object:
     """构造指定深度的嵌套 list,用于触发递归保护.
 

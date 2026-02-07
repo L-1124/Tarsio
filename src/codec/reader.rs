@@ -225,8 +225,13 @@ impl<'a> TarsReader<'a> {
             TarsType::StructEnd => Ok(()),
             TarsType::ZeroTag => Ok(()),
             TarsType::SimpleList => {
-                let _t = self.read_u8()?; // 内部类型(byte)
-                // 是否需要检查 t != 0?
+                let t = self.read_u8()?; // 内部类型(byte)
+                if t != 0 {
+                    return Err(Error::new(
+                        self.position() as usize,
+                        format!("SimpleList must contain Byte (0), got {}", t),
+                    ));
+                }
                 let size = self.read_size()?;
                 self.skip_bytes(size as u64)
             }
@@ -786,6 +791,17 @@ mod tests {
         let mut reader = TarsReader::new(&bad_data);
         let (_, t) = reader.read_head().unwrap();
         let err = reader.skip_field(t).unwrap_err();
+        assert!(
+            matches!(err, Error::Custom { msg, .. } if msg.contains("SimpleList must contain Byte"))
+        );
+    }
+
+    #[test]
+    fn test_skip_element_with_simple_list_invalid_subtype_returns_error() {
+        let bad_data = [(TarsType::SimpleList as u8), 1, 0];
+        let mut reader = TarsReader::new(&bad_data);
+        let (_, t) = reader.read_head().unwrap();
+        let err = reader.skip_element(t).unwrap_err();
         assert!(
             matches!(err, Error::Custom { msg, .. } if msg.contains("SimpleList must contain Byte"))
         );
