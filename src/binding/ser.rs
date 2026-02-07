@@ -71,9 +71,9 @@ fn serialize_struct_fields(
                 let dict = obj
                     .cast::<PyDict>()
                     .map_err(|_| PyTypeError::new_err("TypedDict value must be a dict instance"))?;
-                dict.get_item(field.name.as_str())?
+                dict.get_item(field.name_py.bind(obj.py()))?
             }
-            _ => obj.getattr(field.name.as_str()).ok(),
+            _ => obj.getattr(field.name_py.bind(obj.py())).ok(),
         };
 
         match value {
@@ -138,8 +138,8 @@ fn serialize_impl(
                 writer.write_double(tag, v);
             }
             WireType::String => {
-                let v: String = val.extract()?;
-                writer.write_string(tag, &v);
+                let v: &str = val.extract()?;
+                writer.write_string(tag, v);
             }
             _ => {
                 return Err(PyTypeError::new_err(
@@ -176,8 +176,9 @@ fn serialize_impl(
             writer.write_bytes(tag, &bytes);
         }
         TypeExpr::Decimal => {
-            let s = decimal_to_string(val)?;
-            writer.write_string(tag, &s);
+            let s = val.str()?;
+            let s = s.to_str()?;
+            writer.write_string(tag, s);
         }
         TypeExpr::Enum(enum_cls, inner) => {
             let enum_type = enum_cls.bind(val.py());
@@ -361,8 +362,8 @@ fn serialize_any(
         return Ok(());
     }
     if value.is_instance_of::<PyString>() {
-        let v: String = value.extract()?;
-        writer.write_string(tag, &v);
+        let v = value.cast::<PyString>()?.to_str()?;
+        writer.write_string(tag, v);
         return Ok(());
     }
     if value.is_instance_of::<PyBytes>() {
@@ -401,8 +402,9 @@ fn serialize_any(
         return Ok(());
     }
     if is_decimal_instance(value.py(), value)? {
-        let s = decimal_to_string(value)?;
-        writer.write_string(tag, &s);
+        let s = value.str()?;
+        let s = s.to_str()?;
+        writer.write_string(tag, s);
         return Ok(());
     }
     let enum_mod = value.py().import("enum")?;
@@ -525,8 +527,4 @@ fn uuid_to_bytes(_py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Vec<u8>>
     let bytes = value.getattr("bytes")?;
     let slice: &[u8] = bytes.extract()?;
     Ok(slice.to_vec())
-}
-
-fn decimal_to_string(value: &Bound<'_, PyAny>) -> PyResult<String> {
-    value.str()?.extract::<String>()
 }

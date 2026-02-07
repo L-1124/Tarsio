@@ -150,7 +150,7 @@ fn deserialize_struct<'py>(
                     unsafe {
                         // SAFETY: name_py/val 均由 PyO3 管理引用计数。
                         // 若设置属性失败,显式 drop 以确保引用及时释放,避免半初始化对象泄漏。
-                        let name_py = field.name.as_str().into_pyobject(py)?;
+                        let name_py = field.name_py.bind(py);
                         let res = ffi::PyObject_GenericSetAttr(
                             instance.as_ptr(),
                             name_py.as_ptr(),
@@ -170,7 +170,7 @@ fn deserialize_struct<'py>(
             let dict = PyDict::new(py);
             for (idx, field) in def.fields_sorted.iter().enumerate() {
                 if let Some(val) = values[idx].as_ref() {
-                    dict.set_item(field.name.as_str(), val)?;
+                    dict.set_item(field.name_py.bind(py), val)?;
                 }
             }
             Ok(dict.into_any())
@@ -182,7 +182,7 @@ fn deserialize_struct<'py>(
                     continue;
                 }
                 if let Some(val) = values[idx].as_ref() {
-                    kwargs.set_item(field.name.as_str(), val)?;
+                    kwargs.set_item(field.name_py.bind(py), val)?;
                 }
             }
             let instance = class_obj.call((), Some(&kwargs))?;
@@ -196,7 +196,7 @@ fn deserialize_struct<'py>(
                     if let Some(val) = values[idx].as_ref() {
                         object.call_method1(
                             "__setattr__",
-                            (instance.clone(), field.name.as_str(), val),
+                            (instance.clone(), field.name_py.bind(py), val),
                         )?;
                     }
                 }

@@ -7,7 +7,7 @@
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
-use pyo3::types::{PyAny, PyDict, PyList, PyTuple, PyType};
+use pyo3::types::{PyAny, PyDict, PyList, PyString, PyTuple, PyType};
 use regex::Regex;
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -82,6 +82,8 @@ pub struct Constraints {
 #[derive(Debug)]
 pub struct FieldDef {
     pub name: String,
+    /// 字段名对应的 Python 字符串(已 intern),用于热点路径复用.
+    pub name_py: Py<PyString>,
     pub tag: u8,
     pub ty: TypeExpr,
     pub default_value: Option<Py<PyAny>>,
@@ -296,6 +298,7 @@ pub fn compile_schema_from_info<'py>(
 
     for field_any in fields.iter() {
         let name: String = field_any.getattr("name")?.extract()?;
+        let name_py = PyString::intern(py, name.as_str()).unbind();
         let tag: u8 = field_any.getattr("tag")?.extract()?;
 
         if let Some(existing) = tags_seen.get(&tag) {
@@ -327,6 +330,7 @@ pub fn compile_schema_from_info<'py>(
 
         fields_def.push(FieldDef {
             name,
+            name_py,
             tag,
             ty: type_expr,
             default_value,
@@ -353,6 +357,7 @@ pub fn compile_schema_from_class<'py>(
     let mut fields_def: Vec<FieldDef> = Vec::with_capacity(fields_ir.len());
     for field in fields_ir {
         let name = field.name;
+        let name_py = PyString::intern(py, name.as_str()).unbind();
         let type_expr = type_info_ir_to_type_expr(py, &field.typ)?;
         let constraints = constraints_ir_to_constraints(field.constraints.as_ref(), name.as_str())?;
 
@@ -367,6 +372,7 @@ pub fn compile_schema_from_class<'py>(
 
         fields_def.push(FieldDef {
             name,
+            name_py,
             tag: field.tag,
             ty: type_expr,
             default_value,
@@ -433,7 +439,7 @@ fn compile_schema_from_fields<'py>(
 
     let mut field_names = Vec::with_capacity(def.fields_sorted.len());
     for field in &def.fields_sorted {
-        field_names.push(field.name.as_str().into_pyobject(py)?.into_any().unbind());
+        field_names.push(field.name_py.bind(py).to_owned().into_any().unbind());
     }
     let fields_tuple = PyTuple::new(py, field_names)?;
     cls.setattr("__struct_fields__", fields_tuple)?;
@@ -561,9 +567,9 @@ fn build_signature(py: Python<'_>, def: &StructDef, config: &SchemaConfig) -> Py
         }
 
         let param = if kwargs.is_empty() {
-            param_cls.call1((field.name.as_str(), kind))?
+            param_cls.call1((field.name_py.bind(py), kind))?
         } else {
-            param_cls.call((field.name.as_str(), kind), Some(&kwargs))?
+            param_cls.call((field.name_py.bind(py), kind), Some(&kwargs))?
         };
         params.append(param)?;
     }
@@ -791,7 +797,7 @@ impl Struct {
         };
 
         for field in &def.fields_sorted {
-            let val = match slf.getattr(field.name.as_str()) {
+            let val = match slf.getattr(field.name_py.bind(py)) {
                 Ok(v) => v,
                 Err(_) => {
                     if let Some(default_value) = field.default_value.as_ref() {
@@ -812,7 +818,7 @@ impl Struct {
             };
 
             unsafe {
-                let name_py = field.name.as_str().into_pyobject(py)?;
+                let name_py = field.name_py.bind(py);
                 let res =
                     ffi::PyObject_GenericSetAttr(instance.as_ptr(), name_py.as_ptr(), val.as_ptr());
                 if res != 0 {
@@ -837,7 +843,7 @@ impl Struct {
 
         let mut fields_str = Vec::new();
         for field in &def.fields_sorted {
-            let val = match slf.getattr(field.name.as_str()) {
+            let val = match slf.getattr(field.name_py.bind(py)) {
                 Ok(v) => v,
                 Err(_) => continue, // Skip missing fields
             };
@@ -885,8 +891,8 @@ impl Struct {
                 }
 
                 for field in &def.fields_sorted {
-                    let v1 = slf.getattr(field.name.as_str())?;
-                    let v2 = other.getattr(field.name.as_str())?;
+                    let v1 = slf.getattr(field.name_py.bind(py))?;
+                    let v2 = other.getattr(field.name_py.bind(py))?;
                     if !v1.eq(v2)? {
                         return Ok(false.into_pyobject(py)?.to_owned().into_any().unbind());
                     }
@@ -924,8 +930,8 @@ impl Struct {
                 let mut vals1 = Vec::with_capacity(def.fields_sorted.len());
                 let mut vals2 = Vec::with_capacity(def.fields_sorted.len());
                 for field in &def.fields_sorted {
-                    vals1.push(slf.getattr(field.name.as_str())?);
-                    vals2.push(other.getattr(field.name.as_str())?);
+                    vals1.push(slf.getattr(field.name_py.bind(py))?);
+                    vals2.push(other.getattr(field.name_py.bind(py))?);
                 }
                 let t1 = PyTuple::new(py, vals1)?;
                 let t2 = PyTuple::new(py, vals2)?;
@@ -957,7 +963,7 @@ impl Struct {
 
         let mut vals = Vec::with_capacity(def.fields_sorted.len());
         for field in &def.fields_sorted {
-            vals.push(slf.getattr(field.name.as_str())?);
+            vals.push(slf.getattr(field.name_py.bind(py))?);
         }
         let tuple = PyTuple::new(py, vals)?;
         tuple.hash()
@@ -1023,7 +1029,7 @@ pub fn construct_instance(
             // 位置参数提供
             // 检查与 kwargs 冲突
             if let Some(k) = kwargs {
-                if k.contains(&field.name)? {
+                if k.contains(field.name_py.bind(self_obj.py()))? {
                     return Err(pyo3::exceptions::PyTypeError::new_err(format!(
                         "__init__() got multiple values for argument '{}'",
                         field.name
@@ -1034,7 +1040,7 @@ pub fn construct_instance(
         } else {
             // 从关键字参数中读取
             if let Some(k) = kwargs {
-                match k.get_item(&field.name)? {
+                match k.get_item(field.name_py.bind(self_obj.py()))? {
                     Some(v) => Some(v),
                     None => None,
                 }
@@ -1071,7 +1077,7 @@ pub fn construct_instance(
 
         // 使用 PyObject_GenericSetAttr 绕过 frozen 检查
         unsafe {
-            let name_py = field.name.as_str().into_pyobject(self_obj.py())?;
+            let name_py = field.name_py.bind(self_obj.py());
             let res = pyo3::ffi::PyObject_GenericSetAttr(
                 self_obj.as_ptr(),
                 name_py.as_ptr(),
