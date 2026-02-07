@@ -72,9 +72,7 @@ fn encode_raw_dict_to_pybytes(
 
     RAW_ENCODE_BUFFER.with(|cell| {
         let mut buffer = cell.try_borrow_mut().map_err(|_| {
-            PyRuntimeError::new_err(
-                "Re-entrant encode_raw detected: thread-local buffer is already borrowed",
-            )
+            PyRuntimeError::new_err("Re-entrant encode_raw detected: thread-local buffer is already borrowed. Possible cause: __repr__/__str__/__eq__ (e.g. debug printing, exception formatting) triggered encode_raw during an ongoing encode_raw.")
         })?;
         buffer.clear();
 

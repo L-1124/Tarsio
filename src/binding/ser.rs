@@ -45,9 +45,7 @@ pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyRes
 
     ENCODE_BUFFER.with(|cell| {
         let mut buffer = cell.try_borrow_mut().map_err(|_| {
-            PyRuntimeError::new_err(
-                "Re-entrant encode detected: thread-local buffer is already borrowed",
-            )
+            PyRuntimeError::new_err("Re-entrant encode detected: thread-local buffer is already borrowed. Possible cause: __repr__/__str__/__eq__ (e.g. debug printing, exception formatting) triggered encode during an ongoing encode.")
         })?;
         buffer.clear();
 

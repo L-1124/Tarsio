@@ -189,6 +189,27 @@ def test_evolution_backward_compatibility_skips_unknown_bytes_field() -> None:
     assert result.name == "Alice"
 
 
+def test_reentrant_encode_error_message_mentions_common_triggers() -> None:
+    """编码过程中若 __eq__/__repr__ 意外触发 encode，应给出可理解的提示."""
+
+    class Inner(Struct):
+        x: Annotated[int, 0]
+
+        __hash__ = Struct.__hash__
+
+        def __eq__(self, other: object) -> bool:  # type: ignore[override]
+            _ = self.encode()
+            return False
+
+    class Outer(Struct, omit_defaults=True):
+        inner: Annotated[Inner, 0] = Inner(1)
+
+    with pytest.raises(
+        RuntimeError, match=r"Re-entrant encode detected.*(__repr__|__eq__|__str__)"
+    ):
+        _ = Outer(Inner(1)).encode()
+
+
 # ==========================================
 # Invariant: Error Handling
 # ==========================================

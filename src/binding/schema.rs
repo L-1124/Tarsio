@@ -193,10 +193,6 @@ pub struct StructConfig {
     #[pyo3(get)]
     pub kw_only: bool,
     #[pyo3(get)]
-    pub array_like: bool,
-    #[pyo3(get)]
-    pub gc: bool,
-    #[pyo3(get)]
     pub repr_omit_defaults: bool,
     #[pyo3(get)]
     pub omit_defaults: bool,
@@ -215,8 +211,6 @@ impl StructConfig {
             eq: config.eq,
             order: config.order,
             kw_only: config.kw_only,
-            array_like: false,
-            gc: true,
             repr_omit_defaults: config.repr_omit_defaults,
             omit_defaults: config.omit_defaults,
             weakref: config.weakref,

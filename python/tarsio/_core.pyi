@@ -161,15 +161,10 @@ class StructConfig:
     eq: bool
     order: bool
     kw_only: bool
-    array_like: bool
-    gc: bool
     repr_omit_defaults: bool
     omit_defaults: bool
     weakref: bool
     dict: bool
-    cache_hash: bool
-    tag_field: str | None
-    tag: Any | None
     rename: Any | None
 
 class Struct(metaclass=StructMeta):
@@ -243,16 +238,22 @@ class Struct(metaclass=StructMeta):
 
     __struct_fields__: ClassVar[tuple[str, ...]]
     __struct_config__: ClassVar[StructConfig]
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """构造 Struct 实例.
 
-        Args:
-            *args: 位置参数, 按字段 Tag 顺序。
-            **kwargs: 关键字参数, 字段名匹配。
-
-        Raises:
-            TypeError: 参数数量不匹配或缺少必填字段。
-        """
+    def __init_subclass__(
+        cls,
+        *,
+        frozen: bool = False,
+        order: bool = False,
+        forbid_unknown_tags: bool = False,
+        eq: bool = True,
+        omit_defaults: bool = False,
+        repr_omit_defaults: bool = False,
+        kw_only: bool = False,
+        dict: bool = False,
+        weakref: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """配置 Struct 子类行为."""
         ...
     def encode(self) -> bytes:
         """将当前实例编码为 Tars 二进制数据.
