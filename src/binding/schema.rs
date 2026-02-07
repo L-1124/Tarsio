@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
 use pyo3::types::{PyAny, PyDict, PyList, PyString, PyTuple, PyType};
 use regex::Regex;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::c_void;
@@ -121,6 +122,11 @@ impl StructDef {
 
 pub const SCHEMA_ATTR: &str = "__tarsio_schema__";
 
+thread_local! {
+    // 线程内 schema 缓存,用于减少高频 getattr 开销。
+    static SCHEMA_CACHE: RefCell<HashMap<usize, Arc<StructDef>>> = RefCell::new(HashMap::new());
+}
+
 const SCHEMA_CAPSULE_NAME: &CStr = c"tarsio.Schema";
 
 unsafe extern "C" fn schema_capsule_destructor(capsule: *mut ffi::PyObject) {
@@ -166,8 +172,15 @@ pub fn schema_from_class<'py>(
     py: Python<'py>,
     cls: &Bound<'py, PyType>,
 ) -> PyResult<Option<Arc<StructDef>>> {
+    let cls_key = cls.as_ptr() as usize;
+    if let Some(def) = SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).cloned()) {
+        return Ok(Some(def));
+    }
     if let Ok(schema_obj) = cls.getattr(SCHEMA_ATTR) {
         if let Some(def) = schema_from_capsule(py, &schema_obj)? {
+            SCHEMA_CACHE.with(|cache| {
+                cache.borrow_mut().insert(cls_key, Arc::clone(&def));
+            });
             return Ok(Some(def));
         }
     }
@@ -436,6 +449,11 @@ fn compile_schema_from_fields<'py>(
     let def = Arc::new(def);
     let capsule = schema_to_capsule(py, Arc::clone(&def))?;
     cls.setattr(SCHEMA_ATTR, capsule)?;
+    SCHEMA_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(cls.as_ptr() as usize, Arc::clone(&def));
+    });
 
     let mut field_names = Vec::with_capacity(def.fields_sorted.len());
     for field in &def.fields_sorted {

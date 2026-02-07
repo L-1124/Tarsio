@@ -12,26 +12,6 @@
 
 返回对象都包含 `kind` 字段，可用于分支判断。
 
-## 示例
-
-```python
-from typing import Annotated, Optional
-from tarsio import Struct
-from tarsio.inspect import type_info, struct_info
-
-class User(Struct):
-    id: Annotated[int, 0]
-    name: Annotated[str, 1]
-    nickname: Annotated[Optional[str], 2] = None
-
-info = type_info(Optional[int])
-assert info.kind == "optional"
-
-sinfo = struct_info(User)
-assert sinfo is not None
-assert len(sinfo.fields) == 3
-```
-
 ::: tarsio.inspect
     options:
       members:
