@@ -285,7 +285,7 @@ def encode(obj: Any) -> bytes:
     """将 Tars Struct 对象序列化为 Tars 二进制格式.
 
     Args:
-        obj: 继承自 `Struct` 的类实例。
+        obj: `Struct`、dataclass、NamedTuple、TypedDict 的实例。
 
     Returns:
         包含序列化数据的 bytes 对象。
@@ -299,7 +299,7 @@ def decode(cls: type[_StructT], data: bytes) -> _StructT:
     """从 Tars 二进制数据反序列化为类实例.
 
     Args:
-        cls: 目标类（继承自 `Struct`）。
+        cls: 目标类（`Struct`、dataclass、NamedTuple、TypedDict）。
         data: 包含 Tars 编码数据的 bytes 对象。
 
     Returns:

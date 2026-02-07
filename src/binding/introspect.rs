@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyString, PyTuple, PyType};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::binding::meta::Meta;
 use crate::binding::schema::Struct;
@@ -23,6 +23,16 @@ pub enum TypeInfoIR {
     Float,
     Bool,
     Bytes,
+    Any,
+    NoneType,
+    DateTime,
+    Date,
+    Time,
+    Timedelta,
+    Uuid,
+    Decimal,
+    Enum(Py<PyType>, Box<TypeInfoIR>),
+    Union(Vec<TypeInfoIR>),
     List(Box<TypeInfoIR>),
     Tuple(Box<TypeInfoIR>),
     Map(Box<TypeInfoIR>, Box<TypeInfoIR>),
@@ -36,10 +46,20 @@ pub struct FieldInfoIR {
     pub tag: u8,
     pub typ: TypeInfoIR,
     pub default_value: Option<Py<PyAny>>,
+    pub default_factory: Option<Py<PyAny>>,
     pub has_default: bool,
     pub is_optional: bool,
     pub is_required: bool,
+    pub init: bool,
     pub constraints: Option<ConstraintsIR>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StructKind {
+    TarsStruct,
+    Dataclass,
+    NamedTuple,
+    TypedDict,
 }
 
 pub fn introspect_struct_fields<'py>(
@@ -50,71 +70,16 @@ pub fn introspect_struct_fields<'py>(
         return Ok(None);
     }
 
-    let typevar_map = build_typevar_map(py, cls)?;
-    let hints = get_type_hints_with_fallback(py, cls)?;
-    if hints.is_empty() {
+    let Some(kind) = detect_struct_kind(py, cls)? else {
         return Ok(None);
+    };
+
+    match kind {
+        StructKind::TarsStruct => introspect_tars_struct_fields(py, cls),
+        StructKind::Dataclass => introspect_dataclass_fields(py, cls),
+        StructKind::NamedTuple => introspect_namedtuple_fields(py, cls),
+        StructKind::TypedDict => introspect_typeddict_fields(py, cls),
     }
-
-    let typing = py.import("typing")?;
-    let annotated = typing.getattr("Annotated")?;
-
-    let mut fields = Vec::new();
-    let mut tags_seen: HashMap<u8, String> = HashMap::new();
-
-    for (name_obj, type_hint) in hints.iter() {
-        let name: String = name_obj.extract()?;
-        if name.starts_with("__") {
-            continue;
-        }
-
-        let origin = typing.call_method1("get_origin", (&type_hint,))?;
-        if origin.is_none() || !origin.is(&annotated) {
-            continue;
-        }
-
-        let args_any = typing.call_method1("get_args", (&type_hint,))?;
-        let args = args_any.cast::<PyTuple>()?;
-        let (real_type, tag, constraints) = parse_annotated_args(name.as_str(), args)?;
-
-        if let Some(existing) = tags_seen.get(&tag) {
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Duplicate tag {} in '{}' and '{}'",
-                tag, existing, name
-            )));
-        }
-        tags_seen.insert(tag, name.clone());
-
-        let (typ, is_optional) = translate_type_info_ir(py, &real_type, &typevar_map)?;
-
-        let (has_default, default_val) = lookup_default_value(py, cls, name.as_str())?;
-        let (has_default, default_value) = if !has_default && is_optional {
-            (true, Some(py.None()))
-        } else if has_default {
-            (true, default_val)
-        } else {
-            (false, None)
-        };
-
-        let is_required = !is_optional && default_value.is_none();
-
-        fields.push(FieldInfoIR {
-            name,
-            tag,
-            typ,
-            default_value,
-            has_default,
-            is_optional,
-            is_required,
-            constraints,
-        });
-    }
-
-    if fields.is_empty() {
-        return Ok(None);
-    }
-    fields.sort_by_key(|f| f.tag);
-    Ok(Some(fields))
 }
 
 pub fn introspect_type_info_ir<'py>(
@@ -257,6 +222,467 @@ fn get_type_hints_with_fallback<'py>(
     Ok(hints)
 }
 
+pub fn detect_struct_kind<'py>(
+    py: Python<'py>,
+    cls: &Bound<'py, PyType>,
+) -> PyResult<Option<StructKind>> {
+    if cls.is_subclass_of::<Struct>()? {
+        return Ok(Some(StructKind::TarsStruct));
+    }
+    if is_dataclass_class(py, cls)? {
+        return Ok(Some(StructKind::Dataclass));
+    }
+    if is_namedtuple_class(py, cls)? {
+        return Ok(Some(StructKind::NamedTuple));
+    }
+    if is_typed_dict_class(py, cls)? {
+        return Ok(Some(StructKind::TypedDict));
+    }
+    Ok(None)
+}
+
+fn is_dataclass_class<'py>(py: Python<'py>, cls: &Bound<'py, PyType>) -> PyResult<bool> {
+    let dataclasses = py.import("dataclasses")?;
+    let is_dc = dataclasses
+        .getattr("is_dataclass")?
+        .call1((cls,))?
+        .is_truthy()?;
+    Ok(is_dc)
+}
+
+fn is_namedtuple_class<'py>(_py: Python<'py>, cls: &Bound<'py, PyType>) -> PyResult<bool> {
+    if !cls.is_subclass_of::<PyTuple>()? {
+        return Ok(false);
+    }
+    let Ok(fields_any) = cls.getattr("_fields") else {
+        return Ok(false);
+    };
+    Ok(fields_any.cast::<PyTuple>().is_ok())
+}
+
+fn is_typed_dict_class<'py>(py: Python<'py>, cls: &Bound<'py, PyType>) -> PyResult<bool> {
+    let typing = py.import("typing")?;
+    if let Ok(meta) = typing.getattr("_TypedDictMeta")
+        && cls.is_instance(&meta)?
+    {
+        return Ok(true);
+    }
+    Ok(cls.getattr("__total__").is_ok() && cls.getattr("__annotations__").is_ok())
+}
+
+fn is_subclass<'py>(
+    py: Python<'py>,
+    cls: &Bound<'py, PyType>,
+    base: &Bound<'py, PyAny>,
+) -> PyResult<bool> {
+    let builtins = py.import("builtins")?;
+    let issubclass = builtins.getattr("issubclass")?;
+    issubclass.call1((cls, base))?.is_truthy()
+}
+
+fn introspect_tars_struct_fields<'py>(
+    py: Python<'py>,
+    cls: &Bound<'py, PyType>,
+) -> PyResult<Option<Vec<FieldInfoIR>>> {
+    let typevar_map = build_typevar_map(py, cls)?;
+    let hints = get_type_hints_with_fallback(py, cls)?;
+    if hints.is_empty() {
+        return Ok(None);
+    }
+
+    let typing = py.import("typing")?;
+    let annotated = typing.getattr("Annotated")?;
+
+    let mut fields = Vec::new();
+    let mut tags_seen: HashMap<u8, String> = HashMap::new();
+
+    for (name_obj, type_hint) in hints.iter() {
+        let name: String = name_obj.extract()?;
+        if name.starts_with("__") {
+            continue;
+        }
+
+        let origin = typing.call_method1("get_origin", (&type_hint,))?;
+        if origin.is_none() || !origin.is(&annotated) {
+            continue;
+        }
+
+        let args_any = typing.call_method1("get_args", (&type_hint,))?;
+        let args = args_any.cast::<PyTuple>()?;
+        let (real_type, tag, constraints) = parse_annotated_args(name.as_str(), args)?;
+
+        if let Some(existing) = tags_seen.get(&tag) {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Duplicate tag {} in '{}' and '{}'",
+                tag, existing, name
+            )));
+        }
+        tags_seen.insert(tag, name.clone());
+
+        let (typ, is_optional) = translate_type_info_ir(py, &real_type, &typevar_map)?;
+
+        let (has_default, default_val) = lookup_default_value(py, cls, name.as_str())?;
+        let (has_default, default_value) = if !has_default && is_optional {
+            (true, Some(py.None()))
+        } else if has_default {
+            (true, default_val)
+        } else {
+            (false, None)
+        };
+
+        let is_required = !is_optional && default_value.is_none();
+
+        fields.push(FieldInfoIR {
+            name,
+            tag,
+            typ,
+            default_value,
+            default_factory: None,
+            has_default,
+            is_optional,
+            is_required,
+            init: true,
+            constraints,
+        });
+    }
+
+    if fields.is_empty() {
+        return Ok(None);
+    }
+    fields.sort_by_key(|f| f.tag);
+    Ok(Some(fields))
+}
+
+fn introspect_dataclass_fields<'py>(
+    py: Python<'py>,
+    cls: &Bound<'py, PyType>,
+) -> PyResult<Option<Vec<FieldInfoIR>>> {
+    let dataclasses = py.import("dataclasses")?;
+    let fields_any = dataclasses.call_method1("fields", (cls,))?;
+    let missing = dataclasses.getattr("MISSING")?;
+    let typevar_map = build_typevar_map(py, cls)?;
+    let hints = get_type_hints_with_fallback(py, cls)?;
+    if hints.is_empty() {
+        return Ok(None);
+    }
+
+    let typing = py.import("typing")?;
+    let annotated = typing.getattr("Annotated")?;
+
+    let mut fields = Vec::new();
+    let mut tags_seen: HashMap<u8, String> = HashMap::new();
+
+    for (idx, field_any) in fields_any.try_iter()?.enumerate() {
+        let field_any = field_any?;
+        let name: String = field_any.getattr("name")?.extract()?;
+        let init: bool = field_any.getattr("init")?.extract()?;
+        let type_hint = if let Some(hint) = hints.get_item(&name)? {
+            hint
+        } else {
+            field_any.getattr("type")?
+        };
+
+        let origin = typing.call_method1("get_origin", (&type_hint,))?;
+        let (real_type, tag_opt, constraints) = if !origin.is_none() && origin.is(&annotated) {
+            let args_any = typing.call_method1("get_args", (&type_hint,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            parse_annotated_args_loose(name.as_str(), args)?
+        } else {
+            (type_hint, None, None)
+        };
+
+        let tag = match tag_opt {
+            Some(tag) => tag,
+            None => {
+                if idx > 255 {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "Tag exceeds 255 for field '{}'",
+                        name
+                    )));
+                }
+                idx as u8
+            }
+        };
+
+        if let Some(existing) = tags_seen.get(&tag) {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Duplicate tag {} in '{}' and '{}'",
+                tag, existing, name
+            )));
+        }
+        tags_seen.insert(tag, name.clone());
+
+        let (typ, is_optional) = translate_type_info_ir(py, &real_type, &typevar_map)?;
+
+        let default_any = field_any.getattr("default")?;
+        let default_factory_any = field_any.getattr("default_factory")?;
+
+        let mut default_value = if default_any.is(&missing) {
+            None
+        } else {
+            Some(default_any.unbind())
+        };
+        let default_factory = if default_factory_any.is(&missing) {
+            None
+        } else {
+            Some(default_factory_any.unbind())
+        };
+
+        let mut has_default = default_value.is_some() || default_factory.is_some();
+        if !has_default && is_optional {
+            default_value = Some(py.None());
+            has_default = true;
+        }
+
+        let is_required = !is_optional && default_value.is_none() && default_factory.is_none();
+
+        fields.push(FieldInfoIR {
+            name,
+            tag,
+            typ,
+            default_value,
+            default_factory,
+            has_default,
+            is_optional,
+            is_required,
+            init,
+            constraints,
+        });
+    }
+
+    if fields.is_empty() {
+        return Ok(None);
+    }
+    fields.sort_by_key(|f| f.tag);
+    Ok(Some(fields))
+}
+
+fn introspect_namedtuple_fields<'py>(
+    py: Python<'py>,
+    cls: &Bound<'py, PyType>,
+) -> PyResult<Option<Vec<FieldInfoIR>>> {
+    let fields_any = cls.getattr("_fields")?;
+    let fields_tuple = fields_any.cast::<PyTuple>()?;
+    let typevar_map = build_typevar_map(py, cls)?;
+    let hints = get_type_hints_with_fallback(py, cls)?;
+    if hints.is_empty() {
+        return Ok(None);
+    }
+
+    let defaults = match cls.getattr("_field_defaults") {
+        Ok(value) => match value.cast::<PyDict>() {
+            Ok(dict) => Some(dict.clone().unbind()),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
+
+    let typing = py.import("typing")?;
+    let annotated = typing.getattr("Annotated")?;
+
+    let mut fields = Vec::new();
+    let mut tags_seen: HashMap<u8, String> = HashMap::new();
+
+    for (idx, name_any) in fields_tuple.iter().enumerate() {
+        let name: String = name_any.extract()?;
+        let Some(type_hint) = hints.get_item(&name)? else {
+            continue;
+        };
+
+        let origin = typing.call_method1("get_origin", (&type_hint,))?;
+        let (real_type, tag_opt, constraints) = if !origin.is_none() && origin.is(&annotated) {
+            let args_any = typing.call_method1("get_args", (&type_hint,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            parse_annotated_args_loose(name.as_str(), args)?
+        } else {
+            (type_hint, None, None)
+        };
+
+        let tag = match tag_opt {
+            Some(tag) => tag,
+            None => {
+                if idx > 255 {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "Tag exceeds 255 for field '{}'",
+                        name
+                    )));
+                }
+                idx as u8
+            }
+        };
+
+        if let Some(existing) = tags_seen.get(&tag) {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Duplicate tag {} in '{}' and '{}'",
+                tag, existing, name
+            )));
+        }
+        tags_seen.insert(tag, name.clone());
+
+        let (typ, is_optional) = translate_type_info_ir(py, &real_type, &typevar_map)?;
+
+        let mut default_value = defaults
+            .as_ref()
+            .and_then(|d| d.bind(py).get_item(&name).ok().flatten())
+            .map(|v| v.unbind());
+        let default_factory = None;
+
+        let mut has_default = default_value.is_some();
+        if !has_default && is_optional {
+            default_value = Some(py.None());
+            has_default = true;
+        }
+
+        let is_required = !is_optional && default_value.is_none();
+
+        fields.push(FieldInfoIR {
+            name,
+            tag,
+            typ,
+            default_value,
+            default_factory,
+            has_default,
+            is_optional,
+            is_required,
+            init: true,
+            constraints,
+        });
+    }
+
+    if fields.is_empty() {
+        return Ok(None);
+    }
+    fields.sort_by_key(|f| f.tag);
+    Ok(Some(fields))
+}
+
+fn introspect_typeddict_fields<'py>(
+    py: Python<'py>,
+    cls: &Bound<'py, PyType>,
+) -> PyResult<Option<Vec<FieldInfoIR>>> {
+    let annotations_any = cls.getattr("__annotations__")?;
+    let annotations = annotations_any.cast::<PyDict>()?;
+    if annotations.is_empty() {
+        return Ok(None);
+    }
+
+    let typevar_map = build_typevar_map(py, cls)?;
+    let hints = get_type_hints_with_fallback(py, cls)?;
+    let total: bool = cls.getattr("__total__")?.extract().unwrap_or(true);
+
+    let required_keys = cls
+        .getattr("__required_keys__")
+        .ok()
+        .and_then(|v| extract_str_set(&v).ok().flatten());
+    let optional_keys = cls
+        .getattr("__optional_keys__")
+        .ok()
+        .and_then(|v| extract_str_set(&v).ok().flatten());
+
+    let typing = py.import("typing")?;
+    let annotated = typing.getattr("Annotated")?;
+
+    let mut fields = Vec::new();
+    let mut tags_seen: HashMap<u8, String> = HashMap::new();
+
+    for (idx, (name_any, _)) in annotations.iter().enumerate() {
+        let name: String = name_any.extract()?;
+        let type_hint = hints
+            .get_item(&name)?
+            .or_else(|| annotations.get_item(&name).ok().flatten());
+        let Some(type_hint) = type_hint else {
+            continue;
+        };
+
+        let origin = typing.call_method1("get_origin", (&type_hint,))?;
+        let (real_type, tag_opt, constraints) = if !origin.is_none() && origin.is(&annotated) {
+            let args_any = typing.call_method1("get_args", (&type_hint,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            parse_annotated_args_loose(name.as_str(), args)?
+        } else {
+            (type_hint, None, None)
+        };
+
+        let tag = match tag_opt {
+            Some(tag) => tag,
+            None => {
+                if idx > 255 {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "Tag exceeds 255 for field '{}'",
+                        name
+                    )));
+                }
+                idx as u8
+            }
+        };
+
+        if let Some(existing) = tags_seen.get(&tag) {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Duplicate tag {} in '{}' and '{}'",
+                tag, existing, name
+            )));
+        }
+        tags_seen.insert(tag, name.clone());
+
+        let (typ, is_optional_by_type) = translate_type_info_ir(py, &real_type, &typevar_map)?;
+
+        let mut is_optional = is_optional_by_type;
+        if let Some(required) = required_keys.as_ref() {
+            is_optional = !required.contains(&name);
+        } else if let Some(optional) = optional_keys.as_ref() {
+            if optional.contains(&name) {
+                is_optional = true;
+            }
+        } else if !total {
+            is_optional = true;
+        }
+
+        let mut default_value = None;
+        let default_factory = None;
+        let mut has_default = false;
+        if !has_default && is_optional {
+            default_value = Some(py.None());
+            has_default = true;
+        }
+
+        let is_required = !is_optional && default_value.is_none();
+
+        fields.push(FieldInfoIR {
+            name,
+            tag,
+            typ,
+            default_value,
+            default_factory,
+            has_default,
+            is_optional,
+            is_required,
+            init: true,
+            constraints,
+        });
+    }
+
+    if fields.is_empty() {
+        return Ok(None);
+    }
+    fields.sort_by_key(|f| f.tag);
+    Ok(Some(fields))
+}
+
+fn extract_str_set<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Option<HashSet<String>>> {
+    if obj.is_none() {
+        return Ok(None);
+    }
+    let mut set = HashSet::new();
+    if let Ok(iter) = obj.try_iter() {
+        for item in iter {
+            let item = item?;
+            set.insert(item.extract()?);
+        }
+        return Ok(Some(set));
+    }
+    Ok(None)
+}
+
 fn parse_annotated_args<'py>(
     field_name: &str,
     args: &Bound<'py, PyTuple>,
@@ -337,12 +763,78 @@ fn parse_annotated_args<'py>(
     )))
 }
 
+fn parse_annotated_args_loose<'py>(
+    field_name: &str,
+    args: &Bound<'py, PyTuple>,
+) -> PyResult<(Bound<'py, PyAny>, Option<u8>, Option<ConstraintsIR>)> {
+    let real_type = args.get_item(0)?;
+    let mut found_int_tag: Option<u8> = None;
+    let mut found_meta: Option<PyRef<'py, Meta>> = None;
+
+    for item in args.iter().skip(1) {
+        if let Ok(int_tag) = item.extract::<i64>() {
+            if !(0..=255).contains(&int_tag) {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Tag must be in range 0..=255 for field '{}'",
+                    field_name
+                )));
+            }
+            if found_int_tag.is_some() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Multiple integer tags are not allowed for field '{}'",
+                    field_name
+                )));
+            }
+            found_int_tag = Some(int_tag as u8);
+            continue;
+        }
+
+        if let Ok(meta) = item.extract::<PyRef<'py, Meta>>() {
+            if found_meta.is_some() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Multiple Meta objects are not allowed for field '{}'",
+                    field_name
+                )));
+            }
+            found_meta = Some(meta);
+        }
+    }
+
+    if found_int_tag.is_some() && found_meta.is_some() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "Do not mix integer tag and Meta object",
+        ));
+    }
+
+    if let Some(meta) = found_meta {
+        let Some(tag) = meta.tag else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Meta object must include 'tag' for field '{}'",
+                field_name
+            )));
+        };
+
+        let constraints = ConstraintsIR {
+            gt: meta.gt,
+            lt: meta.lt,
+            ge: meta.ge,
+            le: meta.le,
+            min_len: meta.min_len,
+            max_len: meta.max_len,
+            pattern: meta.pattern.clone(),
+        };
+        return Ok((real_type, Some(tag), Some(constraints)));
+    }
+
+    Ok((real_type, found_int_tag, None))
+}
+
 fn translate_type_info_ir<'py>(
     py: Python<'py>,
     tp: &Bound<'py, PyAny>,
     typevar_map: &HashMap<usize, Bound<'py, PyAny>>,
 ) -> PyResult<(TypeInfoIR, bool)> {
-    let resolved = resolve_typevar(py, tp, typevar_map)?;
+    let mut resolved = resolve_typevar(py, tp, typevar_map)?;
 
     if resolved.is_instance_of::<PyString>() {
         let s: String = resolved.extract()?;
@@ -362,29 +854,172 @@ fn translate_type_info_ir<'py>(
         )));
     }
 
+    let annotated = typing.getattr("Annotated")?;
+    let union_origin = typing.getattr("Union")?;
+    let types_mod = py.import("types")?;
+    let union_type = types_mod.getattr("UnionType").ok();
     let builtins = py.import("builtins")?;
-    if resolved.is(&builtins.getattr("int")?) {
-        return Ok((TypeInfoIR::Int, false));
-    }
-    if resolved.is(&builtins.getattr("str")?) {
-        return Ok((TypeInfoIR::Str, false));
-    }
-    if resolved.is(&builtins.getattr("float")?) {
-        return Ok((TypeInfoIR::Float, false));
-    }
-    if resolved.is(&builtins.getattr("bool")?) {
-        return Ok((TypeInfoIR::Bool, false));
-    }
-    if resolved.is(&builtins.getattr("bytes")?) {
-        return Ok((TypeInfoIR::Bytes, false));
-    }
+    let none_type = py.None().bind(py).get_type();
 
-    let origin = typing.call_method1("get_origin", (&resolved,))?;
-    if !origin.is_none() {
-        let args_any = typing.call_method1("get_args", (&resolved,))?;
-        let args = args_any.cast::<PyTuple>()?;
+    let mut forced_optional = false;
+
+    loop {
+        if let Ok(super_type) = resolved.getattr("__supertype__") {
+            resolved = super_type;
+            continue;
+        }
+
+        let origin = typing.call_method1("get_origin", (&resolved,))?;
+        if origin.is_none() {
+            break;
+        }
+
+        if origin.is(&annotated) {
+            let args_any = typing.call_method1("get_args", (&resolved,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            let (real_type, _tag, _constraints) = parse_annotated_args_loose("_", args)?;
+            resolved = real_type;
+            continue;
+        }
+
+        if let Ok(final_cls) = typing.getattr("Final")
+            && origin.is(&final_cls)
+        {
+            let args_any = typing.call_method1("get_args", (&resolved,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            if args.is_empty() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Final requires an inner type",
+                ));
+            }
+            resolved = args.get_item(0)?;
+            continue;
+        }
+
+        if let Ok(type_alias) = typing.getattr("TypeAlias")
+            && origin.is(&type_alias)
+        {
+            let args_any = typing.call_method1("get_args", (&resolved,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            if args.is_empty() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "TypeAlias requires an inner type",
+                ));
+            }
+            resolved = args.get_item(0)?;
+            continue;
+        }
+
+        if let Ok(type_alias_type) = typing.getattr("TypeAliasType")
+            && origin.is(&type_alias_type)
+        {
+            let args_any = typing.call_method1("get_args", (&resolved,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            if args.is_empty() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "TypeAliasType requires an inner type",
+                ));
+            }
+            resolved = args.get_item(0)?;
+            continue;
+        }
+
+        if let Ok(required_cls) = typing.getattr("Required")
+            && origin.is(&required_cls)
+        {
+            let args_any = typing.call_method1("get_args", (&resolved,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            if args.is_empty() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Required requires an inner type",
+                ));
+            }
+            resolved = args.get_item(0)?;
+            continue;
+        }
+
+        if let Ok(not_required_cls) = typing.getattr("NotRequired")
+            && origin.is(&not_required_cls)
+        {
+            let args_any = typing.call_method1("get_args", (&resolved,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            if args.is_empty() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "NotRequired requires an inner type",
+                ));
+            }
+            forced_optional = true;
+            resolved = args.get_item(0)?;
+            continue;
+        }
+
+        if let Ok(literal_cls) = typing.getattr("Literal")
+            && origin.is(&literal_cls)
+        {
+            let args_any = typing.call_method1("get_args", (&resolved,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            if args.is_empty() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Literal requires at least one value",
+                ));
+            }
+
+            let mut variants = Vec::new();
+            let mut seen = HashSet::new();
+            let mut has_none = false;
+
+            for val in args.iter() {
+                if val.is_none() || val.is(&none_type) {
+                    has_none = true;
+                    continue;
+                }
+                let val_type = val.get_type();
+                let (typ, _opt) = translate_type_info_ir(py, val_type.as_any(), typevar_map)?;
+                let key = format!("{:?}", typ);
+                if seen.insert(key) {
+                    variants.push(typ);
+                }
+            }
+
+            if variants.is_empty() {
+                return Ok((TypeInfoIR::NoneType, true));
+            }
+            if has_none {
+                forced_optional = true;
+            }
+            if variants.len() == 1 {
+                return Ok((variants.remove(0), forced_optional));
+            }
+            return Ok((TypeInfoIR::Union(variants), forced_optional));
+        }
+
+        let is_union =
+            origin.is(&union_origin) || union_type.as_ref().is_some_and(|u| origin.is(u));
+        if is_union {
+            let args_any = typing.call_method1("get_args", (&resolved,))?;
+            let args = args_any.cast::<PyTuple>()?;
+            let mut variants = Vec::new();
+            let mut has_none = false;
+            for a in args.iter() {
+                if a.is_none() || a.is(&none_type) {
+                    has_none = true;
+                } else {
+                    let (inner, _opt_inner) = translate_type_info_ir(py, &a, typevar_map)?;
+                    variants.push(inner);
+                }
+            }
+            if variants.is_empty() {
+                return Ok((TypeInfoIR::NoneType, true));
+            }
+            if has_none && variants.len() == 1 {
+                return Ok((TypeInfoIR::Optional(Box::new(variants.remove(0))), true));
+            }
+            return Ok((TypeInfoIR::Union(variants), has_none || forced_optional));
+        }
 
         if origin.is(&builtins.getattr("list")?) || origin.is(&builtins.getattr("tuple")?) {
+            let args_any = typing.call_method1("get_args", (&resolved,))?;
+            let args = args_any.cast::<PyTuple>()?;
             if args.is_empty() {
                 let repr: String = resolved.repr()?.extract()?;
                 return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -392,14 +1027,29 @@ fn translate_type_info_ir<'py>(
                     repr
                 )));
             }
-            let (inner, _opt) = translate_type_info_ir(py, &args.get_item(0)?, typevar_map)?;
-            if origin.is(&builtins.getattr("list")?) {
-                return Ok((TypeInfoIR::List(Box::new(inner)), false));
+            if origin.is(&builtins.getattr("tuple")?) {
+                let ellipsis = py.Ellipsis();
+                let inner_any =
+                    if args.len() == 1 || (args.len() == 2 && args.get_item(1)?.is(ellipsis)) {
+                        args.get_item(0)?
+                    } else {
+                        let repr: String = resolved.repr()?.extract()?;
+                        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                            "Unsupported tuple type: {}",
+                            repr
+                        )));
+                    };
+                let (inner, _opt) = translate_type_info_ir(py, &inner_any, typevar_map)?;
+                return Ok((TypeInfoIR::Tuple(Box::new(inner)), forced_optional));
             }
-            return Ok((TypeInfoIR::Tuple(Box::new(inner)), false));
+
+            let (inner, _opt) = translate_type_info_ir(py, &args.get_item(0)?, typevar_map)?;
+            return Ok((TypeInfoIR::List(Box::new(inner)), forced_optional));
         }
 
         if origin.is(&builtins.getattr("dict")?) {
+            let args_any = typing.call_method1("get_args", (&resolved,))?;
+            let args = args_any.cast::<PyTuple>()?;
             if args.len() < 2 {
                 let repr: String = resolved.repr()?.extract()?;
                 return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -409,41 +1059,103 @@ fn translate_type_info_ir<'py>(
             }
             let (k, _opt_k) = translate_type_info_ir(py, &args.get_item(0)?, typevar_map)?;
             let (v, _opt_v) = translate_type_info_ir(py, &args.get_item(1)?, typevar_map)?;
-            return Ok((TypeInfoIR::Map(Box::new(k), Box::new(v)), false));
+            return Ok((TypeInfoIR::Map(Box::new(k), Box::new(v)), forced_optional));
         }
 
-        let union_origin = typing.getattr("Union")?;
-        let types_mod = py.import("types")?;
-        let union_type = types_mod.getattr("UnionType").ok();
-        let is_union =
-            origin.is(&union_origin) || union_type.as_ref().is_some_and(|u| origin.is(u));
-        if is_union {
-            let none_type = py.None().bind(py).get_type();
-            let mut non_none: Vec<Bound<'py, PyAny>> = Vec::new();
-            let mut has_none = false;
-            for a in args.iter() {
-                if a.is_none() || a.is(&none_type) {
-                    has_none = true;
-                } else {
-                    non_none.push(a);
+        break;
+    }
+
+    if let Ok(any_type) = typing.getattr("Any")
+        && resolved.is(&any_type)
+    {
+        return Ok((TypeInfoIR::Any, forced_optional));
+    }
+
+    if resolved.is(&none_type) || resolved.is_none() {
+        return Ok((TypeInfoIR::NoneType, true));
+    }
+
+    if resolved.is(&builtins.getattr("int")?) {
+        return Ok((TypeInfoIR::Int, forced_optional));
+    }
+    if resolved.is(&builtins.getattr("str")?) {
+        return Ok((TypeInfoIR::Str, forced_optional));
+    }
+    if resolved.is(&builtins.getattr("float")?) {
+        return Ok((TypeInfoIR::Float, forced_optional));
+    }
+    if resolved.is(&builtins.getattr("bool")?) {
+        return Ok((TypeInfoIR::Bool, forced_optional));
+    }
+    if resolved.is(&builtins.getattr("bytes")?) {
+        return Ok((TypeInfoIR::Bytes, forced_optional));
+    }
+
+    let datetime_mod = py.import("datetime")?;
+    if resolved.is(&datetime_mod.getattr("datetime")?) {
+        return Ok((TypeInfoIR::DateTime, forced_optional));
+    }
+    if resolved.is(&datetime_mod.getattr("date")?) {
+        return Ok((TypeInfoIR::Date, forced_optional));
+    }
+    if resolved.is(&datetime_mod.getattr("time")?) {
+        return Ok((TypeInfoIR::Time, forced_optional));
+    }
+    if resolved.is(&datetime_mod.getattr("timedelta")?) {
+        return Ok((TypeInfoIR::Timedelta, forced_optional));
+    }
+
+    let uuid_mod = py.import("uuid")?;
+    if resolved.is(&uuid_mod.getattr("UUID")?) {
+        return Ok((TypeInfoIR::Uuid, forced_optional));
+    }
+
+    let decimal_mod = py.import("decimal")?;
+    if resolved.is(&decimal_mod.getattr("Decimal")?) {
+        return Ok((TypeInfoIR::Decimal, forced_optional));
+    }
+
+    let enum_mod = py.import("enum")?;
+    if let Ok(resolved_type) = resolved.clone().cast_into::<PyType>() {
+        let enum_base = enum_mod.getattr("Enum")?;
+        if is_subclass(py, &resolved_type, &enum_base)? {
+            let members_any = resolved_type.getattr("__members__")?;
+            let values_any = members_any.call_method0("values")?;
+            let mut variants = Vec::new();
+            let mut seen = HashSet::new();
+            let mut has_member = false;
+            for member in values_any.try_iter()? {
+                let member = member?;
+                has_member = true;
+                let value = member.getattr("value")?;
+                let value_type = value.get_type();
+                let (typ, _opt) = translate_type_info_ir(py, value_type.as_any(), typevar_map)?;
+                let key = format!("{:?}", typ);
+                if seen.insert(key) {
+                    variants.push(typ);
                 }
             }
-            if has_none && non_none.len() == 1 {
-                let (inner, _opt_inner) = translate_type_info_ir(py, &non_none[0], typevar_map)?;
-                return Ok((TypeInfoIR::Optional(Box::new(inner)), true));
+            if !has_member {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Enum must define at least one member",
+                ));
             }
-            let repr: String = resolved.repr()?.extract()?;
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Unsupported Tars type: {}",
-                repr
-            )));
+            let inner = if variants.len() == 1 {
+                variants.remove(0)
+            } else {
+                TypeInfoIR::Union(variants)
+            };
+            return Ok((
+                TypeInfoIR::Enum(resolved_type.unbind(), Box::new(inner)),
+                forced_optional,
+            ));
         }
     }
 
     if let Ok(resolved_type) = resolved.clone().cast_into::<PyType>()
-        && resolved_type.is_subclass_of::<Struct>()?
+        && detect_struct_kind(py, &resolved_type)?.is_some()
     {
-        return Ok((TypeInfoIR::Struct(resolved_type.unbind()), false));
+        return Ok((TypeInfoIR::Struct(resolved_type.unbind()), forced_optional));
     }
 
     let repr: String = resolved.repr()?.extract()?;

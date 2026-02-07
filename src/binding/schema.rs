@@ -14,7 +14,9 @@ use std::ffi::CStr;
 use std::os::raw::c_void;
 use std::sync::Arc;
 
-use crate::binding::introspect::{ConstraintsIR, TypeInfoIR, introspect_struct_fields};
+use crate::binding::introspect::{
+    ConstraintsIR, StructKind, TypeInfoIR, detect_struct_kind, introspect_struct_fields,
+};
 
 // ==========================================
 // [L2] 线级中间表示:物理层(面向编解码)
@@ -36,10 +38,20 @@ pub enum WireType {
 // [L1] 语义中间表示:语义层(面向结构定义)
 // ==========================================
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub enum TypeExpr {
     Primitive(WireType),
     Struct(usize),
+    Any,
+    NoneType,
+    DateTime,
+    Date,
+    Time,
+    Timedelta,
+    Uuid,
+    Decimal,
+    Enum(Py<PyType>, Box<TypeExpr>),
+    Union(Vec<TypeExpr>),
     List(Box<TypeExpr>),
     Tuple(Box<TypeExpr>),
     Map(Box<TypeExpr>, Box<TypeExpr>),
@@ -47,17 +59,6 @@ pub enum TypeExpr {
 }
 
 impl TypeExpr {
-    pub fn lower(&self) -> WireType {
-        match self {
-            TypeExpr::Primitive(w) => w.clone(),
-            TypeExpr::Struct(ptr) => WireType::Struct(*ptr),
-            TypeExpr::List(inner) => WireType::List(Box::new(inner.lower())),
-            TypeExpr::Tuple(inner) => WireType::List(Box::new(inner.lower())),
-            TypeExpr::Map(k, v) => WireType::Map(Box::new(k.lower()), Box::new(v.lower())),
-            TypeExpr::Optional(inner) => inner.lower(),
-        }
-    }
-
     pub fn is_optional(&self) -> bool {
         matches!(self, TypeExpr::Optional(_))
     }
@@ -83,10 +84,11 @@ pub struct FieldDef {
     pub name: String,
     pub tag: u8,
     pub ty: TypeExpr,
-    pub wire_type: WireType,
     pub default_value: Option<Py<PyAny>>,
+    pub default_factory: Option<Py<PyAny>>,
     pub is_optional: bool,
     pub is_required: bool,
+    pub init: bool,
     pub constraints: Option<Box<Constraints>>,
 }
 
@@ -96,6 +98,7 @@ pub struct StructDef {
     pub fields_sorted: Vec<FieldDef>,
     pub tag_lookup_vec: Vec<Option<usize>>,
     pub name_to_tag: HashMap<String, u8>,
+    pub kind: StructKind,
     pub frozen: bool,
     pub order: bool,
     pub forbid_unknown_tags: bool,
@@ -167,6 +170,55 @@ pub fn schema_from_class<'py>(
         }
     }
     Ok(None)
+}
+
+pub fn ensure_schema_for_class<'py>(
+    py: Python<'py>,
+    cls: &Bound<'py, PyType>,
+) -> PyResult<Arc<StructDef>> {
+    if let Ok(params) = cls.getattr("__parameters__")
+        && let Ok(tuple) = params.cast::<PyTuple>()
+        && !tuple.is_empty()
+    {
+        return Err(pyo3::exceptions::PyTypeError::new_err("No schema found"));
+    }
+    if let Some(def) = schema_from_class(py, cls)? {
+        return Ok(def);
+    }
+    let Some(_kind) = detect_struct_kind(py, cls)? else {
+        let class_name = cls
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "Unknown".to_string());
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "Cannot build schema for '{}': Unsupported class type",
+            class_name
+        )));
+    };
+
+    let default_config = SchemaConfig {
+        frozen: false,
+        order: false,
+        forbid_unknown_tags: false,
+        eq: true,
+        omit_defaults: false,
+        repr_omit_defaults: false,
+        kw_only: false,
+        dict: false,
+        weakref: false,
+    };
+
+    let Some(def) = compile_schema_from_class(py, cls, default_config)? else {
+        let class_name = cls
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "Unknown".to_string());
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "Cannot build schema for '{}': No fields found",
+            class_name
+        )));
+    };
+    Ok(def)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -256,7 +308,6 @@ pub fn compile_schema_from_info<'py>(
 
         let type_any = field_any.getattr("type")?;
         let type_expr = parse_type_info(&type_any)?;
-        let wire_type = type_expr.lower();
 
         let is_optional: bool = field_any.getattr("optional")?.extract()?;
         let has_default: bool = field_any.getattr("has_default")?.extract()?;
@@ -278,10 +329,11 @@ pub fn compile_schema_from_info<'py>(
             name,
             tag,
             ty: type_expr,
-            wire_type,
             default_value,
+            default_factory: None,
             is_optional,
             is_required,
+            init: true,
             constraints,
         });
     }
@@ -301,8 +353,7 @@ pub fn compile_schema_from_class<'py>(
     let mut fields_def: Vec<FieldDef> = Vec::with_capacity(fields_ir.len());
     for field in fields_ir {
         let name = field.name;
-        let type_expr = type_info_ir_to_type_expr(&field.typ)?;
-        let wire_type = type_expr.lower();
+        let type_expr = type_info_ir_to_type_expr(py, &field.typ)?;
         let constraints = constraints_ir_to_constraints(field.constraints.as_ref(), name.as_str())?;
 
         let mut default_value = if field.has_default {
@@ -318,10 +369,11 @@ pub fn compile_schema_from_class<'py>(
             name,
             tag: field.tag,
             ty: type_expr,
-            wire_type,
             default_value,
+            default_factory: field.default_factory,
             is_optional: field.is_optional,
             is_required: field.is_required,
+            init: field.init,
             constraints,
         });
     }
@@ -338,6 +390,8 @@ fn compile_schema_from_fields<'py>(
     if fields_def.is_empty() {
         return Ok(None);
     }
+
+    let kind = detect_struct_kind(py, cls)?.unwrap_or(StructKind::TarsStruct);
 
     fields_def.sort_by_key(|f| f.tag);
 
@@ -361,6 +415,7 @@ fn compile_schema_from_fields<'py>(
         fields_sorted: fields_def,
         tag_lookup_vec,
         name_to_tag,
+        kind,
         frozen: config.frozen,
         order: config.order,
         forbid_unknown_tags: config.forbid_unknown_tags,
@@ -391,23 +446,44 @@ fn compile_schema_from_fields<'py>(
     Ok(Some(def))
 }
 
-fn type_info_ir_to_type_expr(typ: &TypeInfoIR) -> PyResult<TypeExpr> {
+fn type_info_ir_to_type_expr(py: Python<'_>, typ: &TypeInfoIR) -> PyResult<TypeExpr> {
     match typ {
         TypeInfoIR::Int => Ok(TypeExpr::Primitive(WireType::Int)),
         TypeInfoIR::Str => Ok(TypeExpr::Primitive(WireType::String)),
         TypeInfoIR::Float => Ok(TypeExpr::Primitive(WireType::Double)),
         TypeInfoIR::Bool => Ok(TypeExpr::Primitive(WireType::Int)),
         TypeInfoIR::Bytes => Ok(TypeExpr::List(Box::new(TypeExpr::Primitive(WireType::Int)))),
-        TypeInfoIR::List(inner) => Ok(TypeExpr::List(Box::new(type_info_ir_to_type_expr(inner)?))),
-        TypeInfoIR::Tuple(inner) => {
-            Ok(TypeExpr::Tuple(Box::new(type_info_ir_to_type_expr(inner)?)))
+        TypeInfoIR::Any => Ok(TypeExpr::Any),
+        TypeInfoIR::NoneType => Ok(TypeExpr::NoneType),
+        TypeInfoIR::DateTime => Ok(TypeExpr::DateTime),
+        TypeInfoIR::Date => Ok(TypeExpr::Date),
+        TypeInfoIR::Time => Ok(TypeExpr::Time),
+        TypeInfoIR::Timedelta => Ok(TypeExpr::Timedelta),
+        TypeInfoIR::Uuid => Ok(TypeExpr::Uuid),
+        TypeInfoIR::Decimal => Ok(TypeExpr::Decimal),
+        TypeInfoIR::Enum(cls, inner) => Ok(TypeExpr::Enum(
+            cls.clone_ref(py),
+            Box::new(type_info_ir_to_type_expr(py, inner)?),
+        )),
+        TypeInfoIR::Union(items) => {
+            let mut variants = Vec::with_capacity(items.len());
+            for item in items {
+                variants.push(type_info_ir_to_type_expr(py, item)?);
+            }
+            Ok(TypeExpr::Union(variants))
         }
+        TypeInfoIR::List(inner) => Ok(TypeExpr::List(Box::new(type_info_ir_to_type_expr(
+            py, inner,
+        )?))),
+        TypeInfoIR::Tuple(inner) => Ok(TypeExpr::Tuple(Box::new(type_info_ir_to_type_expr(
+            py, inner,
+        )?))),
         TypeInfoIR::Map(k, v) => Ok(TypeExpr::Map(
-            Box::new(type_info_ir_to_type_expr(k)?),
-            Box::new(type_info_ir_to_type_expr(v)?),
+            Box::new(type_info_ir_to_type_expr(py, k)?),
+            Box::new(type_info_ir_to_type_expr(py, v)?),
         )),
         TypeInfoIR::Optional(inner) => Ok(TypeExpr::Optional(Box::new(type_info_ir_to_type_expr(
-            inner,
+            py, inner,
         )?))),
         TypeInfoIR::Struct(cls) => Ok(TypeExpr::Struct(cls.as_ptr() as usize)),
     }
@@ -504,6 +580,14 @@ fn parse_type_info(obj: &Bound<'_, PyAny>) -> PyResult<TypeExpr> {
         "float" => Ok(TypeExpr::Primitive(WireType::Double)),
         "bool" => Ok(TypeExpr::Primitive(WireType::Int)),
         "bytes" => Ok(TypeExpr::List(Box::new(TypeExpr::Primitive(WireType::Int)))),
+        "any" => Ok(TypeExpr::Any),
+        "none" => Ok(TypeExpr::NoneType),
+        "datetime" => Ok(TypeExpr::DateTime),
+        "date" => Ok(TypeExpr::Date),
+        "time" => Ok(TypeExpr::Time),
+        "timedelta" => Ok(TypeExpr::Timedelta),
+        "uuid" => Ok(TypeExpr::Uuid),
+        "decimal" => Ok(TypeExpr::Decimal),
         "list" => {
             let inner_any = obj.getattr("item_type")?;
             let inner = parse_type_info(&inner_any)?;
@@ -525,6 +609,22 @@ fn parse_type_info(obj: &Bound<'_, PyAny>) -> PyResult<TypeExpr> {
             let inner_any = obj.getattr("inner_type")?;
             let inner = parse_type_info(&inner_any)?;
             Ok(TypeExpr::Optional(Box::new(inner)))
+        }
+        "enum" => {
+            let cls_any = obj.getattr("cls")?;
+            let cls = cls_any.cast::<PyType>()?;
+            let inner_any = obj.getattr("value_type")?;
+            let inner = parse_type_info(&inner_any)?;
+            Ok(TypeExpr::Enum(cls.clone().unbind(), Box::new(inner)))
+        }
+        "union" => {
+            let variants_any = obj.getattr("variants")?;
+            let variants = variants_any.cast::<PyTuple>()?;
+            let mut items = Vec::with_capacity(variants.len());
+            for v in variants.iter() {
+                items.push(parse_type_info(&v)?);
+            }
+            Ok(TypeExpr::Union(items))
         }
         "struct" => {
             let cls_any = obj.getattr("cls")?;
@@ -696,6 +796,8 @@ impl Struct {
                 Err(_) => {
                     if let Some(default_value) = field.default_value.as_ref() {
                         default_value.bind(py).clone()
+                    } else if let Some(factory) = field.default_factory.as_ref() {
+                        factory.bind(py).call0()?
                     } else if field.is_optional {
                         py.None().into_bound(py)
                     } else if field.is_required {
@@ -946,6 +1048,8 @@ pub fn construct_instance(
             None => {
                 if let Some(default_value) = field.default_value.as_ref() {
                     default_value.bind(self_obj.py()).clone()
+                } else if let Some(factory) = field.default_factory.as_ref() {
+                    factory.bind(self_obj.py()).call0()?
                 } else if field.is_optional {
                     pyo3::types::PyNone::get(self_obj.py())
                         .to_owned()

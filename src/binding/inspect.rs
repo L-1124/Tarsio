@@ -94,6 +94,152 @@ impl BytesType {
 }
 
 #[pyclass(module = "tarsio._core.inspect")]
+pub struct AnyType {
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl AnyType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "any"
+    }
+}
+
+#[pyclass(module = "tarsio._core.inspect")]
+pub struct NoneType {
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl NoneType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "none"
+    }
+}
+
+#[pyclass(module = "tarsio._core.inspect")]
+pub struct DateTimeType {
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl DateTimeType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "datetime"
+    }
+}
+
+#[pyclass(module = "tarsio._core.inspect")]
+pub struct DateType {
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl DateType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "date"
+    }
+}
+
+#[pyclass(module = "tarsio._core.inspect")]
+pub struct TimeType {
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl TimeType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "time"
+    }
+}
+
+#[pyclass(module = "tarsio._core.inspect")]
+pub struct TimedeltaType {
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl TimedeltaType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "timedelta"
+    }
+}
+
+#[pyclass(module = "tarsio._core.inspect")]
+pub struct UuidType {
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl UuidType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "uuid"
+    }
+}
+
+#[pyclass(module = "tarsio._core.inspect")]
+pub struct DecimalType {
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl DecimalType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "decimal"
+    }
+}
+
+#[pyclass(module = "tarsio._core.inspect")]
+pub struct EnumType {
+    #[pyo3(get)]
+    pub cls: Py<PyType>,
+    #[pyo3(get)]
+    pub value_type: Py<PyAny>,
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl EnumType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "enum"
+    }
+}
+
+#[pyclass(module = "tarsio._core.inspect")]
+pub struct UnionType {
+    #[pyo3(get)]
+    pub variants: Py<PyTuple>,
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl UnionType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "union"
+    }
+}
+
+#[pyclass(module = "tarsio._core.inspect")]
 pub struct ListType {
     #[pyo3(get)]
     pub item_type: Py<PyAny>,
@@ -277,6 +423,41 @@ fn build_type_info(
         TypeInfoIR::Float => Ok(Py::new(py, FloatType { constraints })?.into_any()),
         TypeInfoIR::Bool => Ok(Py::new(py, BoolType { constraints })?.into_any()),
         TypeInfoIR::Bytes => Ok(Py::new(py, BytesType { constraints })?.into_any()),
+        TypeInfoIR::Any => Ok(Py::new(py, AnyType { constraints })?.into_any()),
+        TypeInfoIR::NoneType => Ok(Py::new(py, NoneType { constraints })?.into_any()),
+        TypeInfoIR::DateTime => Ok(Py::new(py, DateTimeType { constraints })?.into_any()),
+        TypeInfoIR::Date => Ok(Py::new(py, DateType { constraints })?.into_any()),
+        TypeInfoIR::Time => Ok(Py::new(py, TimeType { constraints })?.into_any()),
+        TypeInfoIR::Timedelta => Ok(Py::new(py, TimedeltaType { constraints })?.into_any()),
+        TypeInfoIR::Uuid => Ok(Py::new(py, UuidType { constraints })?.into_any()),
+        TypeInfoIR::Decimal => Ok(Py::new(py, DecimalType { constraints })?.into_any()),
+        TypeInfoIR::Enum(cls, inner) => {
+            let value_type = build_type_info(py, inner, None)?;
+            Ok(Py::new(
+                py,
+                EnumType {
+                    cls: cls.clone_ref(py),
+                    value_type,
+                    constraints,
+                },
+            )?
+            .into_any())
+        }
+        TypeInfoIR::Union(variants) => {
+            let mut items = Vec::with_capacity(variants.len());
+            for item in variants {
+                items.push(build_type_info(py, item, None)?);
+            }
+            let variants_tuple = PyTuple::new(py, items)?;
+            Ok(Py::new(
+                py,
+                UnionType {
+                    variants: variants_tuple.unbind(),
+                    constraints,
+                },
+            )?
+            .into_any())
+        }
         TypeInfoIR::List(inner) => {
             let item_type = build_type_info(py, inner, None)?;
             Ok(Py::new(

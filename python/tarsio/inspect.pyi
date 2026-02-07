@@ -54,6 +54,69 @@ class BytesType:
     constraints: Constraints | None
     kind: str
 
+class AnyType:
+    """动态类型（运行时根据值推断编码）."""
+
+    constraints: Constraints | None
+    kind: str
+
+class NoneType:
+    """None 类型（通常仅出现在 Union/Optional 中）."""
+
+    constraints: Constraints | None
+    kind: str
+
+class DateTimeType:
+    """datetime.datetime 类型."""
+
+    constraints: Constraints | None
+    kind: str
+
+class DateType:
+    """datetime.date 类型."""
+
+    constraints: Constraints | None
+    kind: str
+
+class TimeType:
+    """datetime.time 类型."""
+
+    constraints: Constraints | None
+    kind: str
+
+class TimedeltaType:
+    """datetime.timedelta 类型."""
+
+    constraints: Constraints | None
+    kind: str
+
+class UuidType:
+    """uuid.UUID 类型."""
+
+    constraints: Constraints | None
+    kind: str
+
+class DecimalType:
+    """decimal.Decimal 类型."""
+
+    constraints: Constraints | None
+    kind: str
+
+class EnumType:
+    """Enum 类型."""
+
+    cls: type
+    value_type: TypeInfo
+    constraints: Constraints | None
+    kind: str
+
+class UnionType:
+    """Union 类型（非 Optional 形式）."""
+
+    variants: tuple[TypeInfo, ...]
+    constraints: Constraints | None
+    kind: str
+
 class ListType:
     """列表类型：`list[T]`."""
 
@@ -96,6 +159,16 @@ TypeInfo: TypeAlias = (
     | FloatType
     | BoolType
     | BytesType
+    | AnyType
+    | NoneType
+    | DateTimeType
+    | DateType
+    | TimeType
+    | TimedeltaType
+    | UuidType
+    | DecimalType
+    | EnumType
+    | UnionType
     | ListType
     | TupleType
     | MapType

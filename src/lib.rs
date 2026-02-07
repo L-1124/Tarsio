@@ -45,6 +45,16 @@ fn init_inspect_submodule(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<(
     inspect_mod.add_class::<binding::inspect::FloatType>()?;
     inspect_mod.add_class::<binding::inspect::BoolType>()?;
     inspect_mod.add_class::<binding::inspect::BytesType>()?;
+    inspect_mod.add_class::<binding::inspect::AnyType>()?;
+    inspect_mod.add_class::<binding::inspect::NoneType>()?;
+    inspect_mod.add_class::<binding::inspect::DateTimeType>()?;
+    inspect_mod.add_class::<binding::inspect::DateType>()?;
+    inspect_mod.add_class::<binding::inspect::TimeType>()?;
+    inspect_mod.add_class::<binding::inspect::TimedeltaType>()?;
+    inspect_mod.add_class::<binding::inspect::UuidType>()?;
+    inspect_mod.add_class::<binding::inspect::DecimalType>()?;
+    inspect_mod.add_class::<binding::inspect::EnumType>()?;
+    inspect_mod.add_class::<binding::inspect::UnionType>()?;
     inspect_mod.add_class::<binding::inspect::ListType>()?;
     inspect_mod.add_class::<binding::inspect::TupleType>()?;
     inspect_mod.add_class::<binding::inspect::MapType>()?;
