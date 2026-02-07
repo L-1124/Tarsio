@@ -66,22 +66,6 @@ jobs:
       - name: Run Python tests
         run: uv run pytest
 
-      # 8. Python Benchmarks
-      - name: Run Python benchmarks
-        run: >
-          uv run python python/bench/bench.py
-          --iterations 500
-          --warmup 50
-          --repeats 3
-          --mem-iterations 200
-          --output bench_results_${{ matrix.python-version }}.json
-
-      - name: Upload benchmark report
-        uses: actions/upload-artifact@v4
-        with:
-          name: bench-results-${{ matrix.python-version }}
-          path: bench_results_${{ matrix.python-version }}.json
-
-      # 9. Verify Docs Build
+      # 8. Verify Docs Build
       - name: Verify Docs Build
         run: uv run mkdocs build --strict

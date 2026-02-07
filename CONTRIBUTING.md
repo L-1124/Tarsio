@@ -53,7 +53,6 @@
 
 * **单元测试**: 写在文件底部的 `mod tests`。
 * **Property Tests**: 使用 `proptest` 进行 codec roundtrip 验证。
-* **Benchmarks**: 使用 `criterion` 监控关键路径。
 
 ### 质量
 

@@ -98,6 +98,9 @@ fn write_struct_fields(
     let mut fields: Vec<(u8, Bound<'_, PyAny>)> = Vec::with_capacity(dict.len());
 
     for (key, value) in dict.iter() {
+        if value.is_none() {
+            continue;
+        }
         let tag = key
             .extract::<u8>()
             .map_err(|_| PyTypeError::new_err("Struct tag must be int in range 0-255"))?;
