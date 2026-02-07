@@ -230,6 +230,14 @@ impl<'a> TarsReader<'a> {
                 let size = self.read_size()?;
                 self.skip_bytes(size as u64)
             }
+            TarsType::Map => {
+                let size = self.read_size()?;
+                for _ in 0..size * 2 {
+                    let (_, t) = self.read_head()?;
+                    self.skip_element(t)?;
+                }
+                Ok(())
+            }
             TarsType::List => {
                 let size = self.read_size()?;
                 for _ in 0..size {
@@ -237,13 +245,6 @@ impl<'a> TarsReader<'a> {
                     self.skip_element(t)?;
                 }
                 Ok(())
-            }
-            _ => {
-                // Map 等
-                Err(Error::InvalidType {
-                    offset: self.position() as usize,
-                    type_id: type_id as u8,
-                })
             }
         }
     }
@@ -732,6 +733,21 @@ mod tests {
         assert_eq!(tag, 1);
         assert_eq!(t, TarsType::StructBegin);
         reader.skip_field(t).unwrap();
+        assert!(reader.is_end());
+    }
+
+    #[test]
+    fn test_skip_element_with_map_type_advances_cursor_to_end() {
+        let mut w = TarsWriter::new();
+        w.write_tag(0, TarsType::Map);
+        w.write_int(0, 1);
+        w.write_int(0, 42);
+        w.write_string(1, "x");
+
+        let mut reader = TarsReader::new(w.get_buffer());
+        let (_tag, t) = reader.read_head().unwrap();
+        assert_eq!(t, TarsType::Map);
+        reader.skip_element(t).unwrap();
         assert!(reader.is_end());
     }
 
