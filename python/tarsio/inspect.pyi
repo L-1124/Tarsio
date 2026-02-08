@@ -10,10 +10,30 @@ from typing import Any, TypeAlias, TypeVar
 
 T = TypeVar("T")
 
+class Type:
+    """类型内省基类.
+
+    Attributes:
+        kind: 类型分支标识。
+        constraints: 字段约束。
+    """
+
+    kind: str
+    constraints: Constraints | None
+
 class Constraints:
     """字段约束信息.
 
     这些约束通常来自 `tarsio.Meta(...)`（如 `gt/min_len/pattern`），用于在解码时进行校验。
+
+    Attributes:
+        gt: 大于约束。
+        lt: 小于约束。
+        ge: 大于等于约束。
+        le: 小于等于约束。
+        min_len: 最小长度约束。
+        max_len: 最大长度约束。
+        pattern: 正则模式约束。
     """
 
     gt: float | None
@@ -24,160 +44,151 @@ class Constraints:
     max_len: int | None
     pattern: str | None
 
-class IntType:
+class IntType(Type):
     """整数类型（JCE int 家族的抽象视图）.
 
     编码：`ZeroTag` 或 `Int1/Int2/Int4/Int8`。
     """
 
-    constraints: Constraints | None
-    kind: str
-
-class StrType:
+class StrType(Type):
     """字符串类型.
 
     编码：`String1` 或 `String4`。
     """
 
-    constraints: Constraints | None
-    kind: str
-
-class FloatType:
+class FloatType(Type):
     """浮点类型（运行时对应 double 语义）.
 
     编码：`ZeroTag` 或 `Double`。
     """
 
-    constraints: Constraints | None
-    kind: str
-
-class BoolType:
+class BoolType(Type):
     """布尔类型（在 JCE 编码层面通常以 int 表达）.
 
     编码：`ZeroTag` 或 `Int1/Int2/Int4/Int8`。
     """
 
-    constraints: Constraints | None
-    kind: str
-
-class BytesType:
+class BytesType(Type):
     """二进制类型（运行时会被视为 byte-list 的特殊形式）.
 
     编码：`SimpleList`。
     """
 
-    constraints: Constraints | None
-    kind: str
-
-class AnyType:
+class AnyType(Type):
     """动态类型（运行时根据值推断编码）.
 
     编码：运行时按值类型选择具体 TarsType。
     """
 
-    constraints: Constraints | None
-    kind: str
-
-class NoneType:
+class NoneType(Type):
     """None 类型（通常仅出现在 Union/Optional 中）.
 
     编码：不能直接编码，仅用于 Optional/Union 的语义分支。
     """
 
-    constraints: Constraints | None
-    kind: str
 
-class EnumType:
+class EnumType(Type):
     """Enum 类型.
 
     编码：取 `value` 的内层类型映射。
+
+    Attributes:
+        cls: 枚举类型。
+        value_type: 枚举值的类型内省结果。
     """
 
     cls: type
     value_type: TypeInfo
-    constraints: Constraints | None
-    kind: str
 
-class UnionType:
+class UnionType(Type):
     """Union 类型（非 Optional 形式）.
 
     编码：按变体顺序匹配实际值，直接按匹配类型编码。
+
+    Attributes:
+        variants: 变体类型列表。
     """
 
     variants: tuple[TypeInfo, ...]
-    constraints: Constraints | None
-    kind: str
 
-class ListType:
+class ListType(Type):
     """列表类型：`list[T]`.
 
     编码：`List`（若元素类型为 int 且值为 bytes，则使用 `SimpleList`）。
+
+    Attributes:
+        item_type: 元素类型。
     """
 
     item_type: TypeInfo
-    constraints: Constraints | None
-    kind: str
 
-class TupleType:
+class TupleType(Type):
     """元组类型：固定长度、固定类型 `tuple[T1, T2, ...]`.
 
     编码：`List`。
+
+    Attributes:
+        items: 元素类型列表。
     """
 
     items: tuple[TypeInfo, ...]
-    constraints: Constraints | None
-    kind: str
 
-class VarTupleType:
+class VarTupleType(Type):
     """元组类型：可变长度、元素类型相同 `tuple[T, ...]`.
 
     编码：`List`（若元素类型为 int 且值为 bytes，则使用 `SimpleList`）。
+
+    Attributes:
+        item_type: 元素类型。
     """
 
     item_type: TypeInfo
-    constraints: Constraints | None
-    kind: str
 
-class MapType:
+class MapType(Type):
     """映射类型：`dict[K, V]`.
 
     编码：`Map`。
+
+    Attributes:
+        key_type: 键类型。
+        value_type: 值类型。
     """
 
     key_type: TypeInfo
     value_type: TypeInfo
-    constraints: Constraints | None
-    kind: str
 
-class SetType:
+class SetType(Type):
     """集合类型：`set[T]` / `frozenset[T]`.
 
     编码：`List`，解码为 set。
+
+    Attributes:
+        item_type: 元素类型。
     """
 
     item_type: TypeInfo
-    constraints: Constraints | None
-    kind: str
 
-class OptionalType:
+class OptionalType(Type):
     """可选类型：`T | None` 或 `typing.Optional[T]`.
 
     编码：None 时不写 tag，有值时按内层类型映射。
+
+    Attributes:
+        inner_type: 内层类型。
     """
 
     inner_type: TypeInfo
-    constraints: Constraints | None
-    kind: str
 
-class StructType:
+class StructType(Type):
     """Struct 类型：字段类型为另一个 `tarsio.Struct` 子类.
 
     编码：`StructBegin` ... `StructEnd`。
+
+    Attributes:
+        cls: Struct 类型。
     """
 
     cls: type
-    constraints: Constraints | None
-    kind: str
 
 TypeInfo: TypeAlias = (
     IntType
@@ -199,7 +210,18 @@ TypeInfo: TypeAlias = (
 )
 
 class FieldInfo:
-    """结构体字段信息."""
+    """结构体字段信息.
+
+    Attributes:
+        name: 字段名。
+        tag: 字段 tag。
+        type: 字段类型内省结果。
+        default: 字段默认值。
+        has_default: 是否显式有默认值。
+        optional: 是否可选。
+        required: 是否必填。
+        constraints: 字段约束。
+    """
 
     name: str
     tag: int
@@ -211,7 +233,12 @@ class FieldInfo:
     constraints: Constraints | None
 
 class StructInfo:
-    """结构体信息（类级 Schema 视图）."""
+    """结构体信息（类级 Schema 视图）.
+
+    Attributes:
+        cls: 结构体类型。
+        fields: 字段列表，按 tag 升序。
+    """
 
     cls: type
     fields: tuple[FieldInfo, ...]
