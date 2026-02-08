@@ -12,7 +12,7 @@ from ._core import (
     probe_struct,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 
 __all__ = [
