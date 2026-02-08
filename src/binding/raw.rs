@@ -12,6 +12,10 @@ use crate::codec::writer::TarsWriter;
 use simdutf8::basic::from_utf8;
 
 const MAX_DEPTH: usize = 100;
+// Capacity threshold (1MB). If buffer exceeds this, we shrink it back.
+const BUFFER_SHRINK_THRESHOLD: usize = 1024 * 1024;
+// Default initial capacity (128 bytes).
+const BUFFER_DEFAULT_CAPACITY: usize = 128;
 
 thread_local! {
     static RAW_ENCODE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(128));
@@ -157,7 +161,14 @@ fn encode_raw_dict_to_pybytes(
             write_struct_fields_from_vec(&mut writer, fields, depth)?;
         }
 
-        Ok(PyBytes::new(py, &buffer[..]).unbind())
+        let result = PyBytes::new(py, &buffer[..]).unbind();
+
+        // Capacity management
+        if buffer.capacity() > BUFFER_SHRINK_THRESHOLD {
+            buffer.shrink_to(BUFFER_DEFAULT_CAPACITY);
+        }
+
+        Ok(result)
     })
 }
 

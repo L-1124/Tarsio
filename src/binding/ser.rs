@@ -12,6 +12,10 @@ use crate::codec::consts::TarsType;
 use crate::codec::writer::TarsWriter;
 
 const MAX_DEPTH: usize = 100;
+// Capacity threshold (1MB). If buffer exceeds this, we shrink it back.
+const BUFFER_SHRINK_THRESHOLD: usize = 1024 * 1024;
+// Default initial capacity (128 bytes).
+const BUFFER_DEFAULT_CAPACITY: usize = 128;
 
 thread_local! {
     static ENCODE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(128));
@@ -211,7 +215,14 @@ pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyRes
             serialize_struct_fields(&mut writer, obj, &def, 0)?;
         }
 
-        Ok(PyBytes::new(py, &buffer[..]).unbind())
+        let result = PyBytes::new(py, &buffer[..]).unbind();
+
+        // Capacity management: If buffer grew too large, shrink it to avoid holding memory.
+        if buffer.capacity() > BUFFER_SHRINK_THRESHOLD {
+            buffer.shrink_to(BUFFER_DEFAULT_CAPACITY);
+        }
+
+        Ok(result)
     })
 }
 
