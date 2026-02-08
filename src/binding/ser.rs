@@ -447,27 +447,30 @@ fn select_union_variant<'py>(
 ) -> PyResult<(usize, Option<&'py TypeExpr>)> {
     if value.is_none() {
         for (idx, variant) in variants.iter().enumerate() {
-            if matches!(variant, TypeExpr::NoneType) {
-                return Ok((idx, None));
+            if matches!(variant, TypeExpr::Optional(_) | TypeExpr::NoneType) {
+                return Ok((idx, Some(variant)));
             }
         }
         return Err(PyTypeError::new_err("Union does not accept None"));
     }
 
-    for (idx, variant) in variants.iter().enumerate() {
-        if value_matches_type(py, variant, value)? {
-            return Ok((idx, Some(variant)));
+    with_stdlib_cache(py, |cache| {
+        for (idx, variant) in variants.iter().enumerate() {
+            if value_matches_type(py, variant, value, Some(cache))? {
+                return Ok((idx, Some(variant)));
+            }
         }
-    }
-    Err(PyTypeError::new_err(
-        "Value does not match any union variant",
-    ))
+        Err(PyTypeError::new_err(
+            "Value does not match any union variant",
+        ))
+    })
 }
 
 fn value_matches_type<'py>(
     py: Python<'py>,
     typ: &TypeExpr,
     value: &Bound<'py, PyAny>,
+    cache: Option<&StdlibCache>,
 ) -> PyResult<bool> {
     match typ {
         TypeExpr::Any => Ok(true),
@@ -485,12 +488,30 @@ fn value_matches_type<'py>(
             WireType::String => Ok(value.is_instance_of::<PyString>()),
             _ => Ok(false),
         },
-        TypeExpr::DateTime => is_datetime_instance(py, value),
-        TypeExpr::Date => is_date_instance(py, value),
-        TypeExpr::Time => is_time_instance(py, value),
-        TypeExpr::Timedelta => is_timedelta_instance(py, value),
-        TypeExpr::Uuid => is_uuid_instance(py, value),
-        TypeExpr::Decimal => is_decimal_instance(py, value),
+        TypeExpr::DateTime => match cache {
+            Some(c) => Ok(value.is_instance(c.datetime.bind(py).as_any())?),
+            None => is_datetime_instance(py, value),
+        },
+        TypeExpr::Date => match cache {
+            Some(c) => Ok(value.is_instance(c.date.bind(py).as_any())?),
+            None => is_date_instance(py, value),
+        },
+        TypeExpr::Time => match cache {
+            Some(c) => Ok(value.is_instance(c.time.bind(py).as_any())?),
+            None => is_time_instance(py, value),
+        },
+        TypeExpr::Timedelta => match cache {
+            Some(c) => Ok(value.is_instance(c.timedelta.bind(py).as_any())?),
+            None => is_timedelta_instance(py, value),
+        },
+        TypeExpr::Uuid => match cache {
+            Some(c) => Ok(value.is_instance(c.uuid.bind(py).as_any())?),
+            None => is_uuid_instance(py, value),
+        },
+        TypeExpr::Decimal => match cache {
+            Some(c) => Ok(value.is_instance(c.decimal.bind(py).as_any())?),
+            None => is_decimal_instance(py, value),
+        },
         TypeExpr::Enum(enum_cls, _) => Ok(value.is_instance(enum_cls.bind(py).as_any())?),
         TypeExpr::Struct(ptr) => {
             let cls = class_from_ptr(py, *ptr)?;
@@ -509,12 +530,12 @@ fn value_matches_type<'py>(
             if value.is_none() {
                 Ok(true)
             } else {
-                value_matches_type(py, inner, value)
+                value_matches_type(py, inner, value, cache)
             }
         }
         TypeExpr::Union(variants) => {
             for variant in variants {
-                if value_matches_type(py, variant, value)? {
+                if value_matches_type(py, variant, value, cache)? {
                     return Ok(true);
                 }
             }
@@ -562,46 +583,50 @@ fn serialize_any(
         return Ok(());
     }
 
-    if is_datetime_instance(value.py(), value)? {
-        let micros = datetime_to_micros(value.py(), value)?;
-        writer.write_int(tag, micros);
-        return Ok(());
-    }
-    if is_date_instance(value.py(), value)? {
-        let days = date_to_days(value.py(), value)?;
-        writer.write_int(tag, days);
-        return Ok(());
-    }
-    if is_time_instance(value.py(), value)? {
-        let nanos = time_to_nanos(value)?;
-        writer.write_int(tag, nanos);
-        return Ok(());
-    }
-    if is_timedelta_instance(value.py(), value)? {
-        let micros = timedelta_to_micros(value)?;
-        writer.write_int(tag, micros);
-        return Ok(());
-    }
-    if is_uuid_instance(value.py(), value)? {
-        let bytes = uuid_to_bytes(value.py(), value)?;
-        writer.write_bytes(tag, &bytes);
-        return Ok(());
-    }
-    if is_decimal_instance(value.py(), value)? {
-        let s = value.str()?;
-        let s = s.to_str()?;
-        writer.write_string(tag, s);
-        return Ok(());
-    }
-    with_stdlib_cache(value.py(), |cache| {
-        if value.is_instance(cache.enum_type.bind(value.py()).as_any())? {
+    let result = with_stdlib_cache(value.py(), |cache| {
+        let py = value.py();
+        if value.is_instance(cache.datetime.bind(py).as_any())? {
+            let micros = datetime_to_micros(py, value)?;
+            writer.write_int(tag, micros);
+            return Ok(Some(()));
+        }
+        if value.is_instance(cache.date.bind(py).as_any())? {
+            let days = date_to_days(py, value)?;
+            writer.write_int(tag, days);
+            return Ok(Some(()));
+        }
+        if value.is_instance(cache.time.bind(py).as_any())? {
+            let nanos = time_to_nanos(value)?;
+            writer.write_int(tag, nanos);
+            return Ok(Some(()));
+        }
+        if value.is_instance(cache.timedelta.bind(py).as_any())? {
+            let micros = timedelta_to_micros(value)?;
+            writer.write_int(tag, micros);
+            return Ok(Some(()));
+        }
+        if value.is_instance(cache.uuid.bind(py).as_any())? {
+            let bytes = uuid_to_bytes(py, value)?;
+            writer.write_bytes(tag, &bytes);
+            return Ok(Some(()));
+        }
+        if value.is_instance(cache.decimal.bind(py).as_any())? {
+            let s = value.str()?;
+            let s = s.to_str()?;
+            writer.write_string(tag, s);
+            return Ok(Some(()));
+        }
+        if value.is_instance(cache.enum_type.bind(py).as_any())? {
             let inner = value.getattr("value")?;
             serialize_any(writer, tag, &inner, depth + 1)?;
-            Ok(())
-        } else {
-            Ok(())
+            return Ok(Some(()));
         }
+        Ok(None)
     })?;
+
+    if result.is_some() {
+        return Ok(());
+    }
 
     let cls = value.get_type();
     if let Ok(def) = ensure_schema_for_class(value.py(), &cls) {

@@ -122,9 +122,16 @@ impl StructDef {
 
 pub const SCHEMA_ATTR: &str = "__tarsio_schema__";
 
+#[derive(Clone)]
+enum SchemaCacheEntry {
+    Struct(Arc<StructDef>),
+    NotStruct,
+}
+
 thread_local! {
     // 线程内 schema 缓存,用于减少高频 getattr 开销。
-    static SCHEMA_CACHE: RefCell<HashMap<usize, Arc<StructDef>>> = RefCell::new(HashMap::new());
+    // 使用 SchemaCacheEntry 同时记录正向(Struct)和负向(NotStruct)结果，避免对普通类型(dict, list)重复探测。
+    static SCHEMA_CACHE: RefCell<HashMap<usize, SchemaCacheEntry>> = RefCell::new(HashMap::new());
 }
 
 const SCHEMA_CAPSULE_NAME: &CStr = c"tarsio.Schema";
@@ -173,13 +180,19 @@ pub fn schema_from_class<'py>(
     cls: &Bound<'py, PyType>,
 ) -> PyResult<Option<Arc<StructDef>>> {
     let cls_key = cls.as_ptr() as usize;
-    if let Some(def) = SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).cloned()) {
-        return Ok(Some(def));
+    if let Some(entry) = SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).cloned()) {
+        return match entry {
+            SchemaCacheEntry::Struct(def) => Ok(Some(def)),
+            SchemaCacheEntry::NotStruct => Ok(None),
+        };
     }
+
     if let Ok(schema_obj) = cls.getattr(SCHEMA_ATTR) {
         if let Some(def) = schema_from_capsule(py, &schema_obj)? {
             SCHEMA_CACHE.with(|cache| {
-                cache.borrow_mut().insert(cls_key, Arc::clone(&def));
+                cache
+                    .borrow_mut()
+                    .insert(cls_key, SchemaCacheEntry::Struct(Arc::clone(&def)));
             });
             return Ok(Some(def));
         }
@@ -191,49 +204,69 @@ pub fn ensure_schema_for_class<'py>(
     py: Python<'py>,
     cls: &Bound<'py, PyType>,
 ) -> PyResult<Arc<StructDef>> {
+    let cls_key = cls.as_ptr() as usize;
+
+    // Check cache first (includes negative results)
+    if let Some(entry) = SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).cloned()) {
+        return match entry {
+            SchemaCacheEntry::Struct(def) => Ok(def),
+            SchemaCacheEntry::NotStruct => {
+                Err(pyo3::exceptions::PyTypeError::new_err("No schema found"))
+            }
+        };
+    }
+
+    // Parameters check for generic classes
     if let Ok(params) = cls.getattr("__parameters__")
         && let Ok(tuple) = params.cast::<PyTuple>()
         && !tuple.is_empty()
     {
+        SCHEMA_CACHE.with(|cache| {
+            cache
+                .borrow_mut()
+                .insert(cls_key, SchemaCacheEntry::NotStruct)
+        });
         return Err(pyo3::exceptions::PyTypeError::new_err("No schema found"));
     }
+
+    // Try normal schema lookup
     if let Some(def) = schema_from_class(py, cls)? {
         return Ok(def);
     }
-    let Some(_kind) = detect_struct_kind(py, cls)? else {
-        let class_name = cls
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| "Unknown".to_string());
-        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "Cannot build schema for '{}': Unsupported class type",
-            class_name
-        )));
-    };
 
-    let default_config = SchemaConfig {
-        frozen: false,
-        order: false,
-        forbid_unknown_tags: false,
-        eq: true,
-        omit_defaults: false,
-        repr_omit_defaults: false,
-        kw_only: false,
-        dict: false,
-        weakref: false,
-    };
+    // Internal introspection for automated schema building
+    if let Some(_kind) = detect_struct_kind(py, cls)? {
+        let default_config = SchemaConfig {
+            frozen: false,
+            order: false,
+            forbid_unknown_tags: false,
+            eq: true,
+            omit_defaults: false,
+            repr_omit_defaults: false,
+            kw_only: false,
+            dict: false,
+            weakref: false,
+        };
 
-    let Some(def) = compile_schema_from_class(py, cls, default_config)? else {
-        let class_name = cls
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| "Unknown".to_string());
-        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "Cannot build schema for '{}': No fields found",
-            class_name
-        )));
-    };
-    Ok(def)
+        if let Some(def) = compile_schema_from_class(py, cls, default_config)? {
+            return Ok(def);
+        }
+    }
+
+    // Mark as not a struct to avoid repeat checks
+    SCHEMA_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(cls_key, SchemaCacheEntry::NotStruct)
+    });
+    let class_name = cls
+        .name()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|_| "Unknown".to_string());
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "Cannot build schema for '{}': Unsupported class type",
+        class_name
+    )))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -450,9 +483,10 @@ fn compile_schema_from_fields<'py>(
     let capsule = schema_to_capsule(py, Arc::clone(&def))?;
     cls.setattr(SCHEMA_ATTR, capsule)?;
     SCHEMA_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .insert(cls.as_ptr() as usize, Arc::clone(&def));
+        cache.borrow_mut().insert(
+            cls.as_ptr() as usize,
+            SchemaCacheEntry::Struct(Arc::clone(&def)),
+        );
     });
 
     let mut field_names = Vec::with_capacity(def.fields_sorted.len());

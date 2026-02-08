@@ -429,13 +429,31 @@ fn decode_list_value<'py>(
         }
         Bound::from_owned_ptr(py, ptr)
     };
-    let mut bytes_candidate: Vec<u8> = Vec::with_capacity(len);
+
+    // Optimization: Peek first head to see if we should even try to collect bytes.
     let mut is_bytes = true;
+    let mut bytes_candidate: Option<Vec<u8>> = if len > 0 {
+        if let Ok((_, t)) = reader.peek_head() {
+            if matches!(t, TarsType::ZeroTag | TarsType::Int1) {
+                Some(Vec::with_capacity(len))
+            } else {
+                is_bytes = false;
+                None
+            }
+        } else {
+            is_bytes = false;
+            None
+        }
+    } else {
+        // Empty list -> b""
+        Some(Vec::new())
+    };
 
     for idx in 0..len {
         let (_, item_type) = reader
             .read_head()
             .map_err(|e| PyValueError::new_err(format!("Failed to read list item head: {e}")))?;
+
         let item = match item_type {
             TarsType::ZeroTag
             | TarsType::Int1
@@ -446,28 +464,27 @@ fn decode_list_value<'py>(
                     .read_int(item_type)
                     .map_err(|e| PyValueError::new_err(format!("Failed to read int: {e}")))?;
                 if is_bytes {
-                    if item_type == TarsType::Int1 || item_type == TarsType::ZeroTag {
-                        if (0..=255).contains(&v) {
-                            bytes_candidate.push(v as u8);
-                        } else {
-                            is_bytes = false;
+                    if (item_type == TarsType::Int1 || item_type == TarsType::ZeroTag)
+                        && (0..=255).contains(&v)
+                    {
+                        if let Some(buf) = &mut bytes_candidate {
+                            buf.push(v as u8);
                         }
                     } else {
                         is_bytes = false;
+                        bytes_candidate = None; // Drop the buffer early
                     }
                 }
                 v.into_pyobject(py)?.into_any()
             }
             _ => {
-                if is_bytes {
-                    is_bytes = false;
-                }
+                is_bytes = false;
+                bytes_candidate = None;
                 decode_value(py, reader, item_type, depth + 1)?
             }
         };
         let set_res = unsafe {
             // SAFETY: PyList_SetItem 会“偷”引用, item.into_ptr 转移所有权。
-            // 每个索引只写入一次,与 PyList_New 的预分配长度一致。
             ffi::PyList_SetItem(list.as_ptr(), idx as isize, item.into_ptr())
         };
         if set_res != 0 {
@@ -475,8 +492,8 @@ fn decode_list_value<'py>(
         }
     }
 
-    if is_bytes {
-        return Ok(PyBytes::new(py, &bytes_candidate).into_any());
+    if is_bytes && let Some(buf) = bytes_candidate {
+        return Ok(PyBytes::new(py, &buf).into_any());
     }
 
     Ok(list.into_any())
