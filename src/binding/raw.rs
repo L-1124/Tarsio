@@ -143,16 +143,27 @@ fn encode_raw_dict_to_pybytes(
 
         {
             let mut writer = TarsWriter::with_buffer(&mut *buffer);
-            write_struct_fields(&mut writer, dict, depth)?;
+            // Top-level object for encode_raw must be a Struct (dict[int, TarsValue])
+            let mut fields: Vec<(u8, Bound<'_, PyAny>)> = Vec::with_capacity(dict.len());
+            for (key, value) in dict.iter() {
+                if value.is_none() {
+                    continue;
+                }
+                let tag = key
+                    .extract::<u8>()
+                    .map_err(|_| PyTypeError::new_err("Struct tag must be int in range 0-255"))?;
+                fields.push((tag, value));
+            }
+            write_struct_fields_from_vec(&mut writer, fields, depth)?;
         }
 
         Ok(PyBytes::new(py, &buffer[..]).unbind())
     })
 }
 
-fn write_struct_fields(
+fn write_struct_fields_from_vec(
     writer: &mut TarsWriter<impl BufMut>,
-    dict: &Bound<'_, PyDict>,
+    items: Vec<(u8, Bound<'_, PyAny>)>,
     depth: usize,
 ) -> PyResult<()> {
     if depth > MAX_DEPTH {
@@ -160,21 +171,11 @@ fn write_struct_fields(
             "Recursion limit exceeded during raw serialization",
         ));
     }
-    let mut fields: Vec<(u8, Bound<'_, PyAny>)> = Vec::with_capacity(dict.len());
 
-    for (key, value) in dict.iter() {
-        if value.is_none() {
-            continue;
-        }
-        let tag = key
-            .extract::<u8>()
-            .map_err(|_| PyTypeError::new_err("Struct tag must be int in range 0-255"))?;
-        fields.push((tag, value));
-    }
+    let mut sorted_items = items;
+    sorted_items.sort_by_key(|(tag, _)| *tag);
 
-    fields.sort_by_key(|(tag, _)| *tag);
-
-    for (tag, value) in fields {
+    for (tag, value) in sorted_items {
         encode_value(writer, tag, &value, depth + 1)?;
     }
 
@@ -223,21 +224,49 @@ fn encode_value(
 
     if value.is_instance_of::<PyDict>() {
         let dict = value.cast::<PyDict>()?;
-        if is_struct_dict(dict)? {
-            writer.write_tag(tag, TarsType::StructBegin);
-            write_struct_fields(writer, dict, depth + 1)?;
-            writer.write_tag(0, TarsType::StructEnd);
-            return Ok(());
-        }
+        let len = dict.len();
+        let mut items = Vec::with_capacity(len);
+        let mut is_struct_candidate = true;
 
-        writer.write_tag(tag, TarsType::Map);
-        writer.write_int(0, dict.len() as i64);
         for (k, v) in dict.iter() {
+            if is_struct_candidate {
+                if k.extract::<u8>().is_ok() {
+                    items.push((k, v));
+                    continue;
+                } else {
+                    is_struct_candidate = false;
+                }
+            }
+
+            // Fallback to Map logic or already failed Struct check
             if k.hash().is_err() {
                 return Err(PyTypeError::new_err("Map key must be hashable"));
             }
-            encode_value(writer, 0, &k, depth + 1)?;
-            encode_value(writer, 1, &v, depth + 1)?;
+            items.push((k, v));
+        }
+
+        if is_struct_candidate {
+            writer.write_tag(tag, TarsType::StructBegin);
+
+            // Filter None values and extract tags for struct encoding
+            let mut struct_items = Vec::with_capacity(items.len());
+            for (k, v) in items {
+                if v.is_none() {
+                    continue;
+                }
+                // SAFETY: k.extract::<u8>() succeeded during iteration
+                let tag_u8 = k.extract::<u8>()?;
+                struct_items.push((tag_u8, v));
+            }
+            write_struct_fields_from_vec(writer, struct_items, depth + 1)?;
+            writer.write_tag(0, TarsType::StructEnd);
+        } else {
+            writer.write_tag(tag, TarsType::Map);
+            writer.write_int(0, len as i64);
+            for (k, v) in items {
+                encode_value(writer, 0, &k, depth + 1)?;
+                encode_value(writer, 1, &v, depth + 1)?;
+            }
         }
         return Ok(());
     }
@@ -541,13 +570,4 @@ fn decode_map_value<'py>(
     }
 
     Ok(dict.into_any())
-}
-
-fn is_struct_dict(dict: &Bound<'_, PyDict>) -> PyResult<bool> {
-    for (key, _) in dict.iter() {
-        if key.extract::<u8>().is_err() {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
