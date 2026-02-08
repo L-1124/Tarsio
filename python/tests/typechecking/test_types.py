@@ -78,19 +78,19 @@ def test_type_tars_dict_usage() -> None:
 
 def test_type_containers() -> None:
     """验证容器类型的编解码类型推导."""
-    # 列表测试
+    # 列表测试 (Raw 模式)
 
     lst = [1, 2, 3]
 
-    enc_lst = tarsio.encode(lst)
+    enc_lst = tarsio.encode_raw(lst)
 
     assert_type(enc_lst, bytes)
 
-    # 字典 (Map) 测试
+    # 字典 (Map) 测试 (Raw 模式)
 
     mp = {"a": 1}
 
-    enc_mp = tarsio.encode(mp)
+    enc_mp = tarsio.encode_raw(mp)
 
     assert_type(enc_mp, bytes)
 

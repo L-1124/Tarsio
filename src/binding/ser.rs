@@ -186,10 +186,10 @@ fn serialize_struct_fields(
 
     for field in &def.fields_sorted {
         let value = match def.kind {
-            StructKind::TypedDict => {
-                let dict = obj
-                    .cast::<PyDict>()
-                    .map_err(|_| PyTypeError::new_err("TypedDict value must be a dict instance"))?;
+            StructKind::TypedDict | StructKind::TarsDict => {
+                let dict = obj.cast::<PyDict>().map_err(|_| {
+                    PyTypeError::new_err("Dict-like struct value must be a dict instance")
+                })?;
                 dict.get_item(field.name_py.bind(obj.py()))?
             }
             _ => obj.getattr(field.name_py.bind(obj.py())).ok(),
@@ -466,7 +466,9 @@ fn value_matches_type<'py>(
             let cls = class_from_ptr(py, *ptr)?;
             let def = ensure_schema_for_class(py, &cls)?;
             match def.kind {
-                StructKind::TypedDict => Ok(value.is_instance_of::<PyDict>()),
+                StructKind::TypedDict | StructKind::TarsDict => {
+                    Ok(value.is_instance_of::<PyDict>())
+                }
                 _ => Ok(value.is_instance(cls.as_any())?),
             }
         }

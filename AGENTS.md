@@ -14,7 +14,9 @@ Tarsio 项目是 Rust 核心驱动的高性能 Python Tars (JCE) 协议库。此
 | `src/codec/` | 核心 JCE 编解码实现。 |
 | `src/binding/` | PyO3 绑定与 FFI 胶水层。 |
 | `python/tarsio/` | 用户 API 导出与类型定义。 |
-| `python/tests/` | Python 集成测试（必须平铺）。 |
+| `python/tests/` | Python 功能测试（必须平铺）。 |
+| `python/tests/typechecking/` | 静态类型检查测试。 |
+| `python/tests/benchmarks/` | 性能基准测试。 |
 
 ## Dev environment
 
@@ -39,7 +41,10 @@ Tarsio 项目是 Rust 核心驱动的高性能 Python Tars (JCE) 协议库。此
 ### Python 集成测试（python/tests/）
 
 * 仅使用 `pytest` 函数式测试（`def test_...`），禁止类式测试。
-* 测试文件必须位于 `python/tests/` 根目录，禁止子目录。
+* **位置规范**：
+    * 功能测试必须位于 `python/tests/` 根目录。
+    * 类型检查测试位于 `python/tests/typechecking/`。
+    * 性能基准测试位于 `python/tests/benchmarks/`。
 * 一个测试只验证一个行为，不混用 encode/decode。
 * 只验证可观察行为（输入/输出/异常）。
 * 异常必须断言准确类型（`TypeError`、`ValueError`）。

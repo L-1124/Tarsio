@@ -3,7 +3,7 @@
 from typing import Annotated, Optional
 
 import pytest
-from tarsio import Meta, Struct, ValidationError, encode_raw
+from tarsio import Meta, Struct, TarsDict, ValidationError, encode_raw
 from tarsio import inspect as tinspect
 
 
@@ -80,7 +80,7 @@ def test_meta_tag_only_is_allowed() -> None:
     class User(Struct):
         uid: Annotated[int, Meta(tag=1)]
 
-    data = encode_raw({1: 123})
+    data = encode_raw(TarsDict({1: 123}))
     obj = User.decode(data)
     assert obj.uid == 123
 
@@ -91,7 +91,7 @@ def test_numeric_gt_validation_raises() -> None:
     class User(Struct):
         uid: Annotated[int, Meta(tag=1, gt=0)]
 
-    data = encode_raw({1: 0})
+    data = encode_raw(TarsDict({1: 0}))
     with pytest.raises(ValidationError, match="must be >"):
         User.decode(data)
 
@@ -103,7 +103,7 @@ def test_numeric_ge_le_validation_passes(value: int) -> None:
     class User(Struct):
         uid: Annotated[int, Meta(tag=1, ge=0, le=10)]
 
-    ok = User.decode(encode_raw({1: value}))
+    ok = User.decode(encode_raw(TarsDict({1: value})))
     assert ok.uid == value
 
 
@@ -114,7 +114,7 @@ def test_numeric_ge_validation_raises() -> None:
         uid: Annotated[int, Meta(tag=1, ge=1)]
 
     with pytest.raises(ValidationError, match="must be >="):
-        User.decode(encode_raw({1: 0}))
+        User.decode(encode_raw(TarsDict({1: 0})))
 
 
 def test_string_min_len_validation_raises() -> None:
@@ -124,7 +124,7 @@ def test_string_min_len_validation_raises() -> None:
         name: Annotated[str, Meta(tag=1, min_len=1, max_len=3)]
 
     with pytest.raises(ValidationError, match="length must be >="):
-        User.decode(encode_raw({1: ""}))
+        User.decode(encode_raw(TarsDict({1: ""})))
 
 
 def test_string_max_len_validation_raises() -> None:
@@ -134,7 +134,7 @@ def test_string_max_len_validation_raises() -> None:
         name: Annotated[str, Meta(tag=1, min_len=1, max_len=3)]
 
     with pytest.raises(ValidationError, match="length must be <="):
-        User.decode(encode_raw({1: "abcd"}))
+        User.decode(encode_raw(TarsDict({1: "abcd"})))
 
 
 def test_string_pattern_validation_passes() -> None:
@@ -143,7 +143,7 @@ def test_string_pattern_validation_passes() -> None:
     class User(Struct):
         code: Annotated[str, Meta(tag=1, pattern=r"^[A-Z]{2}\d{2}$")]
 
-    ok = User.decode(encode_raw({1: "AA12"}))
+    ok = User.decode(encode_raw(TarsDict({1: "AA12"})))
     assert ok.code == "AA12"
 
 
@@ -154,7 +154,7 @@ def test_string_pattern_validation_raises() -> None:
         code: Annotated[str, Meta(tag=1, pattern=r"^[A-Z]{2}\d{2}$")]
 
     with pytest.raises(ValidationError, match="does not match pattern"):
-        User.decode(encode_raw({1: "aa12"}))
+        User.decode(encode_raw(TarsDict({1: "aa12"})))
 
 
 def test_type_info_primitives() -> None:

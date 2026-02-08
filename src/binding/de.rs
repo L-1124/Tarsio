@@ -175,6 +175,16 @@ fn deserialize_struct<'py>(
             }
             Ok(dict.into_any())
         }
+        StructKind::TarsDict => {
+            let dict = PyDict::new(py);
+            for (idx, field) in def.fields_sorted.iter().enumerate() {
+                if let Some(val) = values[idx].as_ref() {
+                    dict.set_item(field.name_py.bind(py), val)?;
+                }
+            }
+            let instance = class_obj.call1((dict,))?;
+            Ok(instance)
+        }
         StructKind::NamedTuple | StructKind::Dataclass => {
             let kwargs = PyDict::new(py);
             for (idx, field) in def.fields_sorted.iter().enumerate() {

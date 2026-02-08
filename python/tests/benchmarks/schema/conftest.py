@@ -3,7 +3,7 @@
 from typing import Any, cast
 
 import pytest
-from tarsio import encode
+from tarsio import TarsDict, encode
 
 from tests.benchmarks.schema.models import (
     Containers,
@@ -70,14 +70,16 @@ def containers_bytes(containers_obj):
 
 
 @pytest.fixture
-def medium_dict():
+def medium_dict() -> TarsDict:
     """生成 Medium 对象的字典形式 (用于 Raw 对比)."""
-    return {
-        0: list(range(100)),
-        1: [f"tag_{i}" for i in range(20)],
-        2: {f"key_{i}": i for i in range(20)},
-        3: None,
-    }
+    return TarsDict(
+        {
+            0: list(range(100)),
+            1: [f"tag_{i}" for i in range(20)],
+            2: {f"key_{i}": i for i in range(20)},
+            3: None,
+        }
+    )
 
 
 @pytest.fixture

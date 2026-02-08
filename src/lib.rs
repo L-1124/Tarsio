@@ -13,6 +13,7 @@ fn init_core_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<binding::schema::Struct>()?;
     m.add_class::<binding::schema::StructConfig>()?;
     m.add_class::<binding::meta::Meta>()?;
+    m.add_class::<binding::schema::TarsDict>()?;
     m.add("ValidationError", m.py().get_type::<ValidationError>())?;
     Ok(())
 }

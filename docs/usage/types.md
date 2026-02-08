@@ -193,17 +193,27 @@ assert restored.value == {"a": 1}  # Decodes to dict
 
 编码：`StructBegin` ... `StructEnd`。
 
-Tarsio 的核心类型。
+Tarsio 的核心类型，提供了最强的性能与最丰富的功能。
+
+* **构造器**：支持按 Tag 顺序的 **位置参数** 以及按字段名的 **关键字参数**。
+* **高性能解码**：**关键优化**。为了追求极致性能，从二进制解码 `Struct` 实例时会**绕过 `__init__` 方法**，直接将数据写入对象内存。这意味着你在 `__init__` 中定义的衍生逻辑在解码对象上不会执行。
+* **配置项**：支持 `frozen`（不可变）、`order`（可排序）、`omit_defaults`（编码省略默认值）等高级配置。
 
 ```python
-class User(Struct):
+class User(Struct, frozen=True):
     id: Annotated[int, 0]
     name: Annotated[str, 1]
+    # 支持 Meta 约束
+    score: Annotated[int, Meta(tag=2, ge=0)] = 0
 
-class S(Struct):
-    user: Annotated[User, 0]
+# 支持位置参数构造 (按 Tag 顺序)
+user1 = User(1, "Ada")
+# 也支持关键字参数
+user2 = User(name="Bob", id=2)
 
-obj = S(User(1, "Ada"))
+encoded = encode(user1)
+# 解码产生的对象不会调用 User.__init__
+restored = decode(User, encoded)
 ```
 
 ### [`dataclass`][dataclasses.dataclass]
@@ -253,6 +263,39 @@ obj = S({"a": 1, "b": "x"})
 encoded = encode(obj)
 restored = decode(S, encoded)
 assert restored.value == {"a": 1, "b": "x"}
+```
+
+### [`TarsDict`][tarsio.TarsDict]
+
+编码：`StructBegin` ... `StructEnd`。
+
+一种特殊的字典类型，继承自 `dict`，专门用于表示 Tars 结构中的 **Tag-Value 映射**。它的键必须是整数 Tag（0-255），值可以是任意支持的 Tars 类型。
+
+`TarsDict` 是 Raw 模式（无 Schema 模式）下的核心数据容器：
+
+* 在 `decode_raw` 中，所有的 Tars 结构体都会被还原为 `TarsDict`。
+* 在 `encode_raw` 中，只有 `TarsDict` 会被编码为结构体字段序列，普通 `dict` 则一律视为 Map。
+
+```python
+from tarsio import TarsDict, encode_raw
+
+# 1. 作为 Raw 模式的输入
+raw_data = TarsDict({
+    0: 123,           # Tag 0
+    1: "hello",       # Tag 1
+    2: TarsDict({     # 嵌套结构体
+        0: True
+    })
+})
+encoded = encode_raw(raw_data)
+
+# 2. 在 Struct 中用于保留原始结构
+class DynamicMsg(Struct):
+    header: Annotated[int, 0]
+    # 明确标注该字段为一个原始结构体容器
+    payload: Annotated[TarsDict, 1]
+
+msg = DynamicMsg(header=1, payload=TarsDict({10: "raw_content"}))
 ```
 
 ## 联合与可选类型 (Union Types)

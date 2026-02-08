@@ -1,13 +1,13 @@
 """Tarsio Raw 基准测试共享 Fixtures."""
 
 import pytest
-from tarsio import encode_raw
+from tarsio import TarsDict, encode_raw
 
 
 @pytest.fixture
-def raw_data_small():
+def raw_data_small() -> TarsDict:
     """生成 Small 对应的 raw dict."""
-    return {0: 123, 1: "benchmark", 2: True, 3: 3.14159}
+    return TarsDict({0: 123, 1: "benchmark", 2: True, 3: 3.14159})
 
 
 @pytest.fixture
@@ -17,10 +17,10 @@ def raw_bytes_small(raw_data_small):
 
 
 @pytest.fixture
-def raw_data_nested():
+def raw_data_nested() -> TarsDict:
     """生成 Parent 对应的 raw dict (复杂嵌套)."""
-    children = [{0: i, 1: f"child_{i}"} for i in range(50)]
-    return {0: children, 1: {"env": "production", "version": "1.0.0"}}
+    children = [TarsDict({0: i, 1: f"child_{i}"}) for i in range(50)]
+    return TarsDict({0: children, 1: {"env": "production", "version": "1.0.0"}})
 
 
 @pytest.fixture
@@ -30,9 +30,11 @@ def raw_bytes_nested(raw_data_nested):
 
 
 @pytest.fixture
-def raw_mixed_data():
+def raw_mixed_data() -> TarsDict:
     """生成混合类型字典."""
-    return {0: 123, 1: "hello", 2: [1, 2, 3], 3: {10: "nest"}, 200: 999}
+    return TarsDict(
+        {0: 123, 1: "hello", 2: [1, 2, 3], 3: TarsDict({10: "nest"}), 200: 999}
+    )
 
 
 @pytest.fixture
@@ -42,9 +44,9 @@ def raw_mixed_bytes(raw_mixed_data):
 
 
 @pytest.fixture
-def raw_huge_blob_struct():
+def raw_huge_blob_struct() -> TarsDict:
     """生成包含 10MB Blob 的 Raw Struct (字典)."""
-    return {0: b"\x00" * (10 * 1024 * 1024)}
+    return TarsDict({0: b"\x00" * (10 * 1024 * 1024)})
 
 
 @pytest.fixture
@@ -66,9 +68,9 @@ def raw_map_str_key():
 
 
 @pytest.fixture
-def raw_sparse_tag():
+def raw_sparse_tag() -> TarsDict:
     """生成稀疏 Tag 的 Struct."""
-    return {250: "sparse"}
+    return TarsDict({250: "sparse"})
 
 
 @pytest.fixture

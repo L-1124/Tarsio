@@ -754,9 +754,25 @@ fn parse_constraints(
     })))
 }
 
-// ==========================================
-// Python 类绑定
-// ==========================================
+#[pyclass(
+    subclass,
+    extends = PyDict,
+    module = "tarsio._core",
+    name = "TarsDict",
+    freelist = 1000
+)]
+pub struct TarsDict;
+
+#[pymethods]
+impl TarsDict {
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+        // TarsDict(dict) 继承行为，PyO3 会自动处理父类初始化（如果我们需要自定义初始化逻辑才写）
+        // 这里实际上只需要空结构体占位，让 Python 侧继承 dict
+        Ok(TarsDict)
+    }
+}
 
 /// Tarsio 的 Struct 基类.
 ///

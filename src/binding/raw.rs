@@ -6,6 +6,7 @@ use std::cell::RefCell;
 
 use bytes::BufMut;
 
+use crate::binding::schema::TarsDict;
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
 use crate::codec::writer::TarsWriter;
@@ -151,7 +152,7 @@ fn encode_raw_value_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResu
 ///     data: 待解码的 bytes.
 ///
 /// Returns:
-///     解码后的 dict[int, TarsValue].
+///     解码后的 dict[int, TarsValue] (实际返回 TarsDict 实例).
 ///
 /// Raises:
 ///     ValueError: 数据格式不正确、存在 trailing bytes、或递归深度超过 MAX_DEPTH.
@@ -376,7 +377,12 @@ fn decode_struct_fields<'py>(
             "Recursion limit exceeded during raw deserialization",
         ));
     }
-    let dict = PyDict::new(py);
+
+    // 使用 TarsDict (继承自 PyDict)
+    let dict = Bound::new(py, TarsDict)?
+        .into_any()
+        .cast::<PyDict>()?
+        .to_owned();
 
     while !reader.is_end() {
         let (tag, type_id) = reader

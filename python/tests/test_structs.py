@@ -5,7 +5,7 @@ import inspect
 from typing import Annotated, Optional
 
 import pytest
-from tarsio import Struct, StructConfig, decode, encode
+from tarsio import Struct, StructConfig, TarsDict, decode, encode
 from tarsio._core import encode_raw
 
 # ==========================================
@@ -139,7 +139,7 @@ def test_optional_field_accepts_value(sample_optional_user) -> None:
 
 def test_default_value_used_when_field_missing() -> None:
     """Wire 缺失字段时应使用模型默认值."""
-    data = encode_raw({2: "a@b.com"})
+    data = encode_raw(TarsDict({2: "a@b.com"}))
     obj = UserWithDefaults.decode(data)
     assert obj.name == "unknown"
     assert obj.age == 0
@@ -148,7 +148,7 @@ def test_default_value_used_when_field_missing() -> None:
 
 def test_missing_non_optional_field_without_default_raises() -> None:
     """非 Optional 且无默认值的字段缺失应抛错."""
-    data = encode_raw({})
+    data = encode_raw(TarsDict({}))
     with pytest.raises(ValueError, match="Missing required field 'email'"):
         UserWithDefaults.decode(data)
 

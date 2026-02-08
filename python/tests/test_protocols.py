@@ -7,7 +7,15 @@
 from typing import Annotated, Optional
 
 import pytest
-from tarsio import Struct, decode, decode_raw, encode, encode_raw
+from tarsio import (
+    Struct,
+    TarsDict,
+    decode,
+    decode_raw,
+    encode,
+    encode_raw,
+    probe_struct,
+)
 from tarsio._core import decode_raw as core_decode_raw
 from tarsio._core import encode_raw as core_encode_raw
 
@@ -315,7 +323,7 @@ def test_decode_with_type_mismatch_raises_value_error() -> None:
 def test_encode_raw_with_map_writes_map_type_id() -> None:
     """Map 类型 (非 struct dict) 编码后首字节为 0x08."""
     inner = {"a": 1}
-    outer = {0: inner}
+    outer = TarsDict({0: inner})
 
     encoded = encode_raw(outer)
 
@@ -325,7 +333,7 @@ def test_encode_raw_with_map_writes_map_type_id() -> None:
 def test_encode_raw_with_list_writes_list_type_id() -> None:
     """List 类型编码后首字节为 0x09."""
     lst = [1, 2]
-    outer = {0: lst}
+    outer = TarsDict({0: lst})
 
     encoded = encode_raw(outer)
 
@@ -334,8 +342,8 @@ def test_encode_raw_with_list_writes_list_type_id() -> None:
 
 def test_encode_raw_with_nested_struct_writes_struct_begin_end() -> None:
     """嵌套 Struct (int 键 dict) 编码后首字节为 0x0A，末字节为 0x0B."""
-    inner = {1: 1}
-    outer = {0: inner}
+    inner = TarsDict({1: 1})
+    outer = TarsDict({0: inner})
 
     encoded = encode_raw(outer)
 
@@ -359,7 +367,7 @@ def test_decode_raw_max_depth_exceeded() -> None:
 
 def test_struct_encoding_rules() -> None:
     """验证结构体字段按 tag 排序编码."""
-    data = {3: 300, 1: 100, 2: 200}
+    data = TarsDict({3: 300, 1: 100, 2: 200})
     encoded = core_encode_raw(data)
     assert encoded[0] == 0x10
 
@@ -367,7 +375,7 @@ def test_struct_encoding_rules() -> None:
 def test_map_encoding_rules() -> None:
     """验证非整数键按 Map 类型编码."""
     inner_map = {"key": "value"}
-    data = {0: inner_map}
+    data = TarsDict({0: inner_map})
     encoded = core_encode_raw(data)
 
     assert encoded[0] == 0x08
@@ -376,7 +384,7 @@ def test_map_encoding_rules() -> None:
 def test_float_double() -> None:
     """验证浮点数编码为 Double 类型."""
     val = 1.234
-    data = {0: val}
+    data = TarsDict({0: val})
     encoded = core_encode_raw(data)
 
     head_byte = encoded[0]
@@ -386,7 +394,7 @@ def test_float_double() -> None:
 def test_bytes_simplelist() -> None:
     """验证 bytes 编码为 SimpleList 类型."""
     val = b"hello"
-    data = {0: val}
+    data = TarsDict({0: val})
     encoded = core_encode_raw(data)
 
     head_byte = encoded[0]
@@ -403,14 +411,14 @@ def test_roundtrip_reversibility() -> None:
         "string",
         b"\xff",
         [300, 400],
-        {1: "a", 2: "b"},
+        TarsDict({1: "a", 2: "b"}),
         {"a": 1, "b": 2},
         True,
         False,
     ]
 
     for case in cases:
-        data = {0: case}
+        data = TarsDict({0: case})
         encoded = core_encode_raw(data)
         decoded = core_decode_raw(encoded)
         assert decoded[0] == case, f"Failed roundtrip for {case}"
@@ -418,7 +426,7 @@ def test_roundtrip_reversibility() -> None:
 
 def test_simplelist_utf8_bytes_decodes_to_str() -> None:
     """验证 SimpleList 的 UTF-8 bytes 解码为字符串."""
-    data = {0: b"hello"}
+    data = TarsDict({0: b"hello"})
     encoded = core_encode_raw(data)
     decoded = core_decode_raw(encoded)
     assert decoded[0] == "hello"
@@ -426,7 +434,7 @@ def test_simplelist_utf8_bytes_decodes_to_str() -> None:
 
 def test_simplelist_invalid_utf8_decodes_to_bytes() -> None:
     """验证 SimpleList 的无效 UTF-8 回退为 bytes."""
-    data = {0: b"\xff"}
+    data = TarsDict({0: b"\xff"})
     encoded = core_encode_raw(data)
     decoded = core_decode_raw(encoded)
     assert decoded[0] == b"\xff"
@@ -484,7 +492,7 @@ def _nest_list(depth: int) -> object:
 
 def test_raw_encode_max_depth_exceeded() -> None:
     """Raw 编码递归超限时抛出 ValueError."""
-    data = {0: _nest_list(101)}
+    data = TarsDict({0: _nest_list(101)})
     with pytest.raises(ValueError, match="Recursion limit exceeded"):
         core_encode_raw(data)
 
@@ -541,7 +549,7 @@ def test_decode_map_negative_size_raises_value_error() -> None:
 def test_encode_raw_large_range_roundtrip() -> None:
     """Range 作为序列输入时应可编码并正确解码."""
     size = 2000
-    payload = {0: range(size)}
+    payload = TarsDict({0: range(size)})
     encoded = encode_raw(payload)
     decoded = decode_raw(encoded)
 
@@ -559,7 +567,7 @@ def test_encode_raw_large_custom_sequence() -> None:
     """自定义序列应可编码并正确解码."""
     size = 3000
     seq = _LargeList(range(size))
-    payload = {0: seq}
+    payload = TarsDict({0: seq})
 
     encoded = encode_raw(payload)
     decoded = decode_raw(encoded)
@@ -569,3 +577,45 @@ def test_encode_raw_large_custom_sequence() -> None:
     assert len(values) == size
     assert values[0] == 0
     assert values[-1] == size - 1
+
+
+def test_decode_raw_returns_tars_dict() -> None:
+    """验证 decode_raw 返回 TarsDict 实例."""
+    data = encode_raw(TarsDict({0: 123, 1: "test"}))
+    decoded = decode_raw(data)
+
+    assert isinstance(decoded, TarsDict)
+    assert isinstance(decoded, dict)
+    assert decoded[0] == 123
+    assert decoded[1] == "test"
+
+
+def test_probe_struct_returns_tars_dict() -> None:
+    """验证 probe_struct 返回 TarsDict 实例."""
+    data = encode_raw(TarsDict({0: 1}))
+    probed = probe_struct(data)
+
+    assert probed is not None
+    assert isinstance(probed, TarsDict)
+    assert probed[0] == 1
+
+
+def test_raw_recursion_limit() -> None:
+    """验证原始接口的递归深度限制."""
+
+    def create_deep_dict(depth: int) -> TarsDict:
+        if depth <= 0:
+            return TarsDict({0: "end"})
+        return TarsDict({0: create_deep_dict(depth - 1)})
+
+    # 101 层嵌套，超过默认 100 限制
+    deep_dict = create_deep_dict(101)
+
+    with pytest.raises(ValueError, match="limit exceeded"):
+        encode_raw(deep_dict)
+
+
+def test_probe_struct_valid() -> None:
+    """验证 probe_struct 探测有效结构."""
+    data = encode_raw(TarsDict({0: 1, 1: "s"}))
+    assert probe_struct(data) == {0: 1, 1: "s"}

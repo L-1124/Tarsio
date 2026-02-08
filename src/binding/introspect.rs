@@ -57,6 +57,7 @@ pub enum StructKind {
     Dataclass,
     NamedTuple,
     TypedDict,
+    TarsDict,
 }
 
 struct IntrospectionContext<'py> {
@@ -95,6 +96,7 @@ struct IntrospectionContext<'py> {
     mutable_mapping_cls: Bound<'py, PyAny>,
     union_type: Option<Bound<'py, PyAny>>,
     enum_base: Bound<'py, PyAny>,
+    tars_dict_cls: Bound<'py, PyAny>,
 }
 
 impl<'py> IntrospectionContext<'py> {
@@ -106,6 +108,7 @@ impl<'py> IntrospectionContext<'py> {
         let types_mod = py.import("types")?;
         let enum_mod = py.import("enum")?;
         let typing_extensions = py.import("typing_extensions").ok();
+        let core_mod = py.import("tarsio._core")?;
 
         let annotated = typing.getattr("Annotated")?;
         let union_origin = typing.getattr("Union")?;
@@ -155,6 +158,7 @@ impl<'py> IntrospectionContext<'py> {
 
         let union_type = types_mod.getattr("UnionType").ok();
         let enum_base = enum_mod.getattr("Enum")?;
+        let tars_dict_cls = core_mod.getattr("TarsDict")?;
 
         Ok(Self {
             typing,
@@ -192,6 +196,7 @@ impl<'py> IntrospectionContext<'py> {
             mutable_mapping_cls,
             union_type,
             enum_base,
+            tars_dict_cls,
         })
     }
 }
@@ -222,6 +227,7 @@ fn introspect_struct_fields_with_ctx<'py>(
         StructKind::Dataclass => introspect_dataclass_fields(py, cls, ctx),
         StructKind::NamedTuple => introspect_namedtuple_fields(py, cls, ctx),
         StructKind::TypedDict => introspect_typeddict_fields(py, cls, ctx),
+        StructKind::TarsDict => introspect_typeddict_fields(py, cls, ctx),
     }
 }
 
@@ -401,6 +407,9 @@ fn detect_struct_kind_with_ctx<'py>(
     if is_typed_dict_class(py, cls, ctx)? {
         return Ok(Some(StructKind::TypedDict));
     }
+    if is_tars_dict_class(py, cls, ctx)? {
+        return Ok(Some(StructKind::TarsDict));
+    }
     Ok(None)
 }
 
@@ -439,6 +448,18 @@ fn is_typed_dict_class<'py>(
     }
     Ok(cls.getattr(intern!(cls.py(), "__total__")).is_ok()
         && cls.getattr(intern!(cls.py(), "__annotations__")).is_ok())
+}
+
+fn is_tars_dict_class<'py>(
+    _py: Python<'py>,
+    cls: &Bound<'py, PyType>,
+    ctx: &IntrospectionContext<'py>,
+) -> PyResult<bool> {
+    // 检查是否是 TarsDict 的子类（且不是 TarsDict 本身）
+    if cls.is_subclass(&ctx.tars_dict_cls)? && !cls.is(&ctx.tars_dict_cls) {
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn is_subclass<'py>(

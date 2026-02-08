@@ -15,3 +15,5 @@
 ::: tarsio.StructConfig
 
 ::: tarsio.Meta
+
+::: tarsio.TarsDict

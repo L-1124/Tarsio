@@ -29,7 +29,10 @@ cargo test               # 运行 Rust 测试
 
 * **框架**：强制 `pytest`。
 * **形式**：仅允许函数式测试（`def test_xxx()`），禁止类式测试（`class TestXxx`）。
-* **位置**：必须位于 `python/tests/` 根目录，禁止子目录。
+* **位置**：
+    * 功能测试必须位于 `python/tests/` 根目录。
+    * 类型检查测试位于 `python/tests/typechecking/`。
+    * 性能基准测试位于 `python/tests/benchmarks/`。
 * **原子性**：一个测试只验证一个行为，不混用 encode/decode。
 
 #### 去重与分层

@@ -34,62 +34,62 @@ print(user.uid)  # 123
 ## Raw 模式
 
 适用于没有 Schema 定义，或需要动态处理 Tars 数据的场景。
-数据以 `dict[int, Any]` (即 TarsDict) 的形式存在，Key 为 Tag ID。
+数据以 `TarsDict` (继承自 `dict` 的特殊类型) 的形式存在，Key 为 Tag ID (int)。
 
 ### Raw 编码
 
 ```python
-from tarsio import encode_raw
+from tarsio import TarsDict, encode_raw
 
-payload = {
+# 必须使用 TarsDict 包裹以声明这是一个结构体
+payload = TarsDict({
     0: 123,           # Tag 0: int
     1: "Alice",       # Tag 1: str
     2: [1, 2, 3]      # Tag 2: list
-}
+})
 data = encode_raw(payload)
 ```
 
 ### Raw 解码
 
 ```python
-from tarsio import decode_raw
+from tarsio import decode_raw, TarsDict
 
-# 还原为字典
+# 还原为 TarsDict
 data_dict = decode_raw(data)
-# {0: 123, 1: 'Alice', 2: [1, 2, 3]}
+# TarsDict({0: 123, 1: 'Alice', 2: [1, 2, 3]})
+assert isinstance(data_dict, TarsDict)
 ```
 
 > **注意**: 由于 Tars 协议不包含字段名信息，Raw 模式只能还原 Tag ID 和基本值类型。
 
 ### TarsDict 详解
 
-在 Raw 模式下，Tars 结构体被表示为 `dict[int, Any]`，通常称为 **TarsDict**。
+在 Raw 模式下，Tars 结构体被严格表示为 **TarsDict**。
 
 #### 结构体 vs 映射 (Struct vs Map)
 
-Tars 协议同时支持 Map (字典) 和 Struct (结构体)。
-在 **Schema 模式** 下，这通过类型定义严格区分：
+Tars 协议同时支持 Map (字典) 和 Struct (结构体)。Tarsio 通过 Python 类型来严格区分二者：
 
-* `class User(Struct)` -> Struct
-* `Annotated[dict[K, V], Tag]` -> Map
+* **Struct**: 必须是 `TarsDict` 实例（其 Key 为 `int` 类型的 Tag）。
+* **Map**: 普通的 `dict` 实例。
 
-但在 **Raw 模式** 下，输入都是 Python `dict`。Tarsio 通过 Key 的类型来推断意图：
+这一规则消除了以往基于 Key 类型的模糊推断。
 
-* **Struct**: 字典的 Key **全部**为 `int` (且在 0-255 范围内)。
-* **Map**: 字典的 Key 包含非 `int` 类型，或 `int` 超出 Tag 范围，或为空字典（默认为 Map）。
-
-#### 嵌套结构处理
-
-这种推断是递归的。当一个字典的值也是字典时：
+#### 示例
 
 ```python
-payload = {
+from tarsio import TarsDict, encode_raw
+
+payload = TarsDict({
     0: 1001,
-    # Key 为 int (0, 1)，被推断为嵌套 Struct
-    1: {0: "Alice", 1: "Bob"},
-    # Key 为 str，被推断为 Map<string, int>
+    # 值也是 TarsDict，表示嵌套 Struct
+    1: TarsDict({0: "Alice", 1: "Bob"}),
+    # 值是普通 dict，表示 Map<string, int>
     2: {"math": 90, "english": 85}
-}
+})
+
+encode_raw(payload)
 ```
 
 #### 限制

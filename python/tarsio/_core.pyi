@@ -5,7 +5,7 @@
 """
 
 from inspect import Signature
-from typing import Any, ClassVar, TypeAlias, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from typing_extensions import dataclass_transform
 
@@ -13,7 +13,7 @@ from . import inspect
 
 _StructT = TypeVar("_StructT")
 _SM = TypeVar("_SM", bound="StructMeta")
-TarsDict: TypeAlias = dict[int, Any]
+
 
 __all__ = [
     "Meta",
@@ -29,6 +29,31 @@ __all__ = [
     "inspect",
     "probe_struct",
 ]
+
+class TarsDict(dict[int, Any]):
+    """TarsDict 是一个特殊的字典类型，用于表示 Tars 结构中的 Tag-Value 映射.
+
+    在 Tars 编解码过程中，TarsDict 用于存储和传递原始的 Tag-Value 数据，特别是在
+    `encode_raw` 和 `decode_raw` 函数中。它的键是整数 Tag，值可以是任意类型（通常是
+    基础类型、嵌套的 TarsDict 或列表）。
+
+    Examples:
+        ```python
+        from tarsio import TarsDict, encode_raw
+
+        # 构造一个 TarsDict
+        data = TarsDict({
+            0: 123,           # Tag 0: int
+            1: "hello",       # Tag 1: str
+            2: [1, 2, 3]      # Tag 2: list
+        })
+
+        # 编码为 bytes
+        encoded = encode_raw(data)
+        ```
+    """
+
+    ...
 
 class ValidationError(ValueError):
     """解码阶段的校验错误.
@@ -311,11 +336,13 @@ def decode(cls: type[_StructT], data: bytes) -> _StructT:
     """
     ...
 
-def encode_raw(obj: TarsDict) -> bytes:
-    """将 TarsDict 编码为 Tars 二进制格式.
+def encode_raw(obj: Any) -> bytes:
+    """将对象编码为 Tars 二进制格式 (原始模式).
+
+    如果输入是 `TarsDict`，则按结构体编码；否则按其自然类型（Map, List, Int 等）编码。
 
     Args:
-        obj: 一个字典，映射 tag (int) 到 Tars 值。
+        obj: 要编码的对象。
 
     Returns:
         编码后的字节对象。
