@@ -5,16 +5,12 @@ from ._core import (
     StructMeta,
     TarsDict,
     ValidationError,
-    decode,
-    decode_raw,
-    encode,
-    encode_raw,
     inspect,
     probe_struct,
 )
+from .api import decode, encode
 
 __version__ = "0.4.1"
-
 
 __all__ = [
     "Meta",
@@ -24,9 +20,7 @@ __all__ = [
     "TarsDict",
     "ValidationError",
     "decode",
-    "decode_raw",
     "encode",
-    "encode_raw",
     "inspect",
     "probe_struct",
 ]

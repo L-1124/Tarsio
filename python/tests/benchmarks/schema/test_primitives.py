@@ -1,7 +1,7 @@
 """Primitives benchmarks."""
 
 import pytest
-from tarsio import decode, encode
+from tarsio._core import decode, encode
 
 from .models import HighTagStruct, Primitives
 

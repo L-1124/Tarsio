@@ -5,8 +5,7 @@ import inspect
 from typing import Annotated, Optional
 
 import pytest
-from tarsio import Struct, StructConfig, TarsDict, decode, encode
-from tarsio._core import encode_raw
+from tarsio._core import Struct, StructConfig, TarsDict, decode, encode, encode_raw
 
 # ==========================================
 # 测试专用结构体

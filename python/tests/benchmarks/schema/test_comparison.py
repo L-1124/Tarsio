@@ -1,7 +1,7 @@
 """Comparison benchmarks."""
 
 import pytest
-from tarsio import decode, decode_raw, encode, encode_raw
+from tarsio._core import decode, decode_raw, encode, encode_raw
 
 from .models import Medium
 

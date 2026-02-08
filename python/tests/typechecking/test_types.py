@@ -1,7 +1,14 @@
 from typing import Annotated, Any
 
-import tarsio
-from tarsio import Struct
+from tarsio._core import (
+    Struct,
+    TarsDict,
+    decode,
+    decode_raw,
+    encode,
+    encode_raw,
+    probe_struct,
+)
 from typing_extensions import assert_type
 
 
@@ -18,11 +25,11 @@ def test_type_decode() -> None:
 
     user_obj = User(uid=123, name="test_user")
 
-    data = tarsio.encode(user_obj)
+    data = encode(user_obj)
 
     # 测试顶层 decode 函数
 
-    user = tarsio.decode(User, data)
+    user = decode(User, data)
 
     assert_type(user, User)
 
@@ -39,7 +46,7 @@ def test_type_encode() -> None:
 
     # 测试顶层 encode 函数
 
-    data = tarsio.encode(user)
+    data = encode(user)
 
     assert_type(data, bytes)
 
@@ -52,26 +59,26 @@ def test_type_encode() -> None:
 
 def test_type_raw() -> None:
     """验证原始编解码接口的 TarsDict 类型一致性."""
-    raw_data: tarsio.TarsDict = tarsio.TarsDict({0: 123, 1: "hello"})
+    raw_data: TarsDict = TarsDict({0: 123, 1: "hello"})
 
     # 编码为字节
 
-    encoded = tarsio.encode_raw(raw_data)
+    encoded = encode_raw(raw_data)
 
     assert_type(encoded, bytes)
 
     # 解码回 TarsDict
 
-    decoded = tarsio.decode_raw(encoded)
+    decoded = decode_raw(encoded)
 
-    assert_type(decoded, tarsio.TarsDict)
+    assert_type(decoded, TarsDict)
 
 
 def test_type_tars_dict_usage() -> None:
     """验证 TarsDict 的基本使用类型."""
-    d = tarsio.TarsDict({0: 1, 1: "s"})
+    d = TarsDict({0: 1, 1: "s"})
 
-    assert_type(d, tarsio.TarsDict)
+    assert_type(d, TarsDict)
 
     assert_type(d[0], Any)
 
@@ -82,7 +89,7 @@ def test_type_containers() -> None:
 
     lst = [1, 2, 3]
 
-    enc_lst = tarsio.encode_raw(lst)
+    enc_lst = encode_raw(lst)
 
     assert_type(enc_lst, bytes)
 
@@ -90,7 +97,7 @@ def test_type_containers() -> None:
 
     mp = {"a": 1}
 
-    enc_mp = tarsio.encode_raw(mp)
+    enc_mp = encode_raw(mp)
 
     assert_type(enc_mp, bytes)
 
@@ -99,8 +106,8 @@ def test_type_probe_struct() -> None:
     """验证 probe_struct 返回类型."""
     data = b"..."
 
-    res = tarsio.probe_struct(data)
+    res = probe_struct(data)
 
     # probe_struct 返回 TarsDict | None
 
-    assert_type(res, tarsio.TarsDict | None)
+    assert_type(res, TarsDict | None)

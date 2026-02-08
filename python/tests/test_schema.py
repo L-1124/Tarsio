@@ -3,8 +3,8 @@
 from typing import Annotated, Optional
 
 import pytest
-from tarsio import Meta, Struct, TarsDict, ValidationError, encode_raw
 from tarsio import inspect as tinspect
+from tarsio._core import Meta, Struct, TarsDict, ValidationError, encode_raw
 
 
 def test_classic_mode_allows_extra_non_meta_annotations() -> None:

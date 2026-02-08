@@ -3,7 +3,7 @@
 from typing import Any, cast
 
 import pytest
-from tarsio import TarsDict, encode
+from tarsio._core import TarsDict, encode
 
 from tests.benchmarks.schema.models import (
     Containers,

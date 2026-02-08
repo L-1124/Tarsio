@@ -27,7 +27,7 @@ from typing import (
     cast,
 )
 
-from tarsio import Meta, Struct, decode, encode, inspect
+from tarsio._core import Meta, Struct, decode, encode, inspect
 from typing_extensions import (
     NamedTuple,
     NotRequired,

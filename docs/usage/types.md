@@ -273,29 +273,49 @@ assert restored.value == {"a": 1, "b": "x"}
 
 `TarsDict` 是 Raw 模式（无 Schema 模式）下的核心数据容器：
 
-* 在 `decode_raw` 中，所有的 Tars 结构体都会被还原为 `TarsDict`。
-* 在 `encode_raw` 中，只有 `TarsDict` 会被编码为结构体字段序列，普通 `dict` 则一律视为 Map。
+* 在 `decode` (单参数) 中，所有的 Tars 结构体都会被还原为 `TarsDict`。
+* 在 `encode` 中，只有 `TarsDict` 会被编码为结构体字段序列，普通 `dict` 则一律视为 Map。
 
 ```python
-from tarsio import TarsDict, encode_raw
+
+from tarsio import TarsDict, encode
+
+
 
 # 1. 作为 Raw 模式的输入
+
 raw_data = TarsDict({
+
     0: 123,           # Tag 0
+
     1: "hello",       # Tag 1
+
     2: TarsDict({     # 嵌套结构体
+
         0: True
+
     })
+
 })
-encoded = encode_raw(raw_data)
+
+encoded = encode(raw_data)
+
+
 
 # 2. 在 Struct 中用于保留原始结构
+
 class DynamicMsg(Struct):
+
     header: Annotated[int, 0]
+
     # 明确标注该字段为一个原始结构体容器
+
     payload: Annotated[TarsDict, 1]
 
+
+
 msg = DynamicMsg(header=1, payload=TarsDict({10: "raw_content"}))
+
 ```
 
 ## 联合与可选类型 (Union Types)

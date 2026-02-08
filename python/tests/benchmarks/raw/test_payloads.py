@@ -1,7 +1,7 @@
-"""Raw large payloads benchmarks."""
+"""Tarsio Raw benchmark payloads."""
 
 import pytest
-from tarsio import decode_raw, encode_raw
+from tarsio._core import decode_raw, encode_raw
 
 
 @pytest.mark.benchmark(group="raw_payloads")

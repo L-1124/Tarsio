@@ -39,17 +39,19 @@ class TarsDict(dict[int, Any]):
 
     Examples:
         ```python
-        from tarsio import TarsDict, encode_raw
+        from tarsio import TarsDict, encode
 
         # 构造一个 TarsDict
-        data = TarsDict({
-            0: 123,           # Tag 0: int
-            1: "hello",       # Tag 1: str
-            2: [1, 2, 3]      # Tag 2: list
-        })
+        data = TarsDict(
+            {
+                0: 123,  # Tag 0: int
+                1: "hello",  # Tag 1: str
+                2: [1, 2, 3],  # Tag 2: list
+            }
+        )
 
         # 编码为 bytes
-        encoded = encode_raw(data)
+        encoded = encode(data)
         ```
     """
 

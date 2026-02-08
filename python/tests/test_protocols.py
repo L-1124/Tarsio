@@ -7,7 +7,7 @@
 from typing import Annotated, Optional
 
 import pytest
-from tarsio import (
+from tarsio._core import (
     Struct,
     TarsDict,
     decode,

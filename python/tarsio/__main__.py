@@ -22,7 +22,7 @@ else:
         SyntaxType = None
         TreeType = None
 
-from tarsio import decode_raw, probe_struct
+from tarsio._core import decode_raw, probe_struct
 
 click = click_module
 

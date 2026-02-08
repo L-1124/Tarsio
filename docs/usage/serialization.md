@@ -1,7 +1,7 @@
 # 序列化
 
 介绍 Tarsio 的编解码 API，包括强类型 `Struct` 模式与无 Schema 的 `Raw` 模式。
-核心函数：`encode`, `decode`, `encode_raw`, `decode_raw`。
+核心函数：`encode`, `decode`。
 
 ## Struct 模式
 
@@ -26,76 +26,68 @@ data = encode(user)
 ```python
 from tarsio import decode
 
-# 将 bytes 还原为 User 对象
-user = decode(User, data)
+# 将 bytes 还原为 User 对象 (data 在前)
+user = decode(data, User)
 print(user.uid)  # 123
 ```
 
 ## Raw 模式
 
 适用于没有 Schema 定义，或需要动态处理 Tars 数据的场景。
-数据以 `TarsDict` (继承自 `dict` 的特殊类型) 的形式存在，Key 为 Tag ID (int)。
+Raw 模式用于没有 Schema 定义，或需要动态处理 Tars 数据的场景。
+`encode` 会在遇到 `dict`、`list`、`tuple`、`set` 以及基本类型时自动切换到 Raw 编码。
+解码时不提供目标类（只传入 bytes），则返回 Raw 结构。
 
 ### Raw 编码
 
 ```python
-from tarsio import TarsDict, encode_raw
+from tarsio import encode
 
-# 必须使用 TarsDict 包裹以声明这是一个结构体
-payload = TarsDict({
+payload = {
     0: 123,           # Tag 0: int
     1: "Alice",       # Tag 1: str
     2: [1, 2, 3]      # Tag 2: list
-})
-data = encode_raw(payload)
+}
+# 直接使用 encode，它会自动进入 Raw 模式
+data = encode(payload)
 ```
 
 ### Raw 解码
 
 ```python
-from tarsio import decode_raw, TarsDict
+from tarsio import decode
 
-# 还原为 TarsDict
-data_dict = decode_raw(data)
-# TarsDict({0: 123, 1: 'Alice', 2: [1, 2, 3]})
-assert isinstance(data_dict, TarsDict)
+# 还原为 Raw 结构 (单参数调用)
+data_dict = decode(data)
+# {0: 123, 1: 'Alice', 2: [1, 2, 3]}
 ```
 
-> **注意**: 由于 Tars 协议不包含字段名信息，Raw 模式只能还原 Tag ID 和基本值类型。
+> **注意**: `encode` 会根据输入类型自动选择 Schema 或 Raw。`decode` 的调用方式决定输出：提供目标类即 Schema 模式，不提供则走 Raw 模式。
 
-### TarsDict 详解
-
-在 Raw 模式下，Tars 结构体被严格表示为 **TarsDict**。
+### 结构体 vs 映射 (Struct vs Map)
 
 #### 结构体 vs 映射 (Struct vs Map)
 
-Tars 协议同时支持 Map (字典) 和 Struct (结构体)。Tarsio 通过 Python 类型来严格区分二者：
+Tars 协议同时支持 Map (字典) 和 Struct (结构体)。Raw 模式下，编码规则由字典的 Key 决定：
 
-* **Struct**: 必须是 `TarsDict` 实例（其 Key 为 `int` 类型的 Tag）。
-* **Map**: 普通的 `dict` 实例。
-
-这一规则消除了以往基于 Key 类型的模糊推断。
+* **Struct**: 字典的 Key 全部为 `int` 且在 0-255 范围内。
+* **Map**: Key 含非 `int` 类型，或 `int` 超出 Tag 范围，或为空字典（默认为 Map）。
 
 #### 示例
 
 ```python
-from tarsio import TarsDict, encode_raw
+from tarsio import encode
 
-payload = TarsDict({
+payload = {
     0: 1001,
-    # 值也是 TarsDict，表示嵌套 Struct
-    1: TarsDict({0: "Alice", 1: "Bob"}),
+    # 值也是 int-key dict，表示嵌套 Struct
+    1: {0: "Alice", 1: "Bob"},
     # 值是普通 dict，表示 Map<string, int>
     2: {"math": 90, "english": 85}
-})
+}
 
-encode_raw(payload)
+encode(payload)
 ```
-
-#### 限制
-
-* Raw 模式无法区分 `int` 的具体精度 (int8/16/32/64)，解码时会根据数值大小自动选择。
-* Raw 模式解码 `SimpleList` (vector<byte>) 时，如果内容是有效 UTF-8，会还原为 `str`；否则返回 `bytes`。
 
 ## 异常处理
 

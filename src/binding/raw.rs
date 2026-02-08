@@ -1,7 +1,9 @@
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyBool, PyBytes, PyDict, PyFloat, PyList, PySequence, PyString};
+use pyo3::types::{
+    PyAny, PyBool, PyBytes, PyDict, PyFloat, PyFrozenSet, PyList, PySequence, PySet, PyString,
+};
 use std::cell::RefCell;
 
 use bytes::BufMut;
@@ -99,18 +101,10 @@ fn is_exact_tuple(obj: &Bound<'_, PyAny>) -> bool {
 #[pyfunction]
 pub fn encode_raw(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes>> {
     if let Ok(dict) = obj.cast::<PyDict>() {
-        if dict.is_empty() {
-            return Ok(PyBytes::new(py, &[]).unbind());
-        }
-
-        let mut looks_like_struct = false;
-        if let Some((k, _)) = dict.iter().next()
-            && k.extract::<u8>().is_ok()
-        {
-            looks_like_struct = true;
-        }
-
-        if looks_like_struct {
+        if obj.is_instance_of::<TarsDict>() {
+            if dict.is_empty() {
+                return Ok(PyBytes::new(py, &[]).unbind());
+            }
             return encode_raw_dict_to_pybytes(py, dict, 0);
         }
     }
@@ -283,49 +277,53 @@ fn encode_value(
 
     if value.is_instance_of::<PyDict>() {
         let dict = value.cast::<PyDict>()?;
-        let len = dict.len();
-        let mut items = Vec::with_capacity(len);
-        let mut is_struct_candidate = true;
-
-        for (k, v) in dict.iter() {
-            if is_struct_candidate {
-                if k.extract::<u8>().is_ok() {
-                    items.push((k, v));
-                    continue;
-                } else {
-                    is_struct_candidate = false;
-                }
-            }
-
-            // Fallback to Map logic or already failed Struct check
-            if k.hash().is_err() {
-                return Err(PyTypeError::new_err("Map key must be hashable"));
-            }
-            items.push((k, v));
-        }
-
-        if is_struct_candidate {
+        if value.is_instance_of::<TarsDict>() {
             writer.write_tag(tag, TarsType::StructBegin);
 
             // Filter None values and extract tags for struct encoding
-            let mut struct_items = Vec::with_capacity(items.len());
-            for (k, v) in items {
+            let mut struct_items = Vec::with_capacity(dict.len());
+            for (k, v) in dict.iter() {
                 if v.is_none() {
                     continue;
                 }
-                // SAFETY: k.extract::<u8>() succeeded during iteration
-                let tag_u8 = k.extract::<u8>()?;
+                let tag_u8 = k
+                    .extract::<u8>()
+                    .map_err(|_| PyTypeError::new_err("Struct tag must be int in range 0-255"))?;
                 struct_items.push((tag_u8, v));
             }
             write_struct_fields_from_vec(writer, struct_items, depth + 1)?;
             writer.write_tag(0, TarsType::StructEnd);
         } else {
+            let len = dict.len();
             writer.write_tag(tag, TarsType::Map);
             writer.write_int(0, len as i64);
-            for (k, v) in items {
+            for (k, v) in dict.iter() {
+                if k.hash().is_err() {
+                    return Err(PyTypeError::new_err("Map key must be hashable"));
+                }
                 encode_value(writer, 0, &k, depth + 1)?;
                 encode_value(writer, 1, &v, depth + 1)?;
             }
+        }
+        return Ok(());
+    }
+
+    if let Ok(set) = value.cast::<PySet>() {
+        writer.write_tag(tag, TarsType::List);
+        writer.write_int(0, set.len() as i64);
+
+        for item in set.iter() {
+            encode_value(writer, 0, &item, depth + 1)?;
+        }
+        return Ok(());
+    }
+
+    if let Ok(set) = value.cast::<PyFrozenSet>() {
+        writer.write_tag(tag, TarsType::List);
+        writer.write_int(0, set.len() as i64);
+
+        for item in set.iter() {
+            encode_value(writer, 0, &item, depth + 1)?;
         }
         return Ok(());
     }

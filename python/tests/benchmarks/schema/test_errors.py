@@ -1,7 +1,7 @@
 """Error handling benchmarks."""
 
 import pytest
-from tarsio import decode
+from tarsio._core import decode
 
 from .models import Primitives
 

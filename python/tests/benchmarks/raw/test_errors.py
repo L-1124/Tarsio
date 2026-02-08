@@ -1,7 +1,7 @@
-"""Raw error handling benchmarks."""
+"""Tarsio Raw benchmark errors."""
 
 import pytest
-from tarsio import decode_raw
+from tarsio._core import decode_raw
 
 
 @pytest.mark.benchmark(group="raw_error")

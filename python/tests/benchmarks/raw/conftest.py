@@ -1,7 +1,7 @@
 """Tarsio Raw 基准测试共享 Fixtures."""
 
 import pytest
-from tarsio import TarsDict, encode_raw
+from tarsio._core import TarsDict, encode_raw
 
 
 @pytest.fixture

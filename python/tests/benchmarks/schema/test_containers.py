@@ -1,7 +1,7 @@
 """Containers benchmarks."""
 
 import pytest
-from tarsio import decode, encode
+from tarsio._core import decode, encode
 
 from .models import Containers, MapEnumStruct, SparseStruct
 

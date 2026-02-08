@@ -1,7 +1,7 @@
 """Raw direct encoding benchmarks."""
 
 import pytest
-from tarsio import encode_raw
+from tarsio._core import encode_raw
 
 
 @pytest.mark.benchmark(group="raw_direct")
