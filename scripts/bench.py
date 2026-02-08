@@ -23,8 +23,12 @@ import time
 import tracemalloc
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from datetime import time as dt_time
+from decimal import Decimal
 from time import perf_counter_ns
 from typing import Annotated, Any
+from uuid import UUID
 
 from tarsio import Struct, decode, decode_raw, encode, encode_raw
 
@@ -235,12 +239,21 @@ try:
         children: Annotated[list[_Child], 0]
         meta: Annotated[dict[str, str], 1]
 
+    class _Stdlib(Struct):
+        dt: Annotated[datetime, 0]
+        d: Annotated[date, 1]
+        t: Annotated[dt_time, 2]
+        td: Annotated[timedelta, 3]
+        uid: Annotated[UUID, 4]
+        dec: Annotated[Decimal, 5]
+
 except NameError:
     # Fallback/Dummy for when import fails (to avoid crash during parsing if imports failed)
     _Small = Any  # type: ignore
     _Medium = Any  # type: ignore
     _Child = Any  # type: ignore
     _Parent = Any  # type: ignore
+    _Stdlib = Any  # type: ignore
 
 
 @dataclass(frozen=True)
@@ -306,9 +319,29 @@ def build_scenarios(randomize: bool = False) -> list[Scenario]:
             return _Parent(children, meta)
         return _Parent([_Child(i, f"n{i}") for i in range(20)], {"env": "prod"})
 
+    def _build_stdlib(rand):
+        if rand:
+            return _Stdlib(
+                datetime.now(timezone.utc),
+                date.today(),
+                datetime.now().time(),
+                timedelta(days=random.randint(1, 100)),
+                UUID(int=random.getrandbits(128)),
+                Decimal(f"{random.random():.4f}"),
+            )
+        return _Stdlib(
+            datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            date(2025, 1, 1),
+            dt_time(12, 0, 0),
+            timedelta(days=1, seconds=3600),
+            UUID("12345678-1234-5678-1234-567812345678"),
+            Decimal("3.14159"),
+        )
+
     small = _build_small(randomize)
     medium = _build_medium(randomize)
     parent = _build_parent(randomize)
+    stdlib = _build_stdlib(randomize)
 
     # Large objects (always generated dynamically for size accuracy)
     blob_1mb = _rand_bytes(1024 * 1024) if randomize else b"x" * (1024 * 1024)
@@ -427,6 +460,9 @@ def build_scenarios(randomize: bool = False) -> list[Scenario]:
         ),
         Scenario(
             "raw_deep_nested", raw_deep_nested, encode_raw, decode_raw, "原始深度嵌套"
+        ),
+        Scenario(
+            "struct_stdlib", stdlib, encode, lambda d: decode(_Stdlib, d), "Stdlib 类型"
         ),
     ]
 

@@ -15,6 +15,55 @@ const MAX_DEPTH: usize = 100;
 
 thread_local! {
     static ENCODE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(128));
+    static STDLIB_CACHE: RefCell<Option<StdlibCache>> = const { RefCell::new(None) };
+}
+
+struct StdlibCache {
+    datetime: Py<PyAny>,
+    date: Py<PyAny>,
+    time: Py<PyAny>,
+    timedelta: Py<PyAny>,
+    utc: Py<PyAny>,
+    uuid: Py<PyAny>,
+    decimal: Py<PyAny>,
+    enum_type: Py<PyAny>,
+}
+
+fn with_stdlib_cache<F, R>(py: Python<'_>, f: F) -> PyResult<R>
+where
+    F: FnOnce(&StdlibCache) -> PyResult<R>,
+{
+    STDLIB_CACHE.with(|cell| {
+        let mut cache_opt = cell.borrow_mut();
+        if cache_opt.is_none() {
+            let datetime_mod = py.import("datetime")?;
+            let uuid_mod = py.import("uuid")?;
+            let decimal_mod = py.import("decimal")?;
+            let enum_mod = py.import("enum")?;
+
+            let datetime = datetime_mod.getattr("datetime")?.unbind();
+            let date = datetime_mod.getattr("date")?.unbind();
+            let time = datetime_mod.getattr("time")?.unbind();
+            let timedelta = datetime_mod.getattr("timedelta")?.unbind();
+            let utc = datetime_mod.getattr("timezone")?.getattr("utc")?.unbind();
+
+            let uuid = uuid_mod.getattr("UUID")?.unbind();
+            let decimal = decimal_mod.getattr("Decimal")?.unbind();
+            let enum_type = enum_mod.getattr("Enum")?.unbind();
+
+            *cache_opt = Some(StdlibCache {
+                datetime,
+                date,
+                time,
+                timedelta,
+                utc,
+                uuid,
+                decimal,
+                enum_type,
+            });
+        }
+        f(cache_opt.as_ref().unwrap())
+    })
 }
 
 struct PySequenceFast {
@@ -533,13 +582,15 @@ fn serialize_any(
         writer.write_string(tag, s);
         return Ok(());
     }
-    let enum_mod = value.py().import("enum")?;
-    let enum_cls = enum_mod.getattr("Enum")?;
-    if value.is_instance(&enum_cls)? {
-        let inner = value.getattr("value")?;
-        serialize_any(writer, tag, &inner, depth + 1)?;
-        return Ok(());
-    }
+    with_stdlib_cache(value.py(), |cache| {
+        if value.is_instance(cache.enum_type.bind(value.py()).as_any())? {
+            let inner = value.getattr("value")?;
+            serialize_any(writer, tag, &inner, depth + 1)?;
+            Ok(())
+        } else {
+            Ok(())
+        }
+    })?;
 
     let cls = value.get_type();
     if let Ok(def) = ensure_schema_for_class(value.py(), &cls) {
@@ -586,62 +637,59 @@ fn serialize_any(
 }
 
 fn is_datetime_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let datetime_mod = py.import("datetime")?;
-    let dt_cls = datetime_mod.getattr("datetime")?;
-    value.is_instance(&dt_cls)
+    with_stdlib_cache(py, |cache| {
+        value.is_instance(cache.datetime.bind(py).as_any())
+    })
 }
 
 fn is_date_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let datetime_mod = py.import("datetime")?;
-    let date_cls = datetime_mod.getattr("date")?;
-    value.is_instance(&date_cls)
+    with_stdlib_cache(py, |cache| value.is_instance(cache.date.bind(py).as_any()))
 }
 
 fn is_time_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let datetime_mod = py.import("datetime")?;
-    let time_cls = datetime_mod.getattr("time")?;
-    value.is_instance(&time_cls)
+    with_stdlib_cache(py, |cache| value.is_instance(cache.time.bind(py).as_any()))
 }
 
 fn is_timedelta_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let datetime_mod = py.import("datetime")?;
-    let td_cls = datetime_mod.getattr("timedelta")?;
-    value.is_instance(&td_cls)
+    with_stdlib_cache(py, |cache| {
+        value.is_instance(cache.timedelta.bind(py).as_any())
+    })
 }
 
 fn is_uuid_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let uuid_mod = py.import("uuid")?;
-    let uuid_cls = uuid_mod.getattr("UUID")?;
-    value.is_instance(&uuid_cls)
+    with_stdlib_cache(py, |cache| value.is_instance(cache.uuid.bind(py).as_any()))
 }
 
 fn is_decimal_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let decimal_mod = py.import("decimal")?;
-    let decimal_cls = decimal_mod.getattr("Decimal")?;
-    value.is_instance(&decimal_cls)
+    with_stdlib_cache(py, |cache| {
+        value.is_instance(cache.decimal.bind(py).as_any())
+    })
 }
 
 fn datetime_to_micros(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    let datetime_mod = py.import("datetime")?;
-    let tz = datetime_mod.getattr("timezone")?.getattr("utc")?;
-    let tzinfo = value.getattr("tzinfo")?;
-    let value = if tzinfo.is_none() {
-        let kwargs = PyDict::new(py);
-        kwargs.set_item("tzinfo", tz)?;
-        value.call_method("replace", (), Some(&kwargs))?
-    } else {
-        value.clone()
-    };
-    let ts: f64 = value.call_method0("timestamp")?.extract()?;
-    Ok((ts * 1_000_000.0) as i64)
+    with_stdlib_cache(py, |cache| {
+        let tz = cache.utc.bind(py);
+        let tzinfo = value.getattr("tzinfo")?;
+        let value = if tzinfo.is_none() {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("tzinfo", tz)?;
+            value.call_method("replace", (), Some(&kwargs))?
+        } else {
+            value.clone()
+        };
+        let ts: f64 = value.call_method0("timestamp")?.extract()?;
+        Ok((ts * 1_000_000.0) as i64)
+    })
 }
 
 fn date_to_days(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    let datetime_mod = py.import("datetime")?;
-    let epoch = datetime_mod.getattr("date")?.call1((1970, 1, 1))?;
-    let delta = value.call_method1("__sub__", (epoch,))?;
-    let days: i64 = delta.getattr("days")?.extract()?;
-    Ok(days)
+    with_stdlib_cache(py, |cache| {
+        // Use cached date class to create epoch
+        let epoch = cache.date.bind(py).call1((1970, 1, 1))?;
+        let delta = value.call_method1("__sub__", (epoch,))?;
+        let days: i64 = delta.getattr("days")?.extract()?;
+        Ok(days)
+    })
 }
 
 fn time_to_nanos(value: &Bound<'_, PyAny>) -> PyResult<i64> {
