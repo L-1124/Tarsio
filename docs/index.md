@@ -34,4 +34,4 @@ class Packet(Struct):
 
 ## 性能
 
-Tarsio 的底层编解码完全由 Rust 实现 (通过 PyO3 绑定)，在处理大量数据时比纯 Python 实现快 10-50 倍。
+Tarsio 的底层编解码由 Rust 实现 (通过 PyO3 绑定)，面向性能敏感场景。具体性能与数据规模、结构复杂度和运行环境有关。

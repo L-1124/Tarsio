@@ -29,7 +29,9 @@
         - UnionType
         - ListType
         - TupleType
+        - VarTupleType
         - MapType
+        - SetType
         - OptionalType
         - StructType
         - FieldInfo

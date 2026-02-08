@@ -33,5 +33,11 @@ assert tinspect.type_info(list[str]).kind == "list"
 
 ## 注意事项
 
-* 仅支持当前 Tars/JCE 允许的类型集合(primitive/list/tuple/dict/Optional/Struct)。
-* 不支持的类型会抛出 `TypeError`。
+* 支持的类型与 `tarsio.inspect.TypeInfo` 分支一致，包含：
+    * 标量：`int`、`float`、`bool`、`str`、`bytes`、`Any`、`None`。
+    * 容器：`list`、`tuple`、`tuple[T, ...]`、`dict`、`set`/`frozenset`。
+    * 组合：`Optional`、`Union`。
+    * 结构：`Struct` 子类。
+    * 枚举：`Enum`（按 `value` 的内层类型解析）。
+* `typing.Annotated` 中的 `Meta` 约束会被解析到 `constraints`。
+* 不支持的类型或未支持的前向引用会抛出 `TypeError`。

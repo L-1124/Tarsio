@@ -21,6 +21,22 @@ $ tarsio "00 64"
 tarsio -f payload.bin
 ```
 
+### 输出到文件
+
+使用 `-o/--output` 保存输出结果：
+
+```bash
+tarsio "00 64" --format json -o out.json
+```
+
+### 详细模式
+
+使用 `-v/--verbose` 输出输入大小与 Hex 摘要：
+
+```bash
+tarsio "00 64" --verbose
+```
+
 ## 输出格式
 
 通过 `--format` 参数控制输出。

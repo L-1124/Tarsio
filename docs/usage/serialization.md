@@ -95,7 +95,7 @@ payload = {
 #### 限制
 
 * Raw 模式无法区分 `int` 的具体精度 (int8/16/32/64)，解码时会根据数值大小自动选择。
-* Raw 模式解码 `SimpleList` (vector<byte>) 时，如果内容全是 0-255 的整数，可能会被还原为 `bytes`。
+* Raw 模式解码 `SimpleList` (vector<byte>) 时，如果内容是有效 UTF-8，会还原为 `str`；否则返回 `bytes`。
 
 ## 异常处理
 
