@@ -69,7 +69,7 @@ linting = [
   "pre-commit>=4.5.1",
   "ruff>=0.14.14",
 ]
-testing = ["pytest>=9.0.2", "pytest-cov>=7.0.0"]
+testing = ["pytest>=9.0.2", "pytest-benchmark>=5.2.3", "pytest-cov>=7.0.0"]
 
 [build-system]
 requires = ["maturin>=1.10,<2"]
@@ -97,7 +97,7 @@ typeCheckingMode = "standard"
 include = ["python/tests"]
 
 [tool.pytest]
-addopts = ["--cov-report=term-missing", "--cov=tarsio", "-v"]
+addopts = ["--cov-report=term-missing", "--cov=tarsio", "-v","--benchmark-disable-gc"]
 minversion = "6.0"
 python_files = ["test_*.py"]
 pythonpath = ["python"]

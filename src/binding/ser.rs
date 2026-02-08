@@ -1,7 +1,10 @@
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyBool, PyBytes, PyDict, PyFloat, PyList, PySequence, PyString, PyType};
+use pyo3::types::{
+    PyAny, PyBool, PyBytes, PyDict, PyFloat, PyFrozenSet, PyList, PySequence, PySet, PyString,
+    PyType,
+};
 use std::cell::RefCell;
 
 use bytes::BufMut;
@@ -23,13 +26,6 @@ thread_local! {
 }
 
 struct StdlibCache {
-    datetime: Py<PyAny>,
-    date: Py<PyAny>,
-    time: Py<PyAny>,
-    timedelta: Py<PyAny>,
-    utc: Py<PyAny>,
-    uuid: Py<PyAny>,
-    decimal: Py<PyAny>,
     enum_type: Py<PyAny>,
 }
 
@@ -40,31 +36,10 @@ where
     STDLIB_CACHE.with(|cell| {
         let mut cache_opt = cell.borrow_mut();
         if cache_opt.is_none() {
-            let datetime_mod = py.import("datetime")?;
-            let uuid_mod = py.import("uuid")?;
-            let decimal_mod = py.import("decimal")?;
             let enum_mod = py.import("enum")?;
-
-            let datetime = datetime_mod.getattr("datetime")?.unbind();
-            let date = datetime_mod.getattr("date")?.unbind();
-            let time = datetime_mod.getattr("time")?.unbind();
-            let timedelta = datetime_mod.getattr("timedelta")?.unbind();
-            let utc = datetime_mod.getattr("timezone")?.getattr("utc")?.unbind();
-
-            let uuid = uuid_mod.getattr("UUID")?.unbind();
-            let decimal = decimal_mod.getattr("Decimal")?.unbind();
             let enum_type = enum_mod.getattr("Enum")?.unbind();
 
-            *cache_opt = Some(StdlibCache {
-                datetime,
-                date,
-                time,
-                timedelta,
-                utc,
-                uuid,
-                decimal,
-                enum_type,
-            });
+            *cache_opt = Some(StdlibCache { enum_type });
         }
         f(cache_opt.as_ref().unwrap())
     })
@@ -72,8 +47,8 @@ where
 
 struct PySequenceFast {
     ptr: *mut ffi::PyObject,
-    items: *mut *mut ffi::PyObject,
     len: isize,
+    is_list: bool,
 }
 
 impl PySequenceFast {
@@ -84,59 +59,16 @@ impl PySequenceFast {
         let ptr = obj.as_ptr();
         unsafe { ffi::Py_INCREF(ptr) };
 
-        let (items, len) = unsafe {
-            // SAFETY:
-            // 调用者保证 is_list 与 ptr 的实际类型匹配。
-            // 我们将其转换为特定的 C 结构体并访问标准字段。
-            // 对于 List/Tuple，ob_item 和 ob_size 保证在布局上存在。
+        let len = unsafe {
             if is_list {
                 let list_ptr = ptr as *mut ffi::PyListObject;
-                ((*list_ptr).ob_item, (*list_ptr).ob_base.ob_size)
+                (*list_ptr).ob_base.ob_size
             } else {
                 let tuple_ptr = ptr as *mut ffi::PyTupleObject;
-                (
-                    (*tuple_ptr).ob_item.as_mut_ptr(),
-                    (*tuple_ptr).ob_base.ob_size,
-                )
+                (*tuple_ptr).ob_base.ob_size
             }
         };
-        Ok(Self { ptr, items, len })
-    }
-
-    #[allow(dead_code)]
-    fn new(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let err = c"Expected a sequence";
-        // SAFETY:
-        // PySequence_Fast 是一个安全的 C-API 调用，返回新引用或 NULL。
-        // 它能安全地处理任意输入对象。
-        let ptr = unsafe { ffi::PySequence_Fast(obj.as_ptr(), err.as_ptr()) };
-        if ptr.is_null() {
-            return Err(PyErr::fetch(obj.py()));
-        }
-
-        let (items, len) = unsafe {
-            // SAFETY:
-            // 我们使用标准宏检查 ptr 的类型。
-            // 如果它是 List 或 Tuple，访问内部字段是安全的。
-            // 如果都不是，我们会 DECREF 由 PySequence_Fast 返回的引用。
-            if ffi::PyList_Check(ptr) != 0 {
-                let list_ptr = ptr as *mut ffi::PyListObject;
-                ((*list_ptr).ob_item, (*list_ptr).ob_base.ob_size)
-            } else if ffi::PyTuple_Check(ptr) != 0 {
-                let tuple_ptr = ptr as *mut ffi::PyTupleObject;
-                (
-                    (*tuple_ptr).ob_item.as_mut_ptr(),
-                    (*tuple_ptr).ob_base.ob_size,
-                )
-            } else {
-                ffi::Py_DECREF(ptr);
-                return Err(PyTypeError::new_err(
-                    "PySequence_Fast returned non-list/tuple",
-                ));
-            }
-        };
-
-        Ok(Self { ptr, items, len })
+        Ok(Self { ptr, len, is_list })
     }
 
     fn len(&self) -> usize {
@@ -148,12 +80,18 @@ impl PySequenceFast {
             return Err(PyValueError::new_err("Index out of bounds"));
         }
         // SAFETY:
-        // 1. 上面已验证 idx < self.len。
-        // 2. self.items 是一个大小为 self.len 的数组的有效指针。
-        // 3. 数组中的项是由容器 self.ptr 拥有的借用引用。
-        //    我们通过 RAII 保持 self.ptr 存活，因此这些项是有效的。
+        // 1. ptr 保持强引用存活。
+        // 2. GetItem 返回借用引用(Borrowed Reference)。
+        // 3. 不缓存 items 指针，避免列表扩容导致的 UAF。
         unsafe {
-            let item_ptr = *self.items.add(idx);
+            let item_ptr = if self.is_list {
+                ffi::PyList_GetItem(self.ptr, idx as isize)
+            } else {
+                ffi::PyTuple_GetItem(self.ptr, idx as isize)
+            };
+            if item_ptr.is_null() {
+                return Err(PyErr::fetch(py));
+            }
             Ok(Bound::from_borrowed_ptr(py, item_ptr))
         }
     }
@@ -217,9 +155,17 @@ pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyRes
 
         let result = PyBytes::new(py, &buffer[..]).unbind();
 
-        // Capacity management: If buffer grew too large, shrink it to avoid holding memory.
-        if buffer.capacity() > BUFFER_SHRINK_THRESHOLD {
-            buffer.shrink_to(BUFFER_DEFAULT_CAPACITY);
+        // Capacity management: 仅当使用量明显变小才缩容，避免频繁抖动。
+        let used = buffer.len();
+        if buffer.capacity() > BUFFER_SHRINK_THRESHOLD
+            && used < (BUFFER_SHRINK_THRESHOLD / 4)
+        {
+            let target = if used == 0 {
+                BUFFER_DEFAULT_CAPACITY
+            } else {
+                used.next_power_of_two().max(BUFFER_DEFAULT_CAPACITY)
+            };
+            buffer.shrink_to(target);
         }
 
         Ok(result)
@@ -298,6 +244,10 @@ fn serialize_impl(
                 let v: i64 = val.extract()?;
                 writer.write_int(tag, v);
             }
+            WireType::Bool => {
+                let v: bool = val.extract()?;
+                writer.write_int(tag, i64::from(v));
+            }
             WireType::Long => {
                 let v: i64 = val.extract()?;
                 writer.write_int(tag, v);
@@ -328,31 +278,6 @@ fn serialize_impl(
                 "NoneType must be encoded via Optional or Union",
             ));
         }
-        TypeExpr::DateTime => {
-            let micros = datetime_to_micros(val.py(), val)?;
-            writer.write_int(tag, micros);
-        }
-        TypeExpr::Date => {
-            let days = date_to_days(val.py(), val)?;
-            writer.write_int(tag, days);
-        }
-        TypeExpr::Time => {
-            let nanos = time_to_nanos(val)?;
-            writer.write_int(tag, nanos);
-        }
-        TypeExpr::Timedelta => {
-            let micros = timedelta_to_micros(val)?;
-            writer.write_int(tag, micros);
-        }
-        TypeExpr::Uuid => {
-            let bytes = uuid_to_bytes(val.py(), val)?;
-            writer.write_bytes(tag, &bytes);
-        }
-        TypeExpr::Decimal => {
-            let s = val.str()?;
-            let s = s.to_str()?;
-            writer.write_string(tag, s);
-        }
         TypeExpr::Enum(enum_cls, inner) => {
             let enum_type = enum_cls.bind(val.py());
             if !val.is_instance(enum_type.as_any())? {
@@ -362,13 +287,8 @@ fn serialize_impl(
             serialize_impl(writer, tag, inner, &value, depth + 1)?;
         }
         TypeExpr::Union(variants) => {
-            let (variant_idx, inner_opt) = select_union_variant(val.py(), variants, val)?;
-            writer.write_tag(tag, TarsType::StructBegin);
-            writer.write_int(0, variant_idx as i64);
-            if let Some(inner) = inner_opt {
-                serialize_impl(writer, 1, inner, val, depth + 1)?;
-            }
-            writer.write_tag(0, TarsType::StructEnd);
+            let variant = select_union_variant(val.py(), variants, val)?;
+            serialize_impl(writer, tag, variant, val, depth + 1)?;
         }
         TypeExpr::Struct(ptr) => {
             writer.write_tag(tag, TarsType::StructBegin);
@@ -377,7 +297,7 @@ fn serialize_impl(
             serialize_struct_fields(writer, val, &def, depth + 1)?;
             writer.write_tag(0, TarsType::StructEnd);
         }
-        TypeExpr::List(inner) | TypeExpr::Tuple(inner) => {
+        TypeExpr::List(inner) | TypeExpr::VarTuple(inner) => {
             if matches!(**inner, TypeExpr::Primitive(WireType::Int))
                 && val.is_instance_of::<PyBytes>()
                 && let Ok(bytes) = val.extract::<&[u8]>()
@@ -404,6 +324,59 @@ fn serialize_impl(
                     serialize_impl(writer, 0, inner, &item, depth + 1)?;
                 }
             }
+        }
+        TypeExpr::Tuple(items) => {
+            writer.write_tag(tag, TarsType::List);
+            let expected = items.len();
+            if let Some(is_list) = check_exact_sequence_type(val) {
+                let seq_fast = PySequenceFast::new_exact(val, is_list)?;
+                let len = seq_fast.len();
+                if len != expected {
+                    return Err(PyTypeError::new_err(
+                        "Tuple value length does not match annotation",
+                    ));
+                }
+                writer.write_int(0, len as i64);
+                for (idx, item_type) in items.iter().enumerate() {
+                    let item = seq_fast.get_item(val.py(), idx)?;
+                    serialize_impl(writer, 0, item_type, &item, depth + 1)?;
+                }
+            } else {
+                let seq = val.extract::<Bound<'_, PySequence>>()?;
+                let len = seq.len()?;
+                if len != expected {
+                    return Err(PyTypeError::new_err(
+                        "Tuple value length does not match annotation",
+                    ));
+                }
+                writer.write_int(0, len as i64);
+                for (idx, item_type) in items.iter().enumerate() {
+                    let item = seq.get_item(idx)?;
+                    serialize_impl(writer, 0, item_type, &item, depth + 1)?;
+                }
+            }
+        }
+        TypeExpr::Set(inner) => {
+            writer.write_tag(tag, TarsType::List);
+            if val.is_instance_of::<PySet>() {
+                let set = val.cast::<PySet>()?;
+                let len = set.len() as i64;
+                writer.write_int(0, len);
+                for item in set.iter() {
+                    serialize_impl(writer, 0, inner, &item, depth + 1)?;
+                }
+                return Ok(());
+            }
+            if val.is_instance_of::<PyFrozenSet>() {
+                let set = val.cast::<PyFrozenSet>()?;
+                let len = set.len() as i64;
+                writer.write_int(0, len);
+                for item in set.iter() {
+                    serialize_impl(writer, 0, inner, &item, depth + 1)?;
+                }
+                return Ok(());
+            }
+            return Err(PyTypeError::new_err("Set value must be set or frozenset"));
         }
         TypeExpr::Map(k_type, v_type) => {
             writer.write_tag(tag, TarsType::Map);
@@ -444,33 +417,32 @@ fn select_union_variant<'py>(
     py: Python<'py>,
     variants: &'py [TypeExpr],
     value: &Bound<'py, PyAny>,
-) -> PyResult<(usize, Option<&'py TypeExpr>)> {
+) -> PyResult<&'py TypeExpr> {
     if value.is_none() {
         for (idx, variant) in variants.iter().enumerate() {
             if matches!(variant, TypeExpr::Optional(_) | TypeExpr::NoneType) {
-                return Ok((idx, Some(variant)));
+                let _ = idx;
+                return Ok(variant);
             }
         }
         return Err(PyTypeError::new_err("Union does not accept None"));
     }
 
-    with_stdlib_cache(py, |cache| {
-        for (idx, variant) in variants.iter().enumerate() {
-            if value_matches_type(py, variant, value, Some(cache))? {
-                return Ok((idx, Some(variant)));
-            }
+    for (idx, variant) in variants.iter().enumerate() {
+        if value_matches_type(py, variant, value)? {
+            let _ = idx;
+            return Ok(variant);
         }
-        Err(PyTypeError::new_err(
-            "Value does not match any union variant",
-        ))
-    })
+    }
+    Err(PyTypeError::new_err(
+        "Value does not match any union variant",
+    ))
 }
 
 fn value_matches_type<'py>(
     py: Python<'py>,
     typ: &TypeExpr,
     value: &Bound<'py, PyAny>,
-    cache: Option<&StdlibCache>,
 ) -> PyResult<bool> {
     match typ {
         TypeExpr::Any => Ok(true),
@@ -483,34 +455,11 @@ fn value_matches_type<'py>(
                     Ok(value.extract::<i64>().is_ok())
                 }
             }
+            WireType::Bool => Ok(value.is_instance_of::<PyBool>()),
             WireType::Long => Ok(value.extract::<i64>().is_ok()),
             WireType::Float | WireType::Double => Ok(value.is_instance_of::<PyFloat>()),
             WireType::String => Ok(value.is_instance_of::<PyString>()),
             _ => Ok(false),
-        },
-        TypeExpr::DateTime => match cache {
-            Some(c) => Ok(value.is_instance(c.datetime.bind(py).as_any())?),
-            None => is_datetime_instance(py, value),
-        },
-        TypeExpr::Date => match cache {
-            Some(c) => Ok(value.is_instance(c.date.bind(py).as_any())?),
-            None => is_date_instance(py, value),
-        },
-        TypeExpr::Time => match cache {
-            Some(c) => Ok(value.is_instance(c.time.bind(py).as_any())?),
-            None => is_time_instance(py, value),
-        },
-        TypeExpr::Timedelta => match cache {
-            Some(c) => Ok(value.is_instance(c.timedelta.bind(py).as_any())?),
-            None => is_timedelta_instance(py, value),
-        },
-        TypeExpr::Uuid => match cache {
-            Some(c) => Ok(value.is_instance(c.uuid.bind(py).as_any())?),
-            None => is_uuid_instance(py, value),
-        },
-        TypeExpr::Decimal => match cache {
-            Some(c) => Ok(value.is_instance(c.decimal.bind(py).as_any())?),
-            None => is_decimal_instance(py, value),
         },
         TypeExpr::Enum(enum_cls, _) => Ok(value.is_instance(enum_cls.bind(py).as_any())?),
         TypeExpr::Struct(ptr) => {
@@ -521,21 +470,47 @@ fn value_matches_type<'py>(
                 _ => Ok(value.is_instance(cls.as_any())?),
             }
         }
-        TypeExpr::List(_) | TypeExpr::Tuple(_) => Ok(value.is_instance_of::<PySequence>()
+        TypeExpr::List(_) | TypeExpr::VarTuple(_) => Ok(value.is_instance_of::<PySequence>()
             && !value.is_instance_of::<PyString>()
             && !value.is_instance_of::<PyBytes>()
             && !value.is_instance_of::<PyDict>()),
+        TypeExpr::Tuple(items) => {
+            if value.is_instance_of::<PyString>()
+                || value.is_instance_of::<PyBytes>()
+                || value.is_instance_of::<PyDict>()
+            {
+                return Ok(false);
+            }
+            let seq = match value.extract::<Bound<'_, PySequence>>() {
+                Ok(v) => v,
+                Err(_) => return Ok(false),
+            };
+            let len = seq.len()?;
+            if len != items.len() {
+                return Ok(false);
+            }
+            for (idx, item_type) in items.iter().enumerate() {
+                let item = seq.get_item(idx)?;
+                if !value_matches_type(py, item_type, &item)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        TypeExpr::Set(_) => {
+            Ok(value.is_instance_of::<PySet>() || value.is_instance_of::<PyFrozenSet>())
+        }
         TypeExpr::Map(_, _) => Ok(value.is_instance_of::<PyDict>()),
         TypeExpr::Optional(inner) => {
             if value.is_none() {
                 Ok(true)
             } else {
-                value_matches_type(py, inner, value, cache)
+                value_matches_type(py, inner, value)
             }
         }
         TypeExpr::Union(variants) => {
             for variant in variants {
-                if value_matches_type(py, variant, value, cache)? {
+                if value_matches_type(py, variant, value)? {
                     return Ok(true);
                 }
             }
@@ -583,48 +558,17 @@ fn serialize_any(
         return Ok(());
     }
 
-    let result = with_stdlib_cache(value.py(), |cache| {
+    let is_enum = with_stdlib_cache(value.py(), |cache| {
         let py = value.py();
-        if value.is_instance(cache.datetime.bind(py).as_any())? {
-            let micros = datetime_to_micros(py, value)?;
-            writer.write_int(tag, micros);
-            return Ok(Some(()));
-        }
-        if value.is_instance(cache.date.bind(py).as_any())? {
-            let days = date_to_days(py, value)?;
-            writer.write_int(tag, days);
-            return Ok(Some(()));
-        }
-        if value.is_instance(cache.time.bind(py).as_any())? {
-            let nanos = time_to_nanos(value)?;
-            writer.write_int(tag, nanos);
-            return Ok(Some(()));
-        }
-        if value.is_instance(cache.timedelta.bind(py).as_any())? {
-            let micros = timedelta_to_micros(value)?;
-            writer.write_int(tag, micros);
-            return Ok(Some(()));
-        }
-        if value.is_instance(cache.uuid.bind(py).as_any())? {
-            let bytes = uuid_to_bytes(py, value)?;
-            writer.write_bytes(tag, &bytes);
-            return Ok(Some(()));
-        }
-        if value.is_instance(cache.decimal.bind(py).as_any())? {
-            let s = value.str()?;
-            let s = s.to_str()?;
-            writer.write_string(tag, s);
-            return Ok(Some(()));
-        }
         if value.is_instance(cache.enum_type.bind(py).as_any())? {
             let inner = value.getattr("value")?;
             serialize_any(writer, tag, &inner, depth + 1)?;
-            return Ok(Some(()));
+            return Ok(true);
         }
-        Ok(None)
+        Ok(false)
     })?;
 
-    if result.is_some() {
+    if is_enum {
         return Ok(());
     }
 
@@ -643,6 +587,27 @@ fn serialize_any(
         for (k, v) in dict {
             serialize_any(writer, 0, &k, depth + 1)?;
             serialize_any(writer, 1, &v, depth + 1)?;
+        }
+        return Ok(());
+    }
+
+    if value.is_instance_of::<PySet>() {
+        let set = value.cast::<PySet>()?;
+        writer.write_tag(tag, TarsType::List);
+        let len = set.len() as i64;
+        writer.write_int(0, len);
+        for item in set.iter() {
+            serialize_any(writer, 0, &item, depth + 1)?;
+        }
+        return Ok(());
+    }
+    if value.is_instance_of::<PyFrozenSet>() {
+        let set = value.cast::<PyFrozenSet>()?;
+        writer.write_tag(tag, TarsType::List);
+        let len = set.len() as i64;
+        writer.write_int(0, len);
+        for item in set.iter() {
+            serialize_any(writer, 0, &item, depth + 1)?;
         }
         return Ok(());
     }
@@ -670,81 +635,4 @@ fn serialize_any(
     }
 
     Err(PyTypeError::new_err("Unsupported Any value type"))
-}
-
-fn is_datetime_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    with_stdlib_cache(py, |cache| {
-        value.is_instance(cache.datetime.bind(py).as_any())
-    })
-}
-
-fn is_date_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    with_stdlib_cache(py, |cache| value.is_instance(cache.date.bind(py).as_any()))
-}
-
-fn is_time_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    with_stdlib_cache(py, |cache| value.is_instance(cache.time.bind(py).as_any()))
-}
-
-fn is_timedelta_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    with_stdlib_cache(py, |cache| {
-        value.is_instance(cache.timedelta.bind(py).as_any())
-    })
-}
-
-fn is_uuid_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    with_stdlib_cache(py, |cache| value.is_instance(cache.uuid.bind(py).as_any()))
-}
-
-fn is_decimal_instance(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-    with_stdlib_cache(py, |cache| {
-        value.is_instance(cache.decimal.bind(py).as_any())
-    })
-}
-
-fn datetime_to_micros(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    with_stdlib_cache(py, |cache| {
-        let tz = cache.utc.bind(py);
-        let tzinfo = value.getattr("tzinfo")?;
-        let value = if tzinfo.is_none() {
-            let kwargs = PyDict::new(py);
-            kwargs.set_item("tzinfo", tz)?;
-            value.call_method("replace", (), Some(&kwargs))?
-        } else {
-            value.clone()
-        };
-        let ts: f64 = value.call_method0("timestamp")?.extract()?;
-        Ok((ts * 1_000_000.0) as i64)
-    })
-}
-
-fn date_to_days(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    with_stdlib_cache(py, |cache| {
-        // Use cached date class to create epoch
-        let epoch = cache.date.bind(py).call1((1970, 1, 1))?;
-        let delta = value.call_method1("__sub__", (epoch,))?;
-        let days: i64 = delta.getattr("days")?.extract()?;
-        Ok(days)
-    })
-}
-
-fn time_to_nanos(value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    let hour: i64 = value.getattr("hour")?.extract()?;
-    let minute: i64 = value.getattr("minute")?.extract()?;
-    let second: i64 = value.getattr("second")?.extract()?;
-    let micro: i64 = value.getattr("microsecond")?.extract()?;
-    Ok(((hour * 3600 + minute * 60 + second) * 1_000_000 + micro) * 1_000)
-}
-
-fn timedelta_to_micros(value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    let days: i64 = value.getattr("days")?.extract()?;
-    let seconds: i64 = value.getattr("seconds")?.extract()?;
-    let micros: i64 = value.getattr("microseconds")?.extract()?;
-    Ok(days * 86_400_000_000 + seconds * 1_000_000 + micros)
-}
-
-fn uuid_to_bytes(_py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
-    let bytes = value.getattr("bytes")?;
-    let slice: &[u8] = bytes.extract()?;
-    Ok(slice.to_vec())
 }

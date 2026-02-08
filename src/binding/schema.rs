@@ -26,6 +26,7 @@ use crate::binding::introspect::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum WireType {
     Int,
+    Bool,
     Long,
     Float,
     Double,
@@ -45,16 +46,12 @@ pub enum TypeExpr {
     Struct(usize),
     Any,
     NoneType,
-    DateTime,
-    Date,
-    Time,
-    Timedelta,
-    Uuid,
-    Decimal,
+    Set(Box<TypeExpr>),
     Enum(Py<PyType>, Box<TypeExpr>),
     Union(Vec<TypeExpr>),
     List(Box<TypeExpr>),
-    Tuple(Box<TypeExpr>),
+    Tuple(Vec<TypeExpr>),
+    VarTuple(Box<TypeExpr>),
     Map(Box<TypeExpr>, Box<TypeExpr>),
     Optional(Box<TypeExpr>),
 }
@@ -509,16 +506,13 @@ fn type_info_ir_to_type_expr(py: Python<'_>, typ: &TypeInfoIR) -> PyResult<TypeE
         TypeInfoIR::Int => Ok(TypeExpr::Primitive(WireType::Int)),
         TypeInfoIR::Str => Ok(TypeExpr::Primitive(WireType::String)),
         TypeInfoIR::Float => Ok(TypeExpr::Primitive(WireType::Double)),
-        TypeInfoIR::Bool => Ok(TypeExpr::Primitive(WireType::Int)),
+        TypeInfoIR::Bool => Ok(TypeExpr::Primitive(WireType::Bool)),
         TypeInfoIR::Bytes => Ok(TypeExpr::List(Box::new(TypeExpr::Primitive(WireType::Int)))),
         TypeInfoIR::Any => Ok(TypeExpr::Any),
         TypeInfoIR::NoneType => Ok(TypeExpr::NoneType),
-        TypeInfoIR::DateTime => Ok(TypeExpr::DateTime),
-        TypeInfoIR::Date => Ok(TypeExpr::Date),
-        TypeInfoIR::Time => Ok(TypeExpr::Time),
-        TypeInfoIR::Timedelta => Ok(TypeExpr::Timedelta),
-        TypeInfoIR::Uuid => Ok(TypeExpr::Uuid),
-        TypeInfoIR::Decimal => Ok(TypeExpr::Decimal),
+        TypeInfoIR::Set(inner) => Ok(TypeExpr::Set(Box::new(type_info_ir_to_type_expr(
+            py, inner,
+        )?))),
         TypeInfoIR::Enum(cls, inner) => Ok(TypeExpr::Enum(
             cls.clone_ref(py),
             Box::new(type_info_ir_to_type_expr(py, inner)?),
@@ -533,7 +527,14 @@ fn type_info_ir_to_type_expr(py: Python<'_>, typ: &TypeInfoIR) -> PyResult<TypeE
         TypeInfoIR::List(inner) => Ok(TypeExpr::List(Box::new(type_info_ir_to_type_expr(
             py, inner,
         )?))),
-        TypeInfoIR::Tuple(inner) => Ok(TypeExpr::Tuple(Box::new(type_info_ir_to_type_expr(
+        TypeInfoIR::Tuple(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(type_info_ir_to_type_expr(py, item)?);
+            }
+            Ok(TypeExpr::Tuple(out))
+        }
+        TypeInfoIR::VarTuple(inner) => Ok(TypeExpr::VarTuple(Box::new(type_info_ir_to_type_expr(
             py, inner,
         )?))),
         TypeInfoIR::Map(k, v) => Ok(TypeExpr::Map(
@@ -636,25 +637,33 @@ fn parse_type_info(obj: &Bound<'_, PyAny>) -> PyResult<TypeExpr> {
         "int" => Ok(TypeExpr::Primitive(WireType::Int)),
         "str" => Ok(TypeExpr::Primitive(WireType::String)),
         "float" => Ok(TypeExpr::Primitive(WireType::Double)),
-        "bool" => Ok(TypeExpr::Primitive(WireType::Int)),
+        "bool" => Ok(TypeExpr::Primitive(WireType::Bool)),
         "bytes" => Ok(TypeExpr::List(Box::new(TypeExpr::Primitive(WireType::Int)))),
         "any" => Ok(TypeExpr::Any),
         "none" => Ok(TypeExpr::NoneType),
-        "datetime" => Ok(TypeExpr::DateTime),
-        "date" => Ok(TypeExpr::Date),
-        "time" => Ok(TypeExpr::Time),
-        "timedelta" => Ok(TypeExpr::Timedelta),
-        "uuid" => Ok(TypeExpr::Uuid),
-        "decimal" => Ok(TypeExpr::Decimal),
+        "set" => {
+            let inner_any = obj.getattr("item_type")?;
+            let inner = parse_type_info(&inner_any)?;
+            Ok(TypeExpr::Set(Box::new(inner)))
+        }
         "list" => {
             let inner_any = obj.getattr("item_type")?;
             let inner = parse_type_info(&inner_any)?;
             Ok(TypeExpr::List(Box::new(inner)))
         }
         "tuple" => {
+            let items_any = obj.getattr("items")?;
+            let items = items_any.cast::<PyTuple>()?;
+            let mut out = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                out.push(parse_type_info(&item)?);
+            }
+            Ok(TypeExpr::Tuple(out))
+        }
+        "var_tuple" => {
             let inner_any = obj.getattr("item_type")?;
             let inner = parse_type_info(&inner_any)?;
-            Ok(TypeExpr::Tuple(Box::new(inner)))
+            Ok(TypeExpr::VarTuple(Box::new(inner)))
         }
         "map" => {
             let key_any = obj.getattr("key_type")?;

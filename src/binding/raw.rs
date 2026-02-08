@@ -28,28 +28,26 @@ struct PySequenceFast {
 
 impl PySequenceFast {
     fn new(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let err = c"Expected a sequence";
-        let ptr = unsafe { ffi::PySequence_Fast(obj.as_ptr(), err.as_ptr()) };
-        if ptr.is_null() {
-            return Err(PyErr::fetch(obj.py()));
-        }
+        let ptr = obj.as_ptr();
+        // Check types first without creating new references if possible,
+        // but PySequence_Fast logic is specific.
+        // Here we just use what we have since we know it's a sequence.
+        // But to be consistent with `ser.rs` logic of owning the reference:
+        unsafe { ffi::Py_INCREF(ptr) };
+
         let is_list = unsafe { ffi::PyList_Check(ptr) != 0 };
-        let is_tuple = unsafe { ffi::PyTuple_Check(ptr) != 0 };
-        if !is_list && !is_tuple {
-            unsafe {
-                ffi::Py_DECREF(ptr);
-            }
-            return Err(PyTypeError::new_err("Expected a sequence"));
-        }
+        // We assume valid tuple/list input here from caller checks, or check again.
         Ok(Self { ptr, is_list })
     }
 
     fn len(&self, py: Python<'_>) -> PyResult<usize> {
         let len = unsafe {
             if self.is_list {
-                ffi::PyList_Size(self.ptr)
+                let list_ptr = self.ptr as *mut ffi::PyListObject;
+                (*list_ptr).ob_base.ob_size
             } else {
-                ffi::PyTuple_Size(self.ptr)
+                let tuple_ptr = self.ptr as *mut ffi::PyTupleObject;
+                (*tuple_ptr).ob_base.ob_size
             }
         };
         if len < 0 {
@@ -99,11 +97,52 @@ fn is_exact_tuple(obj: &Bound<'_, PyAny>) -> bool {
 ///     ValueError: 递归深度超过 MAX_DEPTH.
 #[pyfunction]
 pub fn encode_raw(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes>> {
-    let dict = obj
-        .cast::<PyDict>()
-        .map_err(|_| PyTypeError::new_err("encode_raw expects a dict[int, TarsValue]"))?;
+    if let Ok(dict) = obj.cast::<PyDict>() {
+        if dict.is_empty() {
+            return Ok(PyBytes::new(py, &[]).unbind());
+        }
 
-    encode_raw_dict_to_pybytes(py, dict, 0)
+        let mut looks_like_struct = false;
+        if let Some((k, _)) = dict.iter().next()
+            && k.extract::<u8>().is_ok()
+        {
+            looks_like_struct = true;
+        }
+
+        if looks_like_struct {
+            return encode_raw_dict_to_pybytes(py, dict, 0);
+        }
+    }
+
+    encode_raw_value_to_pybytes(py, obj)
+}
+
+fn encode_raw_value_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyBytes>> {
+    RAW_ENCODE_BUFFER.with(|cell| {
+        let mut buffer = cell
+            .try_borrow_mut()
+            .map_err(|_| PyRuntimeError::new_err("Re-entrant encode_raw detected"))?;
+        buffer.clear();
+
+        {
+            let mut writer = TarsWriter::with_buffer(&mut *buffer);
+            encode_value(&mut writer, 0, obj, 0)?;
+        }
+
+        let result = PyBytes::new(py, &buffer[..]).unbind();
+
+        let used = buffer.len();
+        if buffer.capacity() > BUFFER_SHRINK_THRESHOLD && used < (BUFFER_SHRINK_THRESHOLD / 4) {
+            let target = if used == 0 {
+                BUFFER_DEFAULT_CAPACITY
+            } else {
+                used.next_power_of_two().max(BUFFER_DEFAULT_CAPACITY)
+            };
+            buffer.shrink_to(target);
+        }
+
+        Ok(result)
+    })
 }
 
 /// 将 Tars 二进制数据解码为 TarsDict.
@@ -163,9 +202,17 @@ fn encode_raw_dict_to_pybytes(
 
         let result = PyBytes::new(py, &buffer[..]).unbind();
 
-        // Capacity management
-        if buffer.capacity() > BUFFER_SHRINK_THRESHOLD {
-            buffer.shrink_to(BUFFER_DEFAULT_CAPACITY);
+        // Capacity management: 仅当使用量明显变小才缩容，避免频繁抖动。
+        let used = buffer.len();
+        if buffer.capacity() > BUFFER_SHRINK_THRESHOLD
+            && used < (BUFFER_SHRINK_THRESHOLD / 4)
+        {
+            let target = if used == 0 {
+                BUFFER_DEFAULT_CAPACITY
+            } else {
+                used.next_power_of_two().max(BUFFER_DEFAULT_CAPACITY)
+            };
+            buffer.shrink_to(target);
         }
 
         Ok(result)

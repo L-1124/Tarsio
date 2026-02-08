@@ -1,52 +1,105 @@
-# Tarsio 知识库
+# AGENTS.md
 
-**每次回答都以"Tarsio:"开头**
-**项目**: Rust 核心驱动的高性能 Python Tars (JCE) 协议库。
-**架构**: Rust (`src/`) 处理协议编解码 (重活); Python (`python/`) 提供 Struct 模型与 API (接口)。
+Tarsio 项目是 Rust 核心驱动的高性能 Python Tars (JCE) 协议库。此文件为编码智能体提供稳定、可执行的项目信息与规范。
 
-## 📂 关键目录
+## Project overview
 
-| 路径             | 说明                                            |
-|------------------|-------------------------------------------------|
-| `src/codec/`     | **核心逻辑**。纯 Rust JCE 编解码，零拷贝优化。  |
-| `src/binding/`   | **PyO3 绑定**。`SchemaRegistry` 及 FFI 胶水层。 |
-| `python/tarsio/` | **用户 API**。`Struct`, `Field` 定义。          |
-| `python/tests/`  | **集成测试**。所有 Python 测试平铺于此。        |
+* Rust（`src/`）负责协议编解码与字节处理，禁止 `panic!`。
+* Python（`python/`）提供 `typing.Annotated` 风格 API，Rust 侧对象为真实实现。
 
-## 🛠️ 开发工具链
+## Repository layout
 
-* **管理**: `uv` (Python 依赖), `cargo` (Rust).
-* **构建**: `maturin` (混合构建).
-* **命令**:
-    * `uv run maturin develop`: 编译 Rust 扩展。
-    * `uv run pytest`: 运行集成测试。
-    * `cargo test`: 运行 Rust 核心测试。
+| 路径 | 说明 |
+| --- | --- |
+| `src/codec/` | 核心 JCE 编解码实现。 |
+| `src/binding/` | PyO3 绑定与 FFI 胶水层。 |
+| `python/tarsio/` | 用户 API 导出与类型定义。 |
+| `python/tests/` | Python 集成测试（必须平铺）。 |
 
-## 🤖 AI 编码指令 (CRITICAL)
+## Dev environment
 
-### 1. 架构边界
+* 依赖管理：`uv`（Python），`cargo`（Rust）。
+* 混合构建：`maturin`。
 
-* **Rust (src)**: 处理所有字节操作、内存管理、WireType 逻辑。禁止 `panic!`。
-* **Python (python)**: 提供 `typing.Annotated` 风格的 API。运行时通过类型注解构建 Schema 传给 Rust。实际的 `Struct`、`Meta`、`encode`、`decode` 等均为 Rust PyO3 绑定对象，Python 层仅负责导出和 CLI 工具。
+### Setup commands
 
-### 2. 测试规范 (严格遵守)
+* 安装依赖：`uv sync`
+* 编译 Rust 扩展：`uv run maturin develop`
+* 运行 Python 测试：`uv run pytest`
+* 运行 Rust 测试：`cargo test`
 
-* **Python 测试 (`python/tests/`)**:
-    * **风格**: 必须用 `pytest` 函数式写法 (`def test_...`)。**禁止使用 class (`class Test...`)**。
-    * **结构**: 所有文件平铺在 `python/tests/`，**禁止子目录**。
-    * **内容**: 只验证**可观察行为** (Input/Output/Exception)。禁止断言 Rust 内部实现细节。
-    * **原子性**: 一个测试只测一个点。
-* **Rust 测试 (`src/`)**:
-    * 单元测试写在对应文件的 `mod tests`。
-    * 使用 `proptest` 进行 Fuzzing/Roundtrip 测试。
+## Testing instructions
 
-### 3. 代码风格
+### 既有测试架构（优先复用，不新增文件）
 
-* **语言**: 注释和 Commit Message 必须用**中文**。
-* **规范**: 遵循 `CONTRIBUTING.md` 中的详细规约。
+* Python 测试集中在 `python/tests/`，按模块分文件（如 `test_structs.py`、`test_schema.py`、`test_protocols.py`）。
+* Rust 测试紧贴实现文件，统一放在对应模块底部的 `mod tests`。
+* 优先在现有测试文件中追加或调整用例；除非确有必要，避免新增测试文件。
 
-### 4. 常见陷阱
+### Python 集成测试（python/tests/）
 
-* **不要** 在 Python 测试中模拟 Rust 的 WireType 布局，除非是专门的 Protocol Baseline 测试。
-* **不要** 创建新的测试子目录，保持扁平结构。
-* **务必** 在修改 Rust 代码后运行 `uv run maturin develop` 更新扩展。
+* 仅使用 `pytest` 函数式测试（`def test_...`），禁止类式测试。
+* 测试文件必须位于 `python/tests/` 根目录，禁止子目录。
+* 一个测试只验证一个行为，不混用 encode/decode。
+* 只验证可观察行为（输入/输出/异常）。
+* 异常必须断言准确类型（`TypeError`、`ValueError`）。
+* 分层：协议层可断言 hex；API 层只断言输入/输出/异常；综合层少量组合测试。
+* 泛型测试对象：`Box[int]` 与 `Box[User]`，禁止测试 Template 本身。
+
+#### 现有测试文件用途
+
+* `conftest.py`：公共 fixtures 与基础测试结构体（`User`、`OptionalUser`、`Node`），以及内存字节流。
+* `test_cli.py`：CLI 行为（hex 输入解析、输出格式、verbose、文件输入/输出、错误处理、帮助信息）。
+* `test_protocols.py`：协议级基线（编解码规则、未知 tag、`encode_raw`/`decode_raw`、边界与递归）。
+* `test_schema.py`：Schema/Meta/Inspect 行为与约束校验。
+* `test_structs.py`：Struct API 不变量（构造器、默认值、配置项、演进兼容、错误处理）。
+* `test_typing.py`：typing/collections/generics 行为（NewType/Final/Alias/Union/Any/Box）。
+
+### Rust 测试（src/）
+
+* 单元测试写在对应文件底部 `mod tests`。
+* Property Tests 使用 `proptest` 做 codec roundtrip 验证。
+
+## Code quality
+
+* `cargo fmt` 与 `cargo clippy` 必须通过。
+* 核心逻辑禁止 `panic!`，必须返回 `Result`。
+
+## Commit messages
+
+* 使用 Conventional Commits：`<type>(<scope>): <subject>`。
+* 提交信息使用中文。
+
+## Documentation rules
+
+### Python
+
+* Docstrings 使用 Google Style。
+* public API/class/方法/函数必须有 docstring。
+* 测试函数必须包含单行中文 docstring（英文标点）。
+* `Args` / `Returns` / `Yields` / `Raises` 按需提供。
+* 仅描述可观察行为，禁止描述实现细节。
+
+### Rust
+
+* public item 使用 `///`，模块级使用 `//!`。
+* 文档优先描述用途与错误语义。
+* 禁止在文档中泄露实现细节或调试临时代码。
+
+### PyO3
+
+* `#[pyfunction]`/`#[pymethods]`/`#[pyclass]` 必须提供面向 Python 用户的文档说明。
+* 结构与 Python docstring 一致，推荐 `Args` / `Returns` / `Raises`。
+
+### docs/
+
+* 仅面向用户，描述 Usage 与 Behavior。
+* 不包含 Rust 内部实现细节或未稳定行为。
+* 新增页面必须同步更新 `mkdocs.yml` 的 `nav`。
+
+## Agent behavior
+
+* 每次回答都以 `皇上启奏:` 开头。
+* 遵循 `CONTRIBUTING.md` 中的详细规约。
+* 禁止在 Python 测试中模拟 Rust WireType，除非是明确的协议基线测试。
+* 修改 Rust 代码后，必须运行 `uv run maturin develop` 更新扩展。

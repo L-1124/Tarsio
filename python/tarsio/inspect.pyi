@@ -25,85 +25,73 @@ class Constraints:
     pattern: str | None
 
 class IntType:
-    """整数类型（JCE int 家族的抽象视图）."""
+    """整数类型（JCE int 家族的抽象视图）.
+
+    编码：`ZeroTag` 或 `Int1/Int2/Int4/Int8`。
+    """
 
     constraints: Constraints | None
     kind: str
 
 class StrType:
-    """字符串类型."""
+    """字符串类型.
+
+    编码：`String1` 或 `String4`。
+    """
 
     constraints: Constraints | None
     kind: str
 
 class FloatType:
-    """浮点类型（运行时对应 double 语义）."""
+    """浮点类型（运行时对应 double 语义）.
+
+    编码：`ZeroTag` 或 `Double`。
+    """
 
     constraints: Constraints | None
     kind: str
 
 class BoolType:
-    """布尔类型（在 JCE 编码层面通常以 int 表达）."""
+    """布尔类型（在 JCE 编码层面通常以 int 表达）.
+
+    编码：`ZeroTag` 或 `Int1/Int2/Int4/Int8`。
+    """
 
     constraints: Constraints | None
     kind: str
 
 class BytesType:
-    """二进制类型（运行时会被视为 byte-list 的特殊形式）."""
+    """二进制类型（运行时会被视为 byte-list 的特殊形式）.
+
+    编码：`SimpleList`。
+    """
 
     constraints: Constraints | None
     kind: str
 
 class AnyType:
-    """动态类型（运行时根据值推断编码）."""
+    """动态类型（运行时根据值推断编码）.
+
+    编码：运行时按值类型选择具体 TarsType。
+    """
 
     constraints: Constraints | None
     kind: str
 
 class NoneType:
-    """None 类型（通常仅出现在 Union/Optional 中）."""
+    """None 类型（通常仅出现在 Union/Optional 中）.
 
-    constraints: Constraints | None
-    kind: str
-
-class DateTimeType:
-    """datetime.datetime 类型."""
-
-    constraints: Constraints | None
-    kind: str
-
-class DateType:
-    """datetime.date 类型."""
-
-    constraints: Constraints | None
-    kind: str
-
-class TimeType:
-    """datetime.time 类型."""
-
-    constraints: Constraints | None
-    kind: str
-
-class TimedeltaType:
-    """datetime.timedelta 类型."""
-
-    constraints: Constraints | None
-    kind: str
-
-class UuidType:
-    """uuid.UUID 类型."""
-
-    constraints: Constraints | None
-    kind: str
-
-class DecimalType:
-    """decimal.Decimal 类型."""
+    编码：不能直接编码，仅用于 Optional/Union 的语义分支。
+    """
 
     constraints: Constraints | None
     kind: str
 
 class EnumType:
-    """Enum 类型."""
+    """Enum 类型.
+
+    编码：取 `value` 的内层类型映射。
+    """
 
     cls: type
     value_type: TypeInfo
@@ -111,43 +99,81 @@ class EnumType:
     kind: str
 
 class UnionType:
-    """Union 类型（非 Optional 形式）."""
+    """Union 类型（非 Optional 形式）.
+
+    编码：按变体顺序匹配实际值，直接按匹配类型编码。
+    """
 
     variants: tuple[TypeInfo, ...]
     constraints: Constraints | None
     kind: str
 
 class ListType:
-    """列表类型：`list[T]`."""
+    """列表类型：`list[T]`.
+
+    编码：`List`（若元素类型为 int 且值为 bytes，则使用 `SimpleList`）。
+    """
 
     item_type: TypeInfo
     constraints: Constraints | None
     kind: str
 
 class TupleType:
-    """元组类型：仅支持同构 `tuple[T]`（运行时会按 list 处理）."""
+    """元组类型：固定长度、固定类型 `tuple[T1, T2, ...]`.
+
+    编码：`List`。
+    """
+
+    items: tuple[TypeInfo, ...]
+    constraints: Constraints | None
+    kind: str
+
+class VarTupleType:
+    """元组类型：可变长度、元素类型相同 `tuple[T, ...]`.
+
+    编码：`List`（若元素类型为 int 且值为 bytes，则使用 `SimpleList`）。
+    """
 
     item_type: TypeInfo
     constraints: Constraints | None
     kind: str
 
 class MapType:
-    """映射类型：`dict[K, V]`."""
+    """映射类型：`dict[K, V]`.
+
+    编码：`Map`。
+    """
 
     key_type: TypeInfo
     value_type: TypeInfo
     constraints: Constraints | None
     kind: str
 
+class SetType:
+    """集合类型：`set[T]` / `frozenset[T]`.
+
+    编码：`List`，解码为 set。
+    """
+
+    item_type: TypeInfo
+    constraints: Constraints | None
+    kind: str
+
 class OptionalType:
-    """可选类型：`T | None` 或 `typing.Optional[T]`."""
+    """可选类型：`T | None` 或 `typing.Optional[T]`.
+
+    编码：None 时不写 tag，有值时按内层类型映射。
+    """
 
     inner_type: TypeInfo
     constraints: Constraints | None
     kind: str
 
 class StructType:
-    """Struct 类型：字段类型为另一个 `tarsio.Struct` 子类."""
+    """Struct 类型：字段类型为另一个 `tarsio.Struct` 子类.
+
+    编码：`StructBegin` ... `StructEnd`。
+    """
 
     cls: type
     constraints: Constraints | None
@@ -161,17 +187,13 @@ TypeInfo: TypeAlias = (
     | BytesType
     | AnyType
     | NoneType
-    | DateTimeType
-    | DateType
-    | TimeType
-    | TimedeltaType
-    | UuidType
-    | DecimalType
     | EnumType
     | UnionType
     | ListType
     | TupleType
+    | VarTupleType
     | MapType
+    | SetType
     | OptionalType
     | StructType
 )
