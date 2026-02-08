@@ -19,68 +19,115 @@ thread_local! {
 
 struct PySequenceFast {
     ptr: *mut ffi::PyObject,
-    is_list: bool,
+    items: *mut *mut ffi::PyObject,
+    len: isize,
 }
 
 impl PySequenceFast {
+    fn new_exact(obj: &Bound<'_, PyAny>, is_list: bool) -> PyResult<Self> {
+        // SAFETY:
+        // 1. ptr 是一个有效的 Python 对象指针，已知是 list 或 tuple。
+        // 2. 我们刚刚增加了引用计数，确保它保持存活。
+        let ptr = obj.as_ptr();
+        unsafe { ffi::Py_INCREF(ptr) };
+
+        let (items, len) = unsafe {
+            // SAFETY:
+            // 调用者保证 is_list 与 ptr 的实际类型匹配。
+            // 我们将其转换为特定的 C 结构体并访问标准字段。
+            // 对于 List/Tuple，ob_item 和 ob_size 保证在布局上存在。
+            if is_list {
+                let list_ptr = ptr as *mut ffi::PyListObject;
+                ((*list_ptr).ob_item, (*list_ptr).ob_base.ob_size)
+            } else {
+                let tuple_ptr = ptr as *mut ffi::PyTupleObject;
+                (
+                    (*tuple_ptr).ob_item.as_mut_ptr(),
+                    (*tuple_ptr).ob_base.ob_size,
+                )
+            }
+        };
+        Ok(Self { ptr, items, len })
+    }
+
+    #[allow(dead_code)]
     fn new(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
         let err = c"Expected a sequence";
+        // SAFETY:
+        // PySequence_Fast 是一个安全的 C-API 调用，返回新引用或 NULL。
+        // 它能安全地处理任意输入对象。
         let ptr = unsafe { ffi::PySequence_Fast(obj.as_ptr(), err.as_ptr()) };
         if ptr.is_null() {
             return Err(PyErr::fetch(obj.py()));
         }
-        let is_list = unsafe { ffi::PyList_Check(ptr) != 0 };
-        let is_tuple = unsafe { ffi::PyTuple_Check(ptr) != 0 };
-        if !is_list && !is_tuple {
-            unsafe {
-                ffi::Py_DECREF(ptr);
-            }
-            return Err(PyTypeError::new_err("Expected a sequence"));
-        }
-        Ok(Self { ptr, is_list })
-    }
 
-    fn len(&self, py: Python<'_>) -> PyResult<usize> {
-        let len = unsafe {
-            if self.is_list {
-                ffi::PyList_Size(self.ptr)
+        let (items, len) = unsafe {
+            // SAFETY:
+            // 我们使用标准宏检查 ptr 的类型。
+            // 如果它是 List 或 Tuple，访问内部字段是安全的。
+            // 如果都不是，我们会 DECREF 由 PySequence_Fast 返回的引用。
+            if ffi::PyList_Check(ptr) != 0 {
+                let list_ptr = ptr as *mut ffi::PyListObject;
+                ((*list_ptr).ob_item, (*list_ptr).ob_base.ob_size)
+            } else if ffi::PyTuple_Check(ptr) != 0 {
+                let tuple_ptr = ptr as *mut ffi::PyTupleObject;
+                (
+                    (*tuple_ptr).ob_item.as_mut_ptr(),
+                    (*tuple_ptr).ob_base.ob_size,
+                )
             } else {
-                ffi::PyTuple_Size(self.ptr)
+                ffi::Py_DECREF(ptr);
+                return Err(PyTypeError::new_err(
+                    "PySequence_Fast returned non-list/tuple",
+                ));
             }
         };
-        if len < 0 {
-            return Err(PyErr::fetch(py));
-        }
-        Ok(len as usize)
+
+        Ok(Self { ptr, items, len })
+    }
+
+    fn len(&self) -> usize {
+        self.len as usize
     }
 
     fn get_item<'py>(&self, py: Python<'py>, idx: usize) -> PyResult<Bound<'py, PyAny>> {
-        let item_ptr = unsafe {
-            if self.is_list {
-                ffi::PyList_GetItem(self.ptr, idx as isize)
-            } else {
-                ffi::PyTuple_GetItem(self.ptr, idx as isize)
-            }
-        };
-        if item_ptr.is_null() {
-            return Err(PyErr::fetch(py));
+        if idx as isize >= self.len {
+            return Err(PyValueError::new_err("Index out of bounds"));
         }
-        Ok(unsafe { Bound::from_borrowed_ptr(py, item_ptr) })
+        // SAFETY:
+        // 1. 上面已验证 idx < self.len。
+        // 2. self.items 是一个大小为 self.len 的数组的有效指针。
+        // 3. 数组中的项是由容器 self.ptr 拥有的借用引用。
+        //    我们通过 RAII 保持 self.ptr 存活，因此这些项是有效的。
+        unsafe {
+            let item_ptr = *self.items.add(idx);
+            Ok(Bound::from_borrowed_ptr(py, item_ptr))
+        }
     }
 }
 
 impl Drop for PySequenceFast {
     fn drop(&mut self) {
+        // SAFETY:
+        // self.ptr 是一个拥有的引用（强引用）。
+        // 当此包装器被删除时，我们需要减少它的引用计数。
         unsafe {
             ffi::Py_DECREF(self.ptr);
         }
     }
 }
 
-fn is_exact_list_or_tuple(obj: &Bound<'_, PyAny>) -> bool {
-    // 仅对精确 list/tuple 走 PySequence_Fast，避免子类被物化
+fn check_exact_sequence_type(obj: &Bound<'_, PyAny>) -> Option<bool> {
+    // SAFETY:
+    // 在有效的 Python 对象指针上调用标准类型检查宏是安全的。
     unsafe {
-        ffi::PyList_CheckExact(obj.as_ptr()) != 0 || ffi::PyTuple_CheckExact(obj.as_ptr()) != 0
+        if ffi::PyList_CheckExact(obj.as_ptr()) != 0 {
+            Some(true)
+        } else if ffi::PyTuple_CheckExact(obj.as_ptr()) != 0 {
+            Some(false)
+        } else {
+            None
+        }
     }
 }
 
@@ -280,9 +327,9 @@ fn serialize_impl(
             }
 
             writer.write_tag(tag, TarsType::List);
-            if is_exact_list_or_tuple(val) {
-                let seq_fast = PySequenceFast::new(val)?;
-                let len = seq_fast.len(val.py())?;
+            if let Some(is_list) = check_exact_sequence_type(val) {
+                let seq_fast = PySequenceFast::new_exact(val, is_list)?;
+                let len = seq_fast.len();
                 writer.write_int(0, len as i64);
                 for i in 0..len {
                     let item = seq_fast.get_item(val.py(), i)?;
@@ -324,6 +371,10 @@ fn class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> PyResult<Bound<'py, PyTyp
     if obj_ptr.is_null() {
         return Err(PyTypeError::new_err("Invalid struct pointer"));
     }
+    // SAFETY:
+    // 指针 ptr 来自我们需要自己的模式/结构定义系统。
+    // 我们假设它指向一个有效的、存活的 PyObject（具体来说是 PyTypeObject）。
+    // from_borrowed_ptr 创建一个借用该对象的 Bound 包装器。
     let any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
     let cls = any.cast::<PyType>()?;
     Ok(cls.clone())
@@ -511,9 +562,9 @@ fn serialize_any(
 
     if value.is_instance_of::<PyList>() || value.is_instance_of::<PySequence>() {
         writer.write_tag(tag, TarsType::List);
-        if is_exact_list_or_tuple(value) {
-            let seq_fast = PySequenceFast::new(value)?;
-            let len = seq_fast.len(value.py())?;
+        if let Some(is_list) = check_exact_sequence_type(value) {
+            let seq_fast = PySequenceFast::new_exact(value, is_list)?;
+            let len = seq_fast.len();
             writer.write_int(0, len as i64);
             for i in 0..len {
                 let item = seq_fast.get_item(value.py(), i)?;
