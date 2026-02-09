@@ -190,6 +190,42 @@ class StructType(Type):
 
     cls: type
 
+class TypedDictType(Type):
+    """TypedDict 类型.
+
+    编码：`Map`。
+    """
+
+class NamedTupleType(Type):
+    """NamedTuple 类型.
+
+    编码：`List`。
+
+    Attributes:
+        cls: NamedTuple 类型。
+        items: 元素类型列表。
+    """
+
+    cls: type
+    items: tuple[TypeInfo, ...]
+
+class DataclassType(Type):
+    """Dataclass 类型.
+
+    编码：`Map`。
+
+    Attributes:
+        cls: Dataclass 类型。
+    """
+
+    cls: type
+
+class TarsDictType(Type):
+    """TarsDict 类型（动态 struct 字段映射）.
+
+    编码：`StructBegin` ... `StructEnd`。
+    """
+
 TypeInfo: TypeAlias = (
     IntType
     | StrType
@@ -198,6 +234,9 @@ TypeInfo: TypeAlias = (
     | BytesType
     | AnyType
     | NoneType
+    | TypedDictType
+    | NamedTupleType
+    | DataclassType
     | EnumType
     | UnionType
     | ListType
@@ -207,6 +246,7 @@ TypeInfo: TypeAlias = (
     | SetType
     | OptionalType
     | StructType
+    | TarsDictType
 )
 
 class FieldInfo:

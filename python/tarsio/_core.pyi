@@ -351,11 +351,14 @@ def encode_raw(obj: Any) -> bytes:
     """
     ...
 
-def decode_raw(data: bytes) -> TarsDict:
+def decode_raw(data: bytes, auto_simplelist: bool = ...) -> TarsDict:
     """将字节解码为 TarsDict.
 
     Args:
         data: 包含 Tars 编码数据的 bytes 对象。
+        auto_simplelist: 是否自动解析 SimpleList 的 bytes.
+            为 True 时: 若内容看起来像 Tars Struct 则保持 bytes,
+            否则在 UTF-8 完整可解码时返回 str, 失败回退为 bytes.
 
     Returns:
         解码后的 TarsDict。

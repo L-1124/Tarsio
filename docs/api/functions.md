@@ -7,9 +7,3 @@
 ::: tarsio.encode
 
 ::: tarsio.decode
-
-## Raw 模式
-
-::: tarsio.encode_raw
-
-::: tarsio.decode_raw

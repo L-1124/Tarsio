@@ -1,3 +1,4 @@
+pub mod any_codec;
 pub mod de;
 pub mod inspect;
 pub mod introspect;

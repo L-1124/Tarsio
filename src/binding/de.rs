@@ -1,4 +1,4 @@
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PySet, PyType};
@@ -6,12 +6,29 @@ use simdutf8::basic::from_utf8;
 use std::cmp::Ordering;
 
 use crate::ValidationError;
-use crate::binding::introspect::StructKind;
-use crate::binding::schema::{Constraints, StructDef, TypeExpr, WireType, ensure_schema_for_class};
+use crate::binding::any_codec::{
+    decode_any_struct_fields, decode_any_value, read_size_non_negative,
+};
+use crate::binding::raw::decode_raw;
+use crate::binding::schema::{
+    Constraints, StructDef, TarsDict, TypeExpr, WireType, ensure_schema_for_class,
+};
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
 
 const MAX_DEPTH: usize = 100;
+
+#[inline]
+fn check_depth(depth: usize) -> PyResult<()> {
+    if depth > MAX_DEPTH {
+        return Err(PyValueError::new_err(
+            "Recursion limit exceeded during deserialization",
+        ));
+    }
+    Ok(())
+}
+
+// read_size_non_negative 由 any_codec 提供
 
 /// 将 Tars 二进制数据解码为 Struct 实例(Schema API).
 ///
@@ -40,6 +57,14 @@ pub fn decode_object<'py>(
     cls: &Bound<'py, PyType>,
     data: &[u8],
 ) -> PyResult<Bound<'py, PyAny>> {
+    if cls.is_subclass_of::<TarsDict>()? {
+        let dict = decode_raw(py, data, false)?;
+        if cls.is(dict.get_type().as_any()) {
+            return Ok(dict.into_any());
+        }
+        let instance = cls.call1((dict,))?;
+        return Ok(instance);
+    }
     // 校验 schema 是否存在并获取
     let def = ensure_schema_for_class(py, cls)?;
 
@@ -54,11 +79,7 @@ fn deserialize_struct<'py>(
     def: &StructDef,
     depth: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
-    if depth > MAX_DEPTH {
-        return Err(PyValueError::new_err(
-            "Recursion limit exceeded during deserialization",
-        ));
-    }
+    check_depth(depth)?;
 
     let class_obj = def.bind_class(py);
     let mut seen = vec![false; def.fields_sorted.len()];
@@ -133,87 +154,33 @@ fn deserialize_struct<'py>(
         values[idx] = value;
     }
 
-    match def.kind {
-        StructKind::TarsStruct => {
-            let instance = unsafe {
-                // SAFETY: class_obj 由 Schema 持有,生命周期覆盖本次反序列化。
-                // 这里使用 PyType_GenericAlloc 创建未初始化对象,后续逐字段写入。
-                let type_ptr = class_obj.as_ptr() as *mut ffi::PyTypeObject;
-                let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
-                if obj_ptr.is_null() {
-                    return Err(PyErr::fetch(py));
-                }
-                Bound::from_owned_ptr(py, obj_ptr)
-            };
-            for (idx, field) in def.fields_sorted.iter().enumerate() {
-                if let Some(val) = values[idx].as_ref() {
-                    unsafe {
-                        // SAFETY: name_py/val 均由 PyO3 管理引用计数。
-                        // 若设置属性失败,显式 drop 以确保引用及时释放,避免半初始化对象泄漏。
-                        let name_py = field.name_py.bind(py);
-                        let res = ffi::PyObject_GenericSetAttr(
-                            instance.as_ptr(),
-                            name_py.as_ptr(),
-                            val.as_ptr(),
-                        );
-                        if res != 0 {
-                            let err = PyErr::fetch(py);
-                            drop(instance);
-                            return Err(err);
-                        }
-                    }
-                }
-            }
-            Ok(instance)
+    let instance = unsafe {
+        // SAFETY: class_obj 由 Schema 持有,生命周期覆盖本次反序列化。
+        // 这里使用 PyType_GenericAlloc 创建未初始化对象,后续逐字段写入。
+        let type_ptr = class_obj.as_ptr() as *mut ffi::PyTypeObject;
+        let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
+        if obj_ptr.is_null() {
+            return Err(PyErr::fetch(py));
         }
-        StructKind::TypedDict => {
-            let dict = PyDict::new(py);
-            for (idx, field) in def.fields_sorted.iter().enumerate() {
-                if let Some(val) = values[idx].as_ref() {
-                    dict.set_item(field.name_py.bind(py), val)?;
+        Bound::from_owned_ptr(py, obj_ptr)
+    };
+    for (idx, field) in def.fields_sorted.iter().enumerate() {
+        if let Some(val) = values[idx].as_ref() {
+            unsafe {
+                // SAFETY: name_py/val 均由 PyO3 管理引用计数。
+                // 若设置属性失败,显式 drop 以确保引用及时释放,避免半初始化对象泄漏。
+                let name_py = field.name_py.bind(py);
+                let res =
+                    ffi::PyObject_GenericSetAttr(instance.as_ptr(), name_py.as_ptr(), val.as_ptr());
+                if res != 0 {
+                    let err = PyErr::fetch(py);
+                    drop(instance);
+                    return Err(err);
                 }
             }
-            Ok(dict.into_any())
-        }
-        StructKind::TarsDict => {
-            let dict = PyDict::new(py);
-            for (idx, field) in def.fields_sorted.iter().enumerate() {
-                if let Some(val) = values[idx].as_ref() {
-                    dict.set_item(field.name_py.bind(py), val)?;
-                }
-            }
-            let instance = class_obj.call1((dict,))?;
-            Ok(instance)
-        }
-        StructKind::NamedTuple | StructKind::Dataclass => {
-            let kwargs = PyDict::new(py);
-            for (idx, field) in def.fields_sorted.iter().enumerate() {
-                if def.kind == StructKind::Dataclass && !field.init {
-                    continue;
-                }
-                if let Some(val) = values[idx].as_ref() {
-                    kwargs.set_item(field.name_py.bind(py), val)?;
-                }
-            }
-            let instance = class_obj.call((), Some(&kwargs))?;
-            if def.kind == StructKind::Dataclass {
-                let builtins = py.import("builtins")?;
-                let object = builtins.getattr("object")?;
-                for (idx, field) in def.fields_sorted.iter().enumerate() {
-                    if field.init {
-                        continue;
-                    }
-                    if let Some(val) = values[idx].as_ref() {
-                        object.call_method1(
-                            "__setattr__",
-                            (instance.clone(), field.name_py.bind(py), val),
-                        )?;
-                    }
-                }
-            }
-            Ok(instance)
         }
     }
+    Ok(instance)
 }
 
 fn validate_value<'py>(
@@ -319,11 +286,7 @@ fn deserialize_value<'py>(
     type_expr: &TypeExpr,
     depth: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
-    if depth > MAX_DEPTH {
-        return Err(PyValueError::new_err(
-            "Recursion limit exceeded during deserialization",
-        ));
-    }
+    check_depth(depth)?;
 
     match type_expr {
         TypeExpr::Primitive(wire_type) => match wire_type {
@@ -363,7 +326,7 @@ fn deserialize_value<'py>(
             }
             _ => Err(PyValueError::new_err("Unexpected wire type for primitive")),
         },
-        TypeExpr::Any => decode_any_value(py, reader, type_id, depth),
+        TypeExpr::Any => decode_any_value(py, reader, type_id, depth, true),
         TypeExpr::NoneType => Ok(py.None().into_bound(py)),
         TypeExpr::Enum(enum_cls, inner) => {
             let value = deserialize_value(py, reader, type_id, inner, depth + 1)?;
@@ -375,13 +338,7 @@ fn deserialize_value<'py>(
             if type_id != TarsType::List {
                 return Err(PyValueError::new_err("Set value must be encoded as List"));
             }
-            let len = reader
-                .read_size()
-                .map_err(|e| PyValueError::new_err(format!("Failed to read list size: {}", e)))?;
-            if len < 0 {
-                return Err(PyValueError::new_err("Invalid list size"));
-            }
-            let len = len as usize;
+            let len = read_size_non_negative(reader, "list")?;
             let set = PySet::empty(py)?;
             for _ in 0..len {
                 let (_, item_type) = reader.read_head().map_err(|e| {
@@ -401,6 +358,82 @@ fn deserialize_value<'py>(
             let nested_def = ensure_schema_for_class(py, nested_cls)?;
             deserialize_struct(py, reader, &nested_def, depth + 1)
         }
+        TypeExpr::TarsDict => {
+            if type_id != TarsType::StructBegin {
+                return Err(PyValueError::new_err(
+                    "TarsDict value must be encoded as Struct",
+                ));
+            }
+            let dict = decode_any_struct_fields(py, reader, depth + 1, true)?;
+            let tarsdict_type = py.get_type::<TarsDict>();
+            let instance = tarsdict_type.call1((dict,))?;
+            Ok(instance.into_any())
+        }
+        TypeExpr::NamedTuple(cls, items) => {
+            if type_id != TarsType::List {
+                return Err(PyValueError::new_err(
+                    "NamedTuple value must be encoded as List",
+                ));
+            }
+            let len = read_size_non_negative(reader, "list")?;
+            if len != items.len() {
+                return Err(PyValueError::new_err(
+                    "Tuple length does not match annotation",
+                ));
+            }
+            let list_any = unsafe {
+                let ptr = ffi::PyList_New(len as isize);
+                if ptr.is_null() {
+                    return Err(PyErr::fetch(py));
+                }
+                Bound::from_owned_ptr(py, ptr)
+            };
+            for (idx, item_type) in items.iter().enumerate() {
+                let (_, item_type_id) = reader.read_head().map_err(|e| {
+                    PyValueError::new_err(format!("Failed to read list item head: {}", e))
+                })?;
+                let item = deserialize_value(py, reader, item_type_id, item_type, depth + 1)?;
+                let set_res = unsafe {
+                    ffi::PyList_SetItem(list_any.as_ptr(), idx as isize, item.into_ptr())
+                };
+                if set_res != 0 {
+                    return Err(PyErr::fetch(py));
+                }
+            }
+            let tuple = list_any.cast::<PyList>()?.to_tuple();
+            let instance = cls.bind(py).call1(tuple)?;
+            Ok(instance.into_any())
+        }
+        TypeExpr::Dataclass(cls) => {
+            if type_id != TarsType::Map {
+                return Err(PyValueError::new_err(
+                    "Dataclass value must be encoded as Map",
+                ));
+            }
+            let len = read_size_non_negative(reader, "map")?;
+            let dict = PyDict::new(py);
+            for _ in 0..len {
+                let (_, kt) = reader.read_head().map_err(|e| {
+                    PyValueError::new_err(format!("Failed to read map key head: {}", e))
+                })?;
+                let key = deserialize_value(
+                    py,
+                    reader,
+                    kt,
+                    &TypeExpr::Primitive(WireType::String),
+                    depth + 1,
+                )?;
+
+                let (_, vt) = reader.read_head().map_err(|e| {
+                    PyValueError::new_err(format!("Failed to read map value head: {}", e))
+                })?;
+                let val = deserialize_value(py, reader, vt, &TypeExpr::Any, depth + 1)?;
+
+                dict.set_item(key, val)?;
+            }
+            let instance = cls.bind(py).call((), Some(&dict))?;
+            Ok(instance.into_any())
+        }
         TypeExpr::List(inner) | TypeExpr::VarTuple(inner) => {
             if type_id == TarsType::SimpleList {
                 let sub_type = reader.read_u8().map_err(|e| {
@@ -409,26 +442,14 @@ fn deserialize_value<'py>(
                 if sub_type != 0 {
                     return Err(PyValueError::new_err("SimpleList must contain Byte (0)"));
                 }
-                let len = reader.read_size().map_err(|e| {
-                    PyValueError::new_err(format!("Failed to read SimpleList size: {}", e))
-                })?;
-                if len < 0 {
-                    return Err(PyValueError::new_err("Invalid SimpleList size"));
-                }
-                let len = len as usize;
+                let len = read_size_non_negative(reader, "SimpleList")?;
                 let bytes = reader.read_bytes(len).map_err(|e| {
                     PyValueError::new_err(format!("Failed to read SimpleList bytes: {}", e))
                 })?;
                 return Ok(PyBytes::new(py, bytes).into_any());
             }
 
-            let len = reader
-                .read_size()
-                .map_err(|e| PyValueError::new_err(format!("Failed to read list size: {}", e)))?;
-            if len < 0 {
-                return Err(PyValueError::new_err("Invalid list size"));
-            }
-            let len = len as usize;
+            let len = read_size_non_negative(reader, "list")?;
 
             let list_any = unsafe {
                 // SAFETY: PyList_New 返回新引用并预留 len 个槽位。若返回空指针则抛错。
@@ -465,13 +486,7 @@ fn deserialize_value<'py>(
             if type_id != TarsType::List {
                 return Err(PyValueError::new_err("Tuple value must be encoded as List"));
             }
-            let len = reader
-                .read_size()
-                .map_err(|e| PyValueError::new_err(format!("Failed to read list size: {}", e)))?;
-            if len < 0 {
-                return Err(PyValueError::new_err("Invalid list size"));
-            }
-            let len = len as usize;
+            let len = read_size_non_negative(reader, "list")?;
             if len != items.len() {
                 return Err(PyValueError::new_err(
                     "Tuple length does not match annotation",
@@ -500,13 +515,7 @@ fn deserialize_value<'py>(
             Ok(list.to_tuple().into_any())
         }
         TypeExpr::Map(k_type, v_type) => {
-            let len = reader
-                .read_size()
-                .map_err(|e| PyValueError::new_err(format!("Failed to read map size: {}", e)))?;
-            if len < 0 {
-                return Err(PyValueError::new_err("Invalid map size"));
-            }
-            let len = len as usize;
+            let len = read_size_non_negative(reader, "map")?;
 
             let dict = PyDict::new(py);
             for _ in 0..len {
@@ -579,6 +588,9 @@ fn union_variant_matches_type_id(variant: &TypeExpr, type_id: TarsType) -> bool 
             .iter()
             .any(|item| union_variant_matches_type_id(item, type_id)),
         TypeExpr::Struct(_) => type_id == TarsType::StructBegin,
+        TypeExpr::TarsDict => type_id == TarsType::StructBegin,
+        TypeExpr::NamedTuple(_, _) => matches!(type_id, TarsType::List | TarsType::SimpleList),
+        TypeExpr::Dataclass(_) => type_id == TarsType::Map,
         TypeExpr::List(_) | TypeExpr::VarTuple(_) | TypeExpr::Tuple(_) => {
             matches!(type_id, TarsType::List | TarsType::SimpleList)
         }
@@ -586,185 +598,4 @@ fn union_variant_matches_type_id(variant: &TypeExpr, type_id: TarsType) -> bool 
         TypeExpr::Map(_, _) => type_id == TarsType::Map,
         TypeExpr::Optional(inner) => union_variant_matches_type_id(inner, type_id),
     }
-}
-
-fn decode_any_value<'py>(
-    py: Python<'py>,
-    reader: &mut TarsReader,
-    type_id: TarsType,
-    depth: usize,
-) -> PyResult<Bound<'py, PyAny>> {
-    if depth > MAX_DEPTH {
-        return Err(PyValueError::new_err(
-            "Recursion limit exceeded during deserialization",
-        ));
-    }
-    match type_id {
-        TarsType::ZeroTag | TarsType::Int1 | TarsType::Int2 | TarsType::Int4 | TarsType::Int8 => {
-            let v = reader
-                .read_int(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read int: {e}")))?;
-            Ok(v.into_pyobject(py)?.into_any())
-        }
-        TarsType::Float => {
-            let v = reader
-                .read_float(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read float: {e}")))?;
-            Ok(v.into_pyobject(py)?.into_any())
-        }
-        TarsType::Double => {
-            let v = reader
-                .read_double(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read double: {e}")))?;
-            Ok(v.into_pyobject(py)?.into_any())
-        }
-        TarsType::String1 | TarsType::String4 => {
-            let bytes = reader
-                .read_string(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read string bytes: {e}")))?;
-            let s = from_utf8(bytes).map_err(|_| PyValueError::new_err("Invalid UTF-8 string"))?;
-            Ok(s.into_pyobject(py)?.into_any())
-        }
-        TarsType::StructBegin => {
-            decode_any_struct_fields(py, reader, depth + 1).map(|d| d.into_any())
-        }
-        TarsType::List => decode_any_list(py, reader, depth + 1),
-        TarsType::SimpleList => decode_any_simple_list(py, reader),
-        TarsType::Map => decode_any_map(py, reader, depth + 1),
-        TarsType::StructEnd => Err(PyValueError::new_err("Unexpected StructEnd")),
-    }
-}
-
-fn decode_any_struct_fields<'py>(
-    py: Python<'py>,
-    reader: &mut TarsReader,
-    depth: usize,
-) -> PyResult<Bound<'py, PyDict>> {
-    if depth > MAX_DEPTH {
-        return Err(PyValueError::new_err(
-            "Recursion limit exceeded during deserialization",
-        ));
-    }
-    let dict = PyDict::new(py);
-    while !reader.is_end() {
-        let (tag, type_id) = reader
-            .read_head()
-            .map_err(|e| PyValueError::new_err(format!("Read head error: {e}")))?;
-        if type_id == TarsType::StructEnd {
-            return Ok(dict);
-        }
-        if dict.contains(tag)? {
-            return Err(PyValueError::new_err(format!(
-                "Duplicate tag {tag} in struct"
-            )));
-        }
-        let value = decode_any_value(py, reader, type_id, depth + 1)?;
-        dict.set_item(tag, value)?;
-    }
-    Ok(dict)
-}
-
-fn decode_any_list<'py>(
-    py: Python<'py>,
-    reader: &mut TarsReader,
-    depth: usize,
-) -> PyResult<Bound<'py, PyAny>> {
-    if depth > MAX_DEPTH {
-        return Err(PyValueError::new_err(
-            "Recursion limit exceeded during deserialization",
-        ));
-    }
-    let len = reader
-        .read_size()
-        .map_err(|e| PyValueError::new_err(format!("Failed to read list size: {e}")))?;
-    if len < 0 {
-        return Err(PyValueError::new_err("Invalid list size"));
-    }
-    let len = len as usize;
-    let list_any = unsafe {
-        // SAFETY: PyList_New 返回新引用并预留 len 个槽位。若返回空指针则抛错。
-        let ptr = ffi::PyList_New(len as isize);
-        if ptr.is_null() {
-            return Err(PyErr::fetch(py));
-        }
-        Bound::from_owned_ptr(py, ptr)
-    };
-    for idx in 0..len {
-        let (_, item_type) = reader
-            .read_head()
-            .map_err(|e| PyValueError::new_err(format!("Failed to read list item head: {e}")))?;
-        let item = decode_any_value(py, reader, item_type, depth + 1)?;
-        let set_res = unsafe {
-            // SAFETY: PyList_SetItem 会“偷”引用, item.into_ptr 转移所有权。
-            // 每个索引只写入一次,与 PyList_New 的预分配长度一致。
-            ffi::PyList_SetItem(list_any.as_ptr(), idx as isize, item.into_ptr())
-        };
-        if set_res != 0 {
-            return Err(PyErr::fetch(py));
-        }
-    }
-    Ok(list_any)
-}
-
-fn decode_any_simple_list<'py>(
-    py: Python<'py>,
-    reader: &mut TarsReader,
-) -> PyResult<Bound<'py, PyAny>> {
-    let subtype = reader
-        .read_u8()
-        .map_err(|e| PyValueError::new_err(format!("Failed to read SimpleList subtype: {e}")))?;
-    if subtype != 0 {
-        return Err(PyValueError::new_err("SimpleList must contain Byte (0)"));
-    }
-    let len = reader
-        .read_size()
-        .map_err(|e| PyValueError::new_err(format!("Failed to read SimpleList size: {e}")))?;
-    if len < 0 {
-        return Err(PyValueError::new_err("Invalid SimpleList size"));
-    }
-    let len = len as usize;
-    let bytes = reader
-        .read_bytes(len)
-        .map_err(|e| PyValueError::new_err(format!("Failed to read SimpleList bytes: {e}")))?;
-    if let Ok(s) = from_utf8(bytes) {
-        return Ok(s.into_pyobject(py)?.into_any());
-    }
-    Ok(PyBytes::new(py, bytes).into_any())
-}
-
-fn decode_any_map<'py>(
-    py: Python<'py>,
-    reader: &mut TarsReader,
-    depth: usize,
-) -> PyResult<Bound<'py, PyAny>> {
-    if depth > MAX_DEPTH {
-        return Err(PyValueError::new_err(
-            "Recursion limit exceeded during deserialization",
-        ));
-    }
-    let len = reader
-        .read_size()
-        .map_err(|e| PyValueError::new_err(format!("Failed to read map size: {e}")))?;
-    if len < 0 {
-        return Err(PyValueError::new_err("Invalid map size"));
-    }
-    let len = len as usize;
-    let dict = PyDict::new(py);
-    for _ in 0..len {
-        let (_, kt) = reader
-            .read_head()
-            .map_err(|e| PyValueError::new_err(format!("Failed to read map key head: {e}")))?;
-        let key = decode_any_value(py, reader, kt, depth + 1)?;
-
-        let (_, vt) = reader
-            .read_head()
-            .map_err(|e| PyValueError::new_err(format!("Failed to read map value head: {e}")))?;
-        let val = decode_any_value(py, reader, vt, depth + 1)?;
-
-        if key.hash().is_err() {
-            return Err(PyTypeError::new_err("Map key must be hashable"));
-        }
-        dict.set_item(key, val)?;
-    }
-    Ok(dict.into_any())
 }

@@ -362,6 +362,85 @@ impl StructType {
     }
 }
 
+/// TypedDict 类型（字段映射以 dict 形式编码）.
+///
+/// Attributes:
+///     constraints: 字段约束。
+#[pyclass(module = "tarsio._core.inspect", extends = TypeBase)]
+pub struct TypedDictType {
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl TypedDictType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "typeddict"
+    }
+}
+
+/// NamedTuple 类型（按 tuple 语义编码）.
+///
+/// Attributes:
+///     items: 元素类型列表。
+///     constraints: 字段约束。
+#[pyclass(module = "tarsio._core.inspect", extends = TypeBase)]
+pub struct NamedTupleType {
+    #[pyo3(get)]
+    pub cls: Py<PyType>,
+    #[pyo3(get)]
+    pub items: Py<PyTuple>,
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl NamedTupleType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "namedtuple"
+    }
+}
+
+/// Dataclass 类型（鸭子类型，按 map 语义编码）.
+///
+/// Attributes:
+///     constraints: 字段约束。
+#[pyclass(module = "tarsio._core.inspect", extends = TypeBase)]
+pub struct DataclassType {
+    #[pyo3(get)]
+    pub cls: Py<PyType>,
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl DataclassType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "dataclass"
+    }
+}
+
+/// TarsDict 类型（动态 struct 字段映射）.
+///
+/// Attributes:
+///     constraints: 字段约束。
+#[pyclass(module = "tarsio._core.inspect", extends = TypeBase)]
+pub struct TarsDictType {
+    #[pyo3(get)]
+    pub constraints: Option<Py<Constraints>>,
+}
+
+#[pymethods]
+impl TarsDictType {
+    #[getter]
+    fn kind(&self) -> &'static str {
+        "tarsdict"
+    }
+}
+
 /// 结构体字段信息.
 ///
 /// Attributes:
@@ -517,6 +596,39 @@ fn build_type_info(
         TypeInfoIR::Bytes => Ok(Py::new(py, (BytesType { constraints }, TypeBase))?.into_any()),
         TypeInfoIR::Any => Ok(Py::new(py, (AnyType { constraints }, TypeBase))?.into_any()),
         TypeInfoIR::NoneType => Ok(Py::new(py, (NoneType { constraints }, TypeBase))?.into_any()),
+        TypeInfoIR::TypedDict => {
+            Ok(Py::new(py, (TypedDictType { constraints }, TypeBase))?.into_any())
+        }
+        TypeInfoIR::NamedTuple(cls, items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(build_type_info(py, item, None)?);
+            }
+            let items_tuple = PyTuple::new(py, out)?;
+            Ok(Py::new(
+                py,
+                (
+                    NamedTupleType {
+                        cls: cls.clone_ref(py),
+                        items: items_tuple.unbind(),
+                        constraints,
+                    },
+                    TypeBase,
+                ),
+            )?
+            .into_any())
+        }
+        TypeInfoIR::Dataclass(cls) => Ok(Py::new(
+            py,
+            (
+                DataclassType {
+                    cls: cls.clone_ref(py),
+                    constraints,
+                },
+                TypeBase,
+            ),
+        )?
+        .into_any()),
         TypeInfoIR::Enum(cls, inner) => {
             let value_type = build_type_info(py, inner, None)?;
             Ok(Py::new(
@@ -651,5 +763,8 @@ fn build_type_info(
             ),
         )?
         .into_any()),
+        TypeInfoIR::TarsDict => {
+            Ok(Py::new(py, (TarsDictType { constraints }, TypeBase))?.into_any())
+        }
     }
 }

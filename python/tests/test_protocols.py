@@ -424,20 +424,38 @@ def test_roundtrip_reversibility() -> None:
         assert decoded[0] == case, f"Failed roundtrip for {case}"
 
 
-def test_simplelist_utf8_bytes_decodes_to_str() -> None:
-    """验证 SimpleList 的 UTF-8 bytes 解码为字符串."""
+def test_simplelist_utf8_bytes_auto_decodes_to_str() -> None:
+    """验证 auto_simplelist=True 时 UTF-8 bytes 解码为字符串."""
     data = TarsDict({0: b"hello"})
     encoded = core_encode_raw(data)
-    decoded = core_decode_raw(encoded)
+    decoded = core_decode_raw(encoded, auto_simplelist=True)
     assert decoded[0] == "hello"
 
 
-def test_simplelist_invalid_utf8_decodes_to_bytes() -> None:
-    """验证 SimpleList 的无效 UTF-8 回退为 bytes."""
-    data = TarsDict({0: b"\xff"})
+def test_simplelist_utf8_bytes_default_bytes() -> None:
+    """验证默认模式下 SimpleList 保持 bytes."""
+    data = TarsDict({0: b"hello"})
     encoded = core_encode_raw(data)
     decoded = core_decode_raw(encoded)
+    assert decoded[0] == b"hello"
+
+
+def test_simplelist_invalid_utf8_decodes_to_bytes() -> None:
+    """验证 auto_simplelist=True 时无效 UTF-8 回退为 bytes."""
+    data = TarsDict({0: b"\xff"})
+    encoded = core_encode_raw(data)
+    decoded = core_decode_raw(encoded, auto_simplelist=True)
     assert decoded[0] == b"\xff"
+
+
+def test_simplelist_auto_respects_tars_passthrough() -> None:
+    """验证 auto_simplelist=True 时 Tars 透传保持 bytes."""
+    inner = TarsDict({0: 1})
+    payload = core_encode_raw(inner)
+    outer = TarsDict({0: payload})
+    encoded = core_encode_raw(outer)
+    decoded = core_decode_raw(encoded, auto_simplelist=True)
+    assert decoded[0] == payload
 
 
 def test_raw_string_invalid_utf8_raises_value_error() -> None:

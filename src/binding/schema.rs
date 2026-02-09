@@ -16,7 +16,7 @@ use std::os::raw::c_void;
 use std::sync::Arc;
 
 use crate::binding::introspect::{
-    ConstraintsIR, StructKind, TypeInfoIR, detect_struct_kind, introspect_struct_fields,
+    ConstraintsIR, TypeInfoIR, detect_struct_kind, introspect_struct_fields,
 };
 
 // ==========================================
@@ -44,6 +44,9 @@ pub enum WireType {
 pub enum TypeExpr {
     Primitive(WireType),
     Struct(usize),
+    TarsDict,
+    NamedTuple(Py<PyType>, Vec<TypeExpr>),
+    Dataclass(Py<PyType>),
     Any,
     NoneType,
     Set(Box<TypeExpr>),
@@ -98,7 +101,6 @@ pub struct StructDef {
     pub fields_sorted: Vec<FieldDef>,
     pub tag_lookup_vec: Vec<Option<usize>>,
     pub name_to_tag: HashMap<String, u8>,
-    pub kind: StructKind,
     pub frozen: bool,
     pub order: bool,
     pub forbid_unknown_tags: bool,
@@ -202,13 +204,19 @@ pub fn ensure_schema_for_class<'py>(
     cls: &Bound<'py, PyType>,
 ) -> PyResult<Arc<StructDef>> {
     let cls_key = cls.as_ptr() as usize;
-
     // Check cache first (includes negative results)
     if let Some(entry) = SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).cloned()) {
         return match entry {
             SchemaCacheEntry::Struct(def) => Ok(def),
             SchemaCacheEntry::NotStruct => {
-                Err(pyo3::exceptions::PyTypeError::new_err("No schema found"))
+                let class_name = cls
+                    .name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|_| "Unknown".to_string());
+                Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Unsupported class type: {}",
+                    class_name
+                )))
             }
         };
     }
@@ -223,7 +231,14 @@ pub fn ensure_schema_for_class<'py>(
                 .borrow_mut()
                 .insert(cls_key, SchemaCacheEntry::NotStruct)
         });
-        return Err(pyo3::exceptions::PyTypeError::new_err("No schema found"));
+        let class_name = cls
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "Unknown".to_string());
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "Unsupported class type: {}",
+            class_name
+        )));
     }
 
     // Try normal schema lookup
@@ -232,7 +247,7 @@ pub fn ensure_schema_for_class<'py>(
     }
 
     // Internal introspection for automated schema building
-    if let Some(_kind) = detect_struct_kind(py, cls)? {
+    if detect_struct_kind(py, cls)? {
         let default_config = SchemaConfig {
             frozen: false,
             order: false,
@@ -261,7 +276,7 @@ pub fn ensure_schema_for_class<'py>(
         .map(|n| n.to_string())
         .unwrap_or_else(|_| "Unknown".to_string());
     Err(pyo3::exceptions::PyTypeError::new_err(format!(
-        "Cannot build schema for '{}': Unsupported class type",
+        "Unsupported class type: {}",
         class_name
     )))
 }
@@ -440,8 +455,6 @@ fn compile_schema_from_fields<'py>(
         return Ok(None);
     }
 
-    let kind = detect_struct_kind(py, cls)?.unwrap_or(StructKind::TarsStruct);
-
     fields_def.sort_by_key(|f| f.tag);
 
     let mut name_to_tag = HashMap::new();
@@ -464,7 +477,6 @@ fn compile_schema_from_fields<'py>(
         fields_sorted: fields_def,
         tag_lookup_vec,
         name_to_tag,
-        kind,
         frozen: config.frozen,
         order: config.order,
         forbid_unknown_tags: config.forbid_unknown_tags,
@@ -510,6 +522,19 @@ fn type_info_ir_to_type_expr(py: Python<'_>, typ: &TypeInfoIR) -> PyResult<TypeE
         TypeInfoIR::Bytes => Ok(TypeExpr::List(Box::new(TypeExpr::Primitive(WireType::Int)))),
         TypeInfoIR::Any => Ok(TypeExpr::Any),
         TypeInfoIR::NoneType => Ok(TypeExpr::NoneType),
+        TypeInfoIR::TypedDict => Ok(TypeExpr::Map(
+            Box::new(TypeExpr::Primitive(WireType::String)),
+            Box::new(TypeExpr::Any),
+        )),
+        TypeInfoIR::Dataclass(cls) => Ok(TypeExpr::Dataclass(cls.clone_ref(py))),
+        TypeInfoIR::NamedTuple(cls, items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(type_info_ir_to_type_expr(py, item)?);
+            }
+            Ok(TypeExpr::NamedTuple(cls.clone_ref(py), out))
+        }
+        TypeInfoIR::TarsDict => Ok(TypeExpr::TarsDict),
         TypeInfoIR::Set(inner) => Ok(TypeExpr::Set(Box::new(type_info_ir_to_type_expr(
             py, inner,
         )?))),
@@ -556,14 +581,15 @@ fn constraints_ir_to_constraints(
         return Ok(None);
     };
 
-    let has_constraints = c.gt.is_some()
-        || c.lt.is_some()
-        || c.ge.is_some()
-        || c.le.is_some()
-        || c.min_len.is_some()
-        || c.max_len.is_some()
-        || c.pattern.is_some();
-    if !has_constraints {
+    if !has_any_constraints(
+        c.gt.is_some(),
+        c.lt.is_some(),
+        c.ge.is_some(),
+        c.le.is_some(),
+        c.min_len.is_some(),
+        c.max_len.is_some(),
+        c.pattern.is_some(),
+    ) {
         return Ok(None);
     }
 
@@ -641,6 +667,11 @@ fn parse_type_info(obj: &Bound<'_, PyAny>) -> PyResult<TypeExpr> {
         "bytes" => Ok(TypeExpr::List(Box::new(TypeExpr::Primitive(WireType::Int)))),
         "any" => Ok(TypeExpr::Any),
         "none" => Ok(TypeExpr::NoneType),
+        "tarsdict" => Ok(TypeExpr::TarsDict),
+        "typeddict" | "dataclass" => Ok(TypeExpr::Map(
+            Box::new(TypeExpr::Primitive(WireType::String)),
+            Box::new(TypeExpr::Any),
+        )),
         "set" => {
             let inner_any = obj.getattr("item_type")?;
             let inner = parse_type_info(&inner_any)?;
@@ -652,6 +683,15 @@ fn parse_type_info(obj: &Bound<'_, PyAny>) -> PyResult<TypeExpr> {
             Ok(TypeExpr::List(Box::new(inner)))
         }
         "tuple" => {
+            let items_any = obj.getattr("items")?;
+            let items = items_any.cast::<PyTuple>()?;
+            let mut out = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                out.push(parse_type_info(&item)?);
+            }
+            Ok(TypeExpr::Tuple(out))
+        }
+        "namedtuple" => {
             let items_any = obj.getattr("items")?;
             let items = items_any.cast::<PyTuple>()?;
             let mut out = Vec::with_capacity(items.len());
@@ -721,14 +761,15 @@ fn parse_constraints(
     let max_len: Option<usize> = obj.getattr("max_len")?.extract()?;
     let pattern_str: Option<String> = obj.getattr("pattern")?.extract()?;
 
-    let has_constraints = gt.is_some()
-        || lt.is_some()
-        || ge.is_some()
-        || le.is_some()
-        || min_len.is_some()
-        || max_len.is_some()
-        || pattern_str.is_some();
-    if !has_constraints {
+    if !has_any_constraints(
+        gt.is_some(),
+        lt.is_some(),
+        ge.is_some(),
+        le.is_some(),
+        min_len.is_some(),
+        max_len.is_some(),
+        pattern_str.is_some(),
+    ) {
         return Ok(None);
     }
 
@@ -752,6 +793,19 @@ fn parse_constraints(
         max_len,
         pattern,
     })))
+}
+
+#[inline]
+fn has_any_constraints(
+    gt: bool,
+    lt: bool,
+    ge: bool,
+    le: bool,
+    min_len: bool,
+    max_len: bool,
+    pattern: bool,
+) -> bool {
+    gt || lt || ge || le || min_len || max_len || pattern
 }
 
 #[pyclass(

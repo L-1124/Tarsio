@@ -4,7 +4,7 @@ use pyo3::types::{PyAny, PyDict, PyModule, PyString, PyTuple, PyType};
 use std::collections::{HashMap, HashSet};
 
 use crate::binding::meta::Meta;
-use crate::binding::schema::Struct;
+use crate::binding::schema::{Struct, TarsDict};
 
 #[derive(Debug)]
 pub struct ConstraintsIR {
@@ -26,6 +26,9 @@ pub enum TypeInfoIR {
     Bytes,
     Any,
     NoneType,
+    TypedDict,
+    NamedTuple(Py<PyType>, Vec<TypeInfoIR>),
+    Dataclass(Py<PyType>),
     Set(Box<TypeInfoIR>),
     Enum(Py<PyType>, Box<TypeInfoIR>),
     Union(Vec<TypeInfoIR>),
@@ -35,6 +38,7 @@ pub enum TypeInfoIR {
     Map(Box<TypeInfoIR>, Box<TypeInfoIR>),
     Optional(Box<TypeInfoIR>),
     Struct(Py<PyType>),
+    TarsDict,
 }
 
 #[derive(Debug)]
@@ -51,20 +55,12 @@ pub struct FieldInfoIR {
     pub constraints: Option<ConstraintsIR>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StructKind {
-    TarsStruct,
-    Dataclass,
-    NamedTuple,
-    TypedDict,
-    TarsDict,
-}
-
 struct IntrospectionContext<'py> {
     typing: Bound<'py, PyModule>,
     builtins: Bound<'py, PyModule>,
-    dataclasses: Bound<'py, PyModule>,
     types_mod: Bound<'py, PyModule>,
+    typing_is_typeddict: Option<Bound<'py, PyAny>>,
+    dataclasses_is_dataclass: Option<Bound<'py, PyAny>>,
     annotated: Bound<'py, PyAny>,
     union_origin: Bound<'py, PyAny>,
     forward_ref: Bound<'py, PyAny>,
@@ -96,7 +92,6 @@ struct IntrospectionContext<'py> {
     mutable_mapping_cls: Bound<'py, PyAny>,
     union_type: Option<Bound<'py, PyAny>>,
     enum_base: Bound<'py, PyAny>,
-    tars_dict_cls: Bound<'py, PyAny>,
 }
 
 impl<'py> IntrospectionContext<'py> {
@@ -104,11 +99,10 @@ impl<'py> IntrospectionContext<'py> {
         let typing = py.import("typing")?;
         let builtins = py.import("builtins")?;
         let collections_abc = py.import("collections.abc")?;
-        let dataclasses = py.import("dataclasses")?;
         let types_mod = py.import("types")?;
         let enum_mod = py.import("enum")?;
         let typing_extensions = py.import("typing_extensions").ok();
-        let core_mod = py.import("tarsio._core")?;
+        let dataclasses = py.import("dataclasses").ok();
 
         let annotated = typing.getattr("Annotated")?;
         let union_origin = typing.getattr("Union")?;
@@ -116,6 +110,12 @@ impl<'py> IntrospectionContext<'py> {
         let typevar_cls = typing.getattr("TypeVar")?;
         let literal_cls = typing.getattr("Literal")?;
         let any_type = typing.getattr("Any")?;
+
+        let typing_is_typeddict = typing_extensions
+            .as_ref()
+            .and_then(|m| m.getattr("is_typeddict").ok())
+            .or_else(|| typing.getattr("is_typeddict").ok());
+        let dataclasses_is_dataclass = dataclasses.and_then(|m| m.getattr("is_dataclass").ok());
 
         let final_cls = typing.getattr("Final").ok();
         let type_alias = typing.getattr("TypeAlias").ok();
@@ -158,13 +158,12 @@ impl<'py> IntrospectionContext<'py> {
 
         let union_type = types_mod.getattr("UnionType").ok();
         let enum_base = enum_mod.getattr("Enum")?;
-        let tars_dict_cls = core_mod.getattr("TarsDict")?;
-
         Ok(Self {
             typing,
             builtins,
-            dataclasses,
             types_mod,
+            typing_is_typeddict,
+            dataclasses_is_dataclass,
             annotated,
             union_origin,
             forward_ref,
@@ -196,7 +195,6 @@ impl<'py> IntrospectionContext<'py> {
             mutable_mapping_cls,
             union_type,
             enum_base,
-            tars_dict_cls,
         })
     }
 }
@@ -206,29 +204,15 @@ pub fn introspect_struct_fields<'py>(
     cls: &Bound<'py, PyType>,
 ) -> PyResult<Option<Vec<FieldInfoIR>>> {
     let ctx = IntrospectionContext::new(py)?;
-    introspect_struct_fields_with_ctx(py, cls, &ctx)
-}
-
-fn introspect_struct_fields_with_ctx<'py>(
-    py: Python<'py>,
-    cls: &Bound<'py, PyType>,
-    ctx: &IntrospectionContext<'py>,
-) -> PyResult<Option<Vec<FieldInfoIR>>> {
     if is_generic_template(cls)? {
         return Ok(None);
     }
 
-    let Some(kind) = detect_struct_kind_with_ctx(py, cls, ctx)? else {
+    if !detect_struct_kind_with_ctx(py, cls, &ctx)? {
         return Ok(None);
-    };
-
-    match kind {
-        StructKind::TarsStruct => introspect_tars_struct_fields(py, cls, ctx),
-        StructKind::Dataclass => introspect_dataclass_fields(py, cls, ctx),
-        StructKind::NamedTuple => introspect_namedtuple_fields(py, cls, ctx),
-        StructKind::TypedDict => introspect_typeddict_fields(py, cls, ctx),
-        StructKind::TarsDict => introspect_typeddict_fields(py, cls, ctx),
     }
+
+    introspect_tars_struct_fields(py, cls, &ctx)
 }
 
 pub fn introspect_type_info_ir<'py>(
@@ -382,86 +366,22 @@ fn get_type_hints_with_fallback<'py>(
     Ok(hints)
 }
 
-pub fn detect_struct_kind<'py>(
-    py: Python<'py>,
-    cls: &Bound<'py, PyType>,
-) -> PyResult<Option<StructKind>> {
+#[inline(always)]
+pub fn detect_struct_kind<'py>(py: Python<'py>, cls: &Bound<'py, PyType>) -> PyResult<bool> {
     let ctx = IntrospectionContext::new(py)?;
     detect_struct_kind_with_ctx(py, cls, &ctx)
 }
 
+#[inline(always)]
 fn detect_struct_kind_with_ctx<'py>(
-    py: Python<'py>,
-    cls: &Bound<'py, PyType>,
-    ctx: &IntrospectionContext<'py>,
-) -> PyResult<Option<StructKind>> {
-    if cls.is_subclass_of::<Struct>()? {
-        return Ok(Some(StructKind::TarsStruct));
-    }
-    if is_dataclass_class(py, cls, ctx)? {
-        return Ok(Some(StructKind::Dataclass));
-    }
-    if is_namedtuple_class(py, cls)? {
-        return Ok(Some(StructKind::NamedTuple));
-    }
-    if is_typed_dict_class(py, cls, ctx)? {
-        return Ok(Some(StructKind::TypedDict));
-    }
-    if is_tars_dict_class(py, cls, ctx)? {
-        return Ok(Some(StructKind::TarsDict));
-    }
-    Ok(None)
-}
-
-fn is_dataclass_class<'py>(
     _py: Python<'py>,
     cls: &Bound<'py, PyType>,
-    ctx: &IntrospectionContext<'py>,
+    _ctx: &IntrospectionContext<'py>,
 ) -> PyResult<bool> {
-    let is_dc = ctx
-        .dataclasses
-        .getattr("is_dataclass")?
-        .call1((cls,))?
-        .is_truthy()?;
-    Ok(is_dc)
+    cls.is_subclass_of::<Struct>()
 }
 
-fn is_namedtuple_class<'py>(_py: Python<'py>, cls: &Bound<'py, PyType>) -> PyResult<bool> {
-    if !cls.is_subclass_of::<PyTuple>()? {
-        return Ok(false);
-    }
-    let Ok(fields_any) = cls.getattr(intern!(cls.py(), "_fields")) else {
-        return Ok(false);
-    };
-    Ok(fields_any.cast::<PyTuple>().is_ok())
-}
-
-fn is_typed_dict_class<'py>(
-    _py: Python<'py>,
-    cls: &Bound<'py, PyType>,
-    ctx: &IntrospectionContext<'py>,
-) -> PyResult<bool> {
-    if let Ok(meta) = ctx.typing.getattr("_TypedDictMeta")
-        && cls.is_instance(&meta)?
-    {
-        return Ok(true);
-    }
-    Ok(cls.getattr(intern!(cls.py(), "__total__")).is_ok()
-        && cls.getattr(intern!(cls.py(), "__annotations__")).is_ok())
-}
-
-fn is_tars_dict_class<'py>(
-    _py: Python<'py>,
-    cls: &Bound<'py, PyType>,
-    ctx: &IntrospectionContext<'py>,
-) -> PyResult<bool> {
-    // 检查是否是 TarsDict 的子类（且不是 TarsDict 本身）
-    if cls.is_subclass(&ctx.tars_dict_cls)? && !cls.is(&ctx.tars_dict_cls) {
-        return Ok(true);
-    }
-    Ok(false)
-}
-
+#[inline(always)]
 fn is_subclass<'py>(
     cls: &Bound<'py, PyType>,
     base: &Bound<'py, PyAny>,
@@ -542,337 +462,31 @@ fn introspect_tars_struct_fields<'py>(
     Ok(Some(fields))
 }
 
-fn introspect_dataclass_fields<'py>(
-    py: Python<'py>,
-    cls: &Bound<'py, PyType>,
-    ctx: &IntrospectionContext<'py>,
-) -> PyResult<Option<Vec<FieldInfoIR>>> {
-    let fields_any = ctx.dataclasses.call_method1("fields", (cls,))?;
-    let missing = ctx.dataclasses.getattr("MISSING")?;
-    let typevar_map = build_typevar_map(py, cls, ctx)?;
-    let hints = get_type_hints_with_fallback(py, cls, ctx)?;
-    if hints.is_empty() {
-        return Ok(None);
-    }
-
-    let mut fields = Vec::new();
-    let mut tags_seen: Vec<Option<String>> = vec![None; 256];
-
-    for (idx, field_any) in fields_any.try_iter()?.enumerate() {
-        let field_any = field_any?;
-        let name: String = field_any.getattr("name")?.extract()?;
-        let init: bool = field_any.getattr("init")?.extract()?;
-        let type_hint = if let Some(hint) = hints.get_item(&name)? {
-            hint
-        } else {
-            field_any.getattr("type")?
-        };
-
-        let origin = ctx.typing.call_method1("get_origin", (&type_hint,))?;
-        let (real_type, tag_opt, constraints) = if !origin.is_none() && origin.is(&ctx.annotated) {
-            let args_any = ctx.typing.call_method1("get_args", (&type_hint,))?;
-            let args = args_any.cast::<PyTuple>()?;
-            parse_annotated_args_loose(name.as_str(), args)?
-        } else {
-            (type_hint, None, None)
-        };
-
-        let tag = match tag_opt {
-            Some(tag) => tag,
-            None => {
-                if idx > 255 {
-                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                        "Tag exceeds 255 for field '{}'",
-                        name
-                    )));
-                }
-                idx as u8
-            }
-        };
-
-        if let Some(existing) = tags_seen[tag as usize].as_ref() {
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Duplicate tag {} in '{}' and '{}'",
-                tag, existing, name
-            )));
-        }
-        tags_seen[tag as usize] = Some(name.clone());
-
-        let (typ, is_optional) = translate_type_info_ir(py, &real_type, &typevar_map, ctx)?;
-
-        let default_any = field_any.getattr("default")?;
-        let default_factory_any = field_any.getattr("default_factory")?;
-
-        let mut default_value = if default_any.is(&missing) {
-            None
-        } else {
-            Some(default_any.unbind())
-        };
-        let default_factory = if default_factory_any.is(&missing) {
-            None
-        } else {
-            Some(default_factory_any.unbind())
-        };
-
-        let mut has_default = default_value.is_some() || default_factory.is_some();
-        if !has_default && is_optional {
-            default_value = Some(py.None());
-            has_default = true;
-        }
-
-        let is_required = !is_optional && default_value.is_none() && default_factory.is_none();
-
-        fields.push(FieldInfoIR {
-            name,
-            tag,
-            typ,
-            default_value,
-            default_factory,
-            has_default,
-            is_optional,
-            is_required,
-            init,
-            constraints,
-        });
-    }
-
-    if fields.is_empty() {
-        return Ok(None);
-    }
-    fields.sort_by_key(|f| f.tag);
-    Ok(Some(fields))
-}
-
-fn introspect_namedtuple_fields<'py>(
-    py: Python<'py>,
-    cls: &Bound<'py, PyType>,
-    ctx: &IntrospectionContext<'py>,
-) -> PyResult<Option<Vec<FieldInfoIR>>> {
-    let fields_any = cls.getattr(intern!(py, "_fields"))?;
-    let fields_tuple = fields_any.cast::<PyTuple>()?;
-    let typevar_map = build_typevar_map(py, cls, ctx)?;
-    let hints = get_type_hints_with_fallback(py, cls, ctx)?;
-    if hints.is_empty() {
-        return Ok(None);
-    }
-
-    let defaults = match cls.getattr(intern!(py, "_field_defaults")) {
-        Ok(value) => match value.cast::<PyDict>() {
-            Ok(dict) => Some(dict.clone().unbind()),
-            Err(_) => None,
-        },
-        Err(_) => None,
-    };
-
-    let mut fields = Vec::new();
-    let mut tags_seen: Vec<Option<String>> = vec![None; 256];
-
-    for (idx, name_any) in fields_tuple.iter().enumerate() {
-        let name: String = name_any.extract()?;
-        let Some(type_hint) = hints.get_item(&name)? else {
-            continue;
-        };
-
-        let origin = ctx.typing.call_method1("get_origin", (&type_hint,))?;
-        let (real_type, tag_opt, constraints) = if !origin.is_none() && origin.is(&ctx.annotated) {
-            let args_any = ctx.typing.call_method1("get_args", (&type_hint,))?;
-            let args = args_any.cast::<PyTuple>()?;
-            parse_annotated_args_loose(name.as_str(), args)?
-        } else {
-            (type_hint, None, None)
-        };
-
-        let tag = match tag_opt {
-            Some(tag) => tag,
-            None => {
-                if idx > 255 {
-                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                        "Tag exceeds 255 for field '{}'",
-                        name
-                    )));
-                }
-                idx as u8
-            }
-        };
-
-        if let Some(existing) = tags_seen[tag as usize].as_ref() {
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Duplicate tag {} in '{}' and '{}'",
-                tag, existing, name
-            )));
-        }
-        tags_seen[tag as usize] = Some(name.clone());
-
-        let (typ, is_optional) = translate_type_info_ir(py, &real_type, &typevar_map, ctx)?;
-
-        let mut default_value = defaults
-            .as_ref()
-            .and_then(|d| d.bind(py).get_item(&name).ok().flatten())
-            .map(|v| v.unbind());
-        let default_factory = None;
-
-        let mut has_default = default_value.is_some();
-        if !has_default && is_optional {
-            default_value = Some(py.None());
-            has_default = true;
-        }
-
-        let is_required = !is_optional && default_value.is_none();
-
-        fields.push(FieldInfoIR {
-            name,
-            tag,
-            typ,
-            default_value,
-            default_factory,
-            has_default,
-            is_optional,
-            is_required,
-            init: true,
-            constraints,
-        });
-    }
-
-    if fields.is_empty() {
-        return Ok(None);
-    }
-    fields.sort_by_key(|f| f.tag);
-    Ok(Some(fields))
-}
-
-fn introspect_typeddict_fields<'py>(
-    py: Python<'py>,
-    cls: &Bound<'py, PyType>,
-    ctx: &IntrospectionContext<'py>,
-) -> PyResult<Option<Vec<FieldInfoIR>>> {
-    let annotations_any = cls.getattr(intern!(py, "__annotations__"))?;
-    let annotations = annotations_any.cast::<PyDict>()?;
-    if annotations.is_empty() {
-        return Ok(None);
-    }
-
-    let typevar_map = build_typevar_map(py, cls, ctx)?;
-    let hints = get_type_hints_with_fallback(py, cls, ctx)?;
-    let total: bool = cls
-        .getattr(intern!(py, "__total__"))?
-        .extract()
-        .unwrap_or(true);
-
-    let required_keys = cls
-        .getattr(intern!(py, "__required_keys__"))
-        .ok()
-        .and_then(|v| extract_str_set(&v).ok().flatten());
-    let optional_keys = cls
-        .getattr(intern!(py, "__optional_keys__"))
-        .ok()
-        .and_then(|v| extract_str_set(&v).ok().flatten());
-
-    let mut fields = Vec::new();
-    let mut tags_seen: Vec<Option<String>> = vec![None; 256];
-
-    for (idx, (name_any, _)) in annotations.iter().enumerate() {
-        let name: String = name_any.extract()?;
-        let type_hint = hints
-            .get_item(&name)?
-            .or_else(|| annotations.get_item(&name).ok().flatten());
-        let Some(type_hint) = type_hint else {
-            continue;
-        };
-
-        let origin = ctx.typing.call_method1("get_origin", (&type_hint,))?;
-        let (real_type, tag_opt, constraints) = if !origin.is_none() && origin.is(&ctx.annotated) {
-            let args_any = ctx.typing.call_method1("get_args", (&type_hint,))?;
-            let args = args_any.cast::<PyTuple>()?;
-            parse_annotated_args_loose(name.as_str(), args)?
-        } else {
-            (type_hint, None, None)
-        };
-
-        let tag = match tag_opt {
-            Some(tag) => tag,
-            None => {
-                if idx > 255 {
-                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                        "Tag exceeds 255 for field '{}'",
-                        name
-                    )));
-                }
-                idx as u8
-            }
-        };
-
-        if let Some(existing) = tags_seen[tag as usize].as_ref() {
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Duplicate tag {} in '{}' and '{}'",
-                tag, existing, name
-            )));
-        }
-        tags_seen[tag as usize] = Some(name.clone());
-
-        let (typ, is_optional_by_type) = translate_type_info_ir(py, &real_type, &typevar_map, ctx)?;
-
-        let mut is_optional = is_optional_by_type;
-        if let Some(required) = required_keys.as_ref() {
-            is_optional = !required.contains(&name);
-        } else if let Some(optional) = optional_keys.as_ref() {
-            if optional.contains(&name) {
-                is_optional = true;
-            }
-        } else if !total {
-            is_optional = true;
-        }
-
-        let mut default_value = None;
-        let default_factory = None;
-        let mut has_default = false;
-        if !has_default && is_optional {
-            default_value = Some(py.None());
-            has_default = true;
-        }
-
-        let is_required = !is_optional && default_value.is_none();
-
-        fields.push(FieldInfoIR {
-            name,
-            tag,
-            typ,
-            default_value,
-            default_factory,
-            has_default,
-            is_optional,
-            is_required,
-            init: true,
-            constraints,
-        });
-    }
-
-    if fields.is_empty() {
-        return Ok(None);
-    }
-    fields.sort_by_key(|f| f.tag);
-    Ok(Some(fields))
-}
-
-fn extract_str_set<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Option<HashSet<String>>> {
-    if obj.is_none() {
-        return Ok(None);
-    }
-    let mut set = HashSet::new();
-    if let Ok(iter) = obj.try_iter() {
-        for item in iter {
-            let item = item?;
-            set.insert(item.extract()?);
-        }
-        return Ok(Some(set));
-    }
-    Ok(None)
-}
-
 fn parse_annotated_args<'py>(
     field_name: &str,
     args: &Bound<'py, PyTuple>,
 ) -> PyResult<(Bound<'py, PyAny>, u8, Option<ConstraintsIR>)> {
-    if args.len() < 2 {
+    let (real_type, tag, constraints) = parse_annotated_payload(field_name, args, true)?;
+    Ok((
+        real_type,
+        tag.expect("parse_annotated_payload must return tag when required"),
+        constraints,
+    ))
+}
+
+fn parse_annotated_args_loose<'py>(
+    field_name: &str,
+    args: &Bound<'py, PyTuple>,
+) -> PyResult<(Bound<'py, PyAny>, Option<u8>, Option<ConstraintsIR>)> {
+    parse_annotated_payload(field_name, args, false)
+}
+
+fn parse_annotated_payload<'py>(
+    field_name: &str,
+    args: &Bound<'py, PyTuple>,
+    require_tag: bool,
+) -> PyResult<(Bound<'py, PyAny>, Option<u8>, Option<ConstraintsIR>)> {
+    if require_tag && args.len() < 2 {
         return Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "Missing tag for field '{}'",
             field_name
@@ -935,80 +549,14 @@ fn parse_annotated_args<'py>(
             max_len: meta.max_len,
             pattern: meta.pattern.clone(),
         };
-        return Ok((real_type, tag, Some(constraints)));
-    }
-
-    if let Some(tag) = found_int_tag {
-        return Ok((real_type, tag, None));
-    }
-
-    Err(pyo3::exceptions::PyTypeError::new_err(format!(
-        "Missing tag for field '{}'",
-        field_name
-    )))
-}
-
-fn parse_annotated_args_loose<'py>(
-    field_name: &str,
-    args: &Bound<'py, PyTuple>,
-) -> PyResult<(Bound<'py, PyAny>, Option<u8>, Option<ConstraintsIR>)> {
-    let real_type = args.get_item(0)?;
-    let mut found_int_tag: Option<u8> = None;
-    let mut found_meta: Option<PyRef<'py, Meta>> = None;
-
-    for item in args.iter().skip(1) {
-        if let Ok(int_tag) = item.extract::<i64>() {
-            if !(0..=255).contains(&int_tag) {
-                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                    "Tag must be in range 0..=255 for field '{}'",
-                    field_name
-                )));
-            }
-            if found_int_tag.is_some() {
-                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                    "Multiple integer tags are not allowed for field '{}'",
-                    field_name
-                )));
-            }
-            found_int_tag = Some(int_tag as u8);
-            continue;
-        }
-
-        if let Ok(meta) = item.extract::<PyRef<'py, Meta>>() {
-            if found_meta.is_some() {
-                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                    "Multiple Meta objects are not allowed for field '{}'",
-                    field_name
-                )));
-            }
-            found_meta = Some(meta);
-        }
-    }
-
-    if found_int_tag.is_some() && found_meta.is_some() {
-        return Err(pyo3::exceptions::PyTypeError::new_err(
-            "Do not mix integer tag and Meta object",
-        ));
-    }
-
-    if let Some(meta) = found_meta {
-        let Some(tag) = meta.tag else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Meta object must include 'tag' for field '{}'",
-                field_name
-            )));
-        };
-
-        let constraints = ConstraintsIR {
-            gt: meta.gt,
-            lt: meta.lt,
-            ge: meta.ge,
-            le: meta.le,
-            min_len: meta.min_len,
-            max_len: meta.max_len,
-            pattern: meta.pattern.clone(),
-        };
         return Ok((real_type, Some(tag), Some(constraints)));
+    }
+
+    if require_tag && found_int_tag.is_none() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "Missing tag for field '{}'",
+            field_name
+        )));
     }
 
     Ok((real_type, found_int_tag, None))
@@ -1334,6 +882,25 @@ fn translate_type_info_ir<'py>(
         return Ok((TypeInfoIR::Bytes, forced_optional));
     }
 
+    if let Ok(resolved_type) = resolved.clone().cast_into::<PyType>() {
+        if is_namedtuple_type(&resolved_type, ctx)? {
+            let items = build_namedtuple_items(py, &resolved_type, typevar_map, ctx)?;
+            return Ok((
+                TypeInfoIR::NamedTuple(resolved_type.unbind(), items),
+                forced_optional,
+            ));
+        }
+        if is_typeddict_type(&resolved_type, ctx)? {
+            return Ok((TypeInfoIR::TypedDict, forced_optional));
+        }
+        if is_dataclass_type(&resolved_type, ctx)? {
+            return Ok((
+                TypeInfoIR::Dataclass(resolved_type.unbind()),
+                forced_optional,
+            ));
+        }
+    }
+
     if let Ok(resolved_type) = resolved.clone().cast_into::<PyType>()
         && is_subclass(&resolved_type, &ctx.enum_base, ctx)?
     {
@@ -1370,9 +937,15 @@ fn translate_type_info_ir<'py>(
     }
 
     if let Ok(resolved_type) = resolved.clone().cast_into::<PyType>()
-        && detect_struct_kind_with_ctx(py, &resolved_type, ctx)?.is_some()
+        && resolved_type.is_subclass_of::<Struct>()?
     {
         return Ok((TypeInfoIR::Struct(resolved_type.unbind()), forced_optional));
+    }
+
+    if let Ok(resolved_type) = resolved.clone().cast_into::<PyType>()
+        && resolved_type.is_subclass_of::<TarsDict>()?
+    {
+        return Ok((TypeInfoIR::TarsDict, forced_optional));
     }
 
     let repr: String = resolved.repr()?.extract()?;
@@ -1380,6 +953,72 @@ fn translate_type_info_ir<'py>(
         "Unsupported Tars type: {}",
         repr
     )))
+}
+
+fn is_typeddict_type<'py>(
+    cls: &Bound<'py, PyType>,
+    ctx: &IntrospectionContext<'py>,
+) -> PyResult<bool> {
+    if let Some(check) = ctx.typing_is_typeddict.as_ref() {
+        return check.call1((cls,))?.is_truthy();
+    }
+
+    let has_total = cls.getattr("__total__").is_ok();
+    let has_annotations = cls.getattr("__annotations__").is_ok();
+    let has_keys =
+        cls.getattr("__required_keys__").is_ok() || cls.getattr("__optional_keys__").is_ok();
+    Ok(has_total && has_annotations && has_keys)
+}
+
+fn is_namedtuple_type<'py>(
+    cls: &Bound<'py, PyType>,
+    ctx: &IntrospectionContext<'py>,
+) -> PyResult<bool> {
+    if !is_subclass(cls, &ctx.builtin_tuple, ctx)? {
+        return Ok(false);
+    }
+    let fields_any = match cls.getattr("_fields") {
+        Ok(v) => v,
+        Err(_) => return Ok(false),
+    };
+    Ok(fields_any.cast::<PyTuple>().is_ok())
+}
+
+fn build_namedtuple_items<'py>(
+    py: Python<'py>,
+    cls: &Bound<'py, PyType>,
+    typevar_map: &HashMap<usize, Bound<'py, PyAny>>,
+    ctx: &IntrospectionContext<'py>,
+) -> PyResult<Vec<TypeInfoIR>> {
+    let fields_any = cls.getattr("_fields")?;
+    let fields = fields_any.cast::<PyTuple>()?;
+    let annotations_any = cls.getattr("__annotations__").ok();
+    let annotations = annotations_any.and_then(|a| a.cast::<PyDict>().ok().cloned());
+
+    let mut items = Vec::with_capacity(fields.len());
+    for name_any in fields.iter() {
+        let name: String = name_any.extract()?;
+        if let Some(ann) = annotations
+            .as_ref()
+            .and_then(|a| a.get_item(name.as_str()).ok().flatten())
+        {
+            let (inner, _opt) = translate_type_info_ir(py, &ann, typevar_map, ctx)?;
+            items.push(inner);
+        } else {
+            items.push(TypeInfoIR::Any);
+        }
+    }
+    Ok(items)
+}
+
+fn is_dataclass_type<'py>(
+    cls: &Bound<'py, PyType>,
+    ctx: &IntrospectionContext<'py>,
+) -> PyResult<bool> {
+    if let Some(check) = ctx.dataclasses_is_dataclass.as_ref() {
+        return check.call1((cls,))?.is_truthy();
+    }
+    Ok(cls.getattr("__dataclass_fields__").is_ok())
 }
 
 fn resolve_typevar<'py>(

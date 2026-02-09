@@ -2,7 +2,7 @@
 
 import copy
 import inspect
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 import pytest
 from tarsio._core import Struct, StructConfig, TarsDict, decode, encode, encode_raw
@@ -629,6 +629,22 @@ def test_simple_list_wire_format() -> None:
 
     decoded = decode(SimpleListStruct, encoded)
     assert decoded.val == data
+
+
+def test_any_simplelist_auto_utf8_and_passthrough() -> None:
+    """Any 字段应自动解析 UTF-8 并保留 Tars 透传 bytes."""
+
+    class AnyBox(Struct):
+        val: Annotated[Any, 0]
+
+    utf8_payload = encode_raw(TarsDict({0: b"hello"}))
+    utf8_decoded = decode(AnyBox, utf8_payload)
+    assert utf8_decoded.val == "hello"
+
+    passthrough = encode_raw(TarsDict({0: 1}))
+    passthrough_payload = encode_raw(TarsDict({0: passthrough}))
+    passthrough_decoded = decode(AnyBox, passthrough_payload)
+    assert passthrough_decoded.val == passthrough
 
 
 # ==========================================

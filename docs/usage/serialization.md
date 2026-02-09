@@ -68,23 +68,23 @@ data_dict = decode(data)
 
 #### 结构体 vs 映射 (Struct vs Map)
 
-Tars 协议同时支持 Map (字典) 和 Struct (结构体)。Raw 模式下，编码规则由字典的 Key 决定：
+Tars 协议同时支持 Map (字典) 和 Struct (结构体)。Raw 模式下，编码规则由容器类型决定：
 
-* **Struct**: 字典的 Key 全部为 `int` 且在 0-255 范围内。
-* **Map**: Key 含非 `int` 类型，或 `int` 超出 Tag 范围，或为空字典（默认为 Map）。
+* **Struct**: 必须使用 `TarsDict` 包装字典数据。`TarsDict` 的键必须是 `int` 类型且在 0-255 范围内。
+* **Map**: 普通 Python `dict` 一律视为 Map，无论键的类型如何。
 
 #### 示例
 
 ```python
-from tarsio import encode
+from tarsio import encode, TarsDict
 
-payload = {
+payload = TarsDict({
     0: 1001,
-    # 值也是 int-key dict，表示嵌套 Struct
-    1: {0: "Alice", 1: "Bob"},
+    # 值也是 TarsDict，表示嵌套 Struct
+    1: TarsDict({0: "Alice", 1: "Bob"}),
     # 值是普通 dict，表示 Map<string, int>
     2: {"math": 90, "english": 85}
-}
+})
 
 encode(payload)
 ```
