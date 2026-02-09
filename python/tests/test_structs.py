@@ -93,14 +93,14 @@ def test_init_extra_positional_arg_raises_type_error() -> None:
 # ==========================================
 
 
-def test_optional_field_without_default_is_none() -> None:
-    """Optional 字段若无显式默认值，默认值为 None (Tarsio Struct 行为)."""
+def test_optional_field_without_default_raises_type_error() -> None:
+    """Optional 字段若无显式默认值，不应有默认值."""
 
     class Opt(Struct):
         val: Annotated[int | None, 0]
 
-    o = Opt()  # pyright: ignore[reportCallIssue]
-    assert o.val is None
+    with pytest.raises(TypeError, match=r"missing .* argument"):
+        Opt()  # pyright: ignore[reportCallIssue]
 
     o2 = Opt(None)
     assert o2.val is None

@@ -419,14 +419,14 @@ pub fn compile_schema_from_class<'py>(
         let type_expr = type_info_ir_to_type_expr(py, &field.typ)?;
         let constraints = constraints_ir_to_constraints(field.constraints.as_ref(), name.as_str())?;
 
-        let mut default_value = if field.has_default {
-            field.default_value
+        let default_value = if field.has_default {
+            field.default_value.as_ref().map(|v| v.clone_ref(py))
         } else {
             None
         };
-        if default_value.is_none() && field.is_optional {
-            default_value = Some(py.None());
-        }
+        // if default_value.is_none() && field.is_optional {
+        //     default_value = Some(py.None());
+        // }
 
         fields_def.push(FieldDef {
             name,
@@ -1187,11 +1187,7 @@ pub fn construct_instance(
                     default_value.bind(self_obj.py()).clone()
                 } else if let Some(factory) = field.default_factory.as_ref() {
                     factory.bind(self_obj.py()).call0()?
-                } else if field.is_optional {
-                    pyo3::types::PyNone::get(self_obj.py())
-                        .to_owned()
-                        .into_any()
-                } else if field.is_required {
+                } else if field.is_optional || field.is_required {
                     return Err(pyo3::exceptions::PyTypeError::new_err(format!(
                         "__init__() missing 1 required positional argument: '{}'",
                         field.name

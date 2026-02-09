@@ -431,9 +431,7 @@ fn introspect_tars_struct_fields<'py>(
         let (typ, is_optional) = translate_type_info_ir(py, &real_type, &typevar_map, ctx)?;
 
         let (has_default, default_val) = lookup_default_value(py, cls, name.as_str(), ctx)?;
-        let (has_default, default_value) = if !has_default && is_optional {
-            (true, Some(py.None()))
-        } else if has_default {
+        let (has_default, default_value) = if has_default {
             (true, default_val)
         } else {
             (false, None)

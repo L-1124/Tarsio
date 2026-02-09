@@ -197,20 +197,6 @@ def test_struct_info_fields_and_order() -> None:
     assert [f.name for f in info.fields] == ["a", "b"]
 
 
-def test_struct_info_optional_default() -> None:
-    """Optional 字段无显式默认值时应默认 None."""
-
-    class Sample(Struct):
-        a: Annotated[int | None, 0]
-
-    info = tinspect.struct_info(Sample)
-    assert info is not None
-    field = info.fields[0]
-    assert field.optional is True
-    assert field.has_default is True
-    assert field.default is None
-
-
 def test_struct_info_meta_constraints() -> None:
     """Meta 约束应被解析到 constraints."""
 
