@@ -7,3 +7,9 @@
 ::: tarsio.encode
 
 ::: tarsio.decode
+
+## 调试辅助
+
+::: tarsio.probe_struct
+
+::: tarsio.decode_trace

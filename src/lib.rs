@@ -24,6 +24,8 @@ fn init_core_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(binding::raw::encode_raw, m)?)?;
     m.add_function(wrap_pyfunction!(binding::raw::decode_raw, m)?)?;
     m.add_function(wrap_pyfunction!(binding::raw::probe_struct, m)?)?;
+    m.add_class::<binding::trace::TraceNode>()?;
+    m.add_function(wrap_pyfunction!(binding::trace::decode_trace, m)?)?;
     Ok(())
 }
 

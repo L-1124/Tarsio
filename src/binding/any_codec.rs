@@ -8,6 +8,7 @@ use pyo3::types::{
 use simdutf8::basic::from_utf8;
 use std::cell::RefCell;
 
+use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{StructDef, TarsDict, TypeExpr, ensure_schema_for_class};
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
@@ -27,10 +28,10 @@ fn check_any_encode_depth(depth: usize) -> PyResult<()> {
 }
 
 #[inline]
-fn check_any_decode_depth(depth: usize) -> PyResult<()> {
+fn check_any_decode_depth(depth: usize) -> DeResult<()> {
     if depth > MAX_ANY_DECODE_DEPTH {
-        return Err(PyValueError::new_err(
-            "Recursion limit exceeded during deserialization",
+        return Err(DeError::new(
+            "Recursion limit exceeded during deserialization".into(),
         ));
     }
     Ok(())
@@ -368,27 +369,27 @@ where
 }
 
 #[inline]
-pub(crate) fn read_size_non_negative(reader: &mut TarsReader, context: &str) -> PyResult<usize> {
+pub(crate) fn read_size_non_negative(reader: &mut TarsReader, context: &str) -> DeResult<usize> {
     let len = reader
         .read_size()
-        .map_err(|e| PyValueError::new_err(format!("Failed to read {} size: {}", context, e)))?;
+        .map_err(|e| DeError::new(format!("Failed to read {} size: {}", context, e)))?;
     if len < 0 {
-        return Err(PyValueError::new_err(format!("Invalid {} size", context)));
+        return Err(DeError::new(format!("Invalid {} size", context)));
     }
     Ok(len as usize)
 }
 
-fn read_simple_list_bytes<'a>(reader: &'a mut TarsReader) -> PyResult<&'a [u8]> {
+fn read_simple_list_bytes<'a>(reader: &'a mut TarsReader) -> DeResult<&'a [u8]> {
     let subtype = reader
         .read_u8()
-        .map_err(|e| PyValueError::new_err(format!("Failed to read SimpleList subtype: {e}")))?;
+        .map_err(|e| DeError::new(format!("Failed to read SimpleList subtype: {e}")))?;
     if subtype != 0 {
-        return Err(PyValueError::new_err("SimpleList must contain Byte (0)"));
+        return Err(DeError::new("SimpleList must contain Byte (0)".into()));
     }
     let len = read_size_non_negative(reader, "SimpleList")?;
     let bytes = reader
         .read_bytes(len)
-        .map_err(|e| PyValueError::new_err(format!("Failed to read SimpleList bytes: {e}")))?;
+        .map_err(|e| DeError::new(format!("Failed to read SimpleList bytes: {e}")))?;
     Ok(bytes)
 }
 
@@ -397,42 +398,49 @@ pub(crate) fn decode_any_value<'py>(
     reader: &mut TarsReader,
     type_id: TarsType,
     depth: usize,
-    auto_simplelist: bool,
-) -> PyResult<Bound<'py, PyAny>> {
+) -> DeResult<Bound<'py, PyAny>> {
     check_any_decode_depth(depth)?;
     match type_id {
         TarsType::ZeroTag | TarsType::Int1 | TarsType::Int2 | TarsType::Int4 | TarsType::Int8 => {
             let v = reader
                 .read_int(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read int: {e}")))?;
-            Ok(v.into_pyobject(py)?.into_any())
+                .map_err(|e| DeError::new(format!("Failed to read int: {e}")))?;
+            Ok(v.into_pyobject(py)
+                .map_err(|e| DeError::new(e.to_string()))?
+                .into_any())
         }
         TarsType::Float => {
             let v = reader
                 .read_float(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read float: {e}")))?;
-            Ok(v.into_pyobject(py)?.into_any())
+                .map_err(|e| DeError::new(format!("Failed to read float: {e}")))?;
+            Ok(v.into_pyobject(py)
+                .map_err(|e| DeError::new(e.to_string()))?
+                .into_any())
         }
         TarsType::Double => {
             let v = reader
                 .read_double(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read double: {e}")))?;
-            Ok(v.into_pyobject(py)?.into_any())
+                .map_err(|e| DeError::new(format!("Failed to read double: {e}")))?;
+            Ok(v.into_pyobject(py)
+                .map_err(|e| DeError::new(e.to_string()))?
+                .into_any())
         }
         TarsType::String1 | TarsType::String4 => {
             let bytes = reader
                 .read_string(type_id)
-                .map_err(|e| PyValueError::new_err(format!("Failed to read string bytes: {e}")))?;
-            let s = from_utf8(bytes).map_err(|_| PyValueError::new_err("Invalid UTF-8 string"))?;
-            Ok(s.into_pyobject(py)?.into_any())
+                .map_err(|e| DeError::new(format!("Failed to read string bytes: {e}")))?;
+            let s = from_utf8(bytes).map_err(|_| DeError::new("Invalid UTF-8 string".into()))?;
+            Ok(s.into_pyobject(py)
+                .map_err(|e| DeError::new(e.to_string()))?
+                .into_any())
         }
         TarsType::StructBegin => {
-            decode_any_struct_fields(py, reader, depth + 1, auto_simplelist).map(|d| d.into_any())
+            decode_any_struct_fields(py, reader, depth + 1).map(|d| d.into_any())
         }
-        TarsType::List => decode_any_list(py, reader, depth + 1, auto_simplelist),
-        TarsType::SimpleList => decode_any_simple_list(py, reader, auto_simplelist),
-        TarsType::Map => decode_any_map(py, reader, depth + 1, auto_simplelist),
-        TarsType::StructEnd => Err(PyValueError::new_err("Unexpected StructEnd")),
+        TarsType::List => decode_any_list(py, reader, depth + 1),
+        TarsType::SimpleList => decode_any_simple_list(py, reader),
+        TarsType::Map => decode_any_map(py, reader, depth + 1),
+        TarsType::StructEnd => Err(DeError::new("Unexpected StructEnd".into())),
     }
 }
 
@@ -440,24 +448,22 @@ pub(crate) fn decode_any_struct_fields<'py>(
     py: Python<'py>,
     reader: &mut TarsReader,
     depth: usize,
-    auto_simplelist: bool,
-) -> PyResult<Bound<'py, PyDict>> {
+) -> DeResult<Bound<'py, PyDict>> {
     check_any_decode_depth(depth)?;
     let dict = PyDict::new(py);
     while !reader.is_end() {
         let (tag, type_id) = reader
             .read_head()
-            .map_err(|e| PyValueError::new_err(format!("Read head error: {e}")))?;
+            .map_err(|e| DeError::new(format!("Read head error: {e}")))?;
         if type_id == TarsType::StructEnd {
             return Ok(dict);
         }
-        if dict.contains(tag)? {
-            return Err(PyValueError::new_err(format!(
-                "Duplicate tag {tag} in struct"
-            )));
+        if dict.contains(tag).map_err(DeError::wrap)? {
+            return Err(DeError::new(format!("Duplicate tag {tag} in struct")));
         }
-        let value = decode_any_value(py, reader, type_id, depth + 1, auto_simplelist)?;
-        dict.set_item(tag, value)?;
+        let value = decode_any_value(py, reader, type_id, depth + 1)
+            .map_err(|e| e.prepend(PathItem::Tag(tag)))?;
+        dict.set_item(tag, value).map_err(DeError::wrap)?;
     }
     Ok(dict)
 }
@@ -466,30 +472,30 @@ fn decode_any_list<'py>(
     py: Python<'py>,
     reader: &mut TarsReader,
     depth: usize,
-    auto_simplelist: bool,
-) -> PyResult<Bound<'py, PyAny>> {
+) -> DeResult<Bound<'py, PyAny>> {
     check_any_decode_depth(depth)?;
     let len = read_size_non_negative(reader, "list")?;
     let list_any = unsafe {
         // SAFETY: PyList_New 返回新引用并预留 len 个槽位。若返回空指针则抛错。
         let ptr = ffi::PyList_New(len as isize);
         if ptr.is_null() {
-            return Err(PyErr::fetch(py));
+            return Err(DeError::wrap(PyErr::fetch(py)));
         }
         Bound::from_owned_ptr(py, ptr)
     };
     for idx in 0..len {
         let (_, item_type) = reader
             .read_head()
-            .map_err(|e| PyValueError::new_err(format!("Failed to read list item head: {e}")))?;
-        let item = decode_any_value(py, reader, item_type, depth + 1, auto_simplelist)?;
+            .map_err(|e| DeError::new(format!("Failed to read list item head: {e}")))?;
+        let item = decode_any_value(py, reader, item_type, depth + 1)
+            .map_err(|e| e.prepend(PathItem::Index(idx)))?;
         let set_res = unsafe {
             // SAFETY: PyList_SetItem 会“偷”引用, item.into_ptr 转移所有权。
             // 每个索引只写入一次,与 PyList_New 的预分配长度一致。
             ffi::PyList_SetItem(list_any.as_ptr(), idx as isize, item.into_ptr())
         };
         if set_res != 0 {
-            return Err(PyErr::fetch(py));
+            return Err(DeError::wrap(PyErr::fetch(py)));
         }
     }
     Ok(list_any)
@@ -499,26 +505,30 @@ fn decode_any_map<'py>(
     py: Python<'py>,
     reader: &mut TarsReader,
     depth: usize,
-    auto_simplelist: bool,
-) -> PyResult<Bound<'py, PyAny>> {
+) -> DeResult<Bound<'py, PyAny>> {
     check_any_decode_depth(depth)?;
     let len = read_size_non_negative(reader, "map")?;
     let dict = PyDict::new(py);
     for _ in 0..len {
         let (_, kt) = reader
             .read_head()
-            .map_err(|e| PyValueError::new_err(format!("Failed to read map key head: {e}")))?;
-        let key = decode_any_value(py, reader, kt, depth + 1, auto_simplelist)?;
+            .map_err(|e| DeError::new(format!("Failed to read map key head: {e}")))?;
+        let key = decode_any_value(py, reader, kt, depth + 1)
+            .map_err(|e| e.prepend(PathItem::Key("<key>".into())))?; // Key 通常没有明确路径，先用占位符
 
         let (_, vt) = reader
             .read_head()
-            .map_err(|e| PyValueError::new_err(format!("Failed to read map value head: {e}")))?;
-        let val = decode_any_value(py, reader, vt, depth + 1, auto_simplelist)?;
+            .map_err(|e| DeError::new(format!("Failed to read map value head: {e}")))?;
+
+        let key_str = key.to_string(); // 尝试获取 key 的字符串表示用于错误路径，如果不行就忽略
+
+        let val = decode_any_value(py, reader, vt, depth + 1)
+            .map_err(|e| e.prepend(PathItem::Key(key_str)))?;
 
         if key.hash().is_err() {
-            return Err(PyTypeError::new_err("Map key must be hashable"));
+            return Err(DeError::new("Map key must be hashable".into()));
         }
-        dict.set_item(key, val)?;
+        dict.set_item(key, val).map_err(DeError::wrap)?;
     }
     Ok(dict.into_any())
 }
@@ -526,43 +536,7 @@ fn decode_any_map<'py>(
 fn decode_any_simple_list<'py>(
     py: Python<'py>,
     reader: &mut TarsReader,
-    auto_simplelist: bool,
-) -> PyResult<Bound<'py, PyAny>> {
+) -> DeResult<Bound<'py, PyAny>> {
     let bytes = read_simple_list_bytes(reader)?;
-
-    if !auto_simplelist {
-        return Ok(PyBytes::new(py, bytes).into_any());
-    }
-
-    if bytes.is_empty() {
-        return Ok(PyBytes::new(py, bytes).into_any());
-    }
-
-    if looks_like_tars_struct_any(py, bytes) {
-        return Ok(PyBytes::new(py, bytes).into_any());
-    }
-
-    if let Ok(s) = from_utf8(bytes) {
-        return Ok(s.into_pyobject(py)?.into_any());
-    }
-
     Ok(PyBytes::new(py, bytes).into_any())
-}
-
-fn looks_like_tars_struct_any(py: Python<'_>, data: &[u8]) -> bool {
-    if data.is_empty() {
-        return false;
-    }
-
-    let type_id = data[0] & 0x0F;
-    if type_id > 13 {
-        return false;
-    }
-
-    let mut reader = TarsReader::new(data);
-    if decode_any_struct_fields(py, &mut reader, 0, true).is_ok() {
-        return reader.is_end();
-    }
-
-    false
 }

@@ -79,9 +79,6 @@ fn encode_raw_value_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResu
 ///
 /// Args:
 ///     data: 待解码的 bytes.
-///     auto_simplelist: 是否自动解析 SimpleList 的 bytes.
-///         为 True 时: 若内容看起来像 Tars Struct 则保持 bytes,
-///         否则在 UTF-8 完整可解码时返回 str, 失败回退为 bytes.
 ///
 /// Returns:
 ///     解码后的 dict[int, TarsValue] (实际返回 TarsDict 实例).
@@ -89,14 +86,9 @@ fn encode_raw_value_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResu
 /// Raises:
 ///     ValueError: 数据格式不正确、存在 trailing bytes、或递归深度超过 MAX_DEPTH.
 #[pyfunction]
-#[pyo3(signature = (data, auto_simplelist = false))]
-pub fn decode_raw<'py>(
-    py: Python<'py>,
-    data: &[u8],
-    auto_simplelist: bool,
-) -> PyResult<Bound<'py, PyDict>> {
+pub fn decode_raw<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyDict>> {
     let mut reader = TarsReader::new(data);
-    let dict = decode_struct_fields(py, &mut reader, true, 0, auto_simplelist)?;
+    let dict = decode_struct_fields(py, &mut reader, true, 0)?;
 
     if !reader.is_end() {
         return Err(PyValueError::new_err("Trailing bytes after decode_raw"));
@@ -201,7 +193,6 @@ fn decode_struct_fields<'py>(
     reader: &mut TarsReader,
     allow_end: bool,
     depth: usize,
-    auto_simplelist: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     if depth > MAX_DEPTH {
         return Err(PyValueError::new_err(
@@ -233,7 +224,7 @@ fn decode_struct_fields<'py>(
             )));
         }
 
-        let value = decode_value(py, reader, type_id, depth + 1, auto_simplelist)?;
+        let value = decode_value(py, reader, type_id, depth + 1)?;
         dict.set_item(tag, value)?;
     }
 
@@ -245,7 +236,6 @@ fn decode_value<'py>(
     reader: &mut TarsReader,
     type_id: TarsType,
     depth: usize,
-    auto_simplelist: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     if depth > MAX_DEPTH {
         return Err(PyValueError::new_err(
@@ -253,10 +243,9 @@ fn decode_value<'py>(
         ));
     }
     if type_id == TarsType::StructBegin {
-        return decode_struct_fields(py, reader, true, depth + 1, auto_simplelist)
-            .map(|d| d.into_any());
+        return decode_struct_fields(py, reader, true, depth + 1).map(|d| d.into_any());
     }
-    decode_any_value(py, reader, type_id, depth, auto_simplelist)
+    decode_any_value(py, reader, type_id, depth).map_err(|e| e.to_pyerr(py))
 }
 
 /// 启发式探测字节数据是否为一个有效的 Tars Struct.
@@ -280,7 +269,7 @@ pub fn probe_struct<'py>(py: Python<'py>, data: &[u8]) -> Option<Bound<'py, PyDi
 
     // Level 2: Speculative Decoding
     let mut reader = TarsReader::new(data);
-    if let Ok(dict) = decode_struct_fields(py, &mut reader, true, 0, false) {
+    if let Ok(dict) = decode_struct_fields(py, &mut reader, true, 0) {
         // Level 3: Final Validation
         if reader.is_end() && !dict.is_empty() {
             return Some(dict);

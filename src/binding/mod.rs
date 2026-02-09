@@ -1,5 +1,6 @@
 pub mod any_codec;
 pub mod de;
+pub mod error;
 pub mod inspect;
 pub mod introspect;
 pub mod meta;
@@ -7,3 +8,4 @@ pub mod metaclass;
 pub mod raw;
 pub mod schema;
 pub mod ser;
+pub mod trace;

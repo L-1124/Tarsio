@@ -108,6 +108,44 @@ try:
     user = decode(User, malicious_data)
 except ValidationError as e:
     print(f"校验失败: {e}")
-except ValueError:
-    print("数据损坏")
+except ValueError as e:
+    # ValueError 现包含精确的错误路径，如 "Error at <root>.user.id: ..."
+    print(f"数据格式错误: {e}")
+```
+
+## 调试与内省
+
+对于复杂的二进制协议分析，Tarsio 提供了专门的调试工具。
+
+### Trace 模式
+
+当你不确定二进制数据的结构，或者需要进行协议逆向时，可以使用 `decode_trace`。它会生成一棵包含原始 Tag、Tars 类型及值的 `TraceNode` 树。
+
+```python
+from tarsio import decode_trace
+
+# 解析数据，生成 TraceNode
+root = decode_trace(data)
+
+print(f"Tag: {root.tag}, Type: {root.jce_type}")
+for child in root.children:
+    print(f"  Field Tag {child.tag}: {child.value}")
+```
+
+如果你有部分 Schema，也可以传入以增强显示效果（自动匹配字段名）：
+
+```python
+root = decode_trace(data, cls=User)
+# root.children[0].name 将显示为 "uid"
+```
+
+### 结构探测
+
+`probe_struct` 是一个启发式函数，用于快速判断一段未知的 bytes 是否像是一个有效的 Tars Struct。
+
+```python
+from tarsio import probe_struct
+
+if probe_struct(unknown_bytes):
+    print("这看起来像是一个 Tars 结构体")
 ```

@@ -73,10 +73,6 @@ def test_type_raw() -> None:
 
     assert_type(decoded, TarsDict)
 
-    decoded_auto = decode_raw(encoded, auto_simplelist=True)
-
-    assert_type(decoded_auto, TarsDict)
-
 
 def test_type_tars_dict_usage() -> None:
     """验证 TarsDict 的基本使用类型."""

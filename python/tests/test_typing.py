@@ -287,11 +287,11 @@ def test_any_type() -> None:
     class AnyStruct(Struct):
         val: Annotated[Any, 0]
 
-    # Note: b"\x00" decodes to "\x00" because Tarsio decodes SimpleList into str if valid UTF-8
+    # Note: b"\x00" decodes to b"\x00" because auto_simplelist is removed
     cases = [
         (1, 1),
         ("s", "s"),
-        (b"\x00", "\x00"),
+        (b"\x00", b"\x00"),  # Expect bytes, not str
         ([1, 2], [1, 2]),
         ({"a": 1}, {"a": 1}),
     ]

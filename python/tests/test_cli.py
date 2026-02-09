@@ -78,7 +78,7 @@ def test_cli_format_tree_outputs_tree_structure(cli_runner: CliRunner, cli) -> N
     """CLI --format tree 输出树状结构."""
     result = cli_runner.invoke(cli, ["00 64", "--format", "tree"])
     assert result.exit_code == 0
-    assert "Tars Data" in result.output
+    assert "(ROOT)" in result.output
 
 
 def test_cli_format_pretty_is_default(cli_runner: CliRunner, cli) -> None:

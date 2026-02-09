@@ -21,9 +21,11 @@ __all__ = [
     "StructConfig",
     "StructMeta",
     "TarsDict",
+    "TraceNode",
     "ValidationError",
     "decode",
     "decode_raw",
+    "decode_trace",
     "encode",
     "encode_raw",
     "inspect",
@@ -351,14 +353,11 @@ def encode_raw(obj: Any) -> bytes:
     """
     ...
 
-def decode_raw(data: bytes, auto_simplelist: bool = ...) -> TarsDict:
+def decode_raw(data: bytes) -> TarsDict:
     """将字节解码为 TarsDict.
 
     Args:
         data: 包含 Tars 编码数据的 bytes 对象。
-        auto_simplelist: 是否自动解析 SimpleList 的 bytes.
-            为 True 时: 若内容看起来像 Tars Struct 则保持 bytes,
-            否则在 UTF-8 完整可解码时返回 str, 失败回退为 bytes.
 
     Returns:
         解码后的 TarsDict。
@@ -376,5 +375,30 @@ def probe_struct(data: bytes) -> TarsDict | None:
 
     Returns:
         如果解析成功且数据完整，返回 TarsDict；否则返回 None。
+    """
+    ...
+
+class TraceNode:
+    """CLI Tree 调试节点."""
+
+    tag: int
+    jce_type: str
+    value: Any | None
+    children: list[TraceNode]
+    name: str | None
+    type_name: str | None
+    path: str
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+def decode_trace(data: bytes, cls: type[Any] | None = None) -> TraceNode:
+    """解析二进制数据并生成追踪树.
+
+    Args:
+        data: Tars 二进制数据.
+        cls: 可选的 Struct 类型，用于提供 Schema 信息.
+
+    Returns:
+        根 TraceNode 对象.
     """
     ...

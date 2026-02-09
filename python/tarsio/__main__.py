@@ -22,7 +22,7 @@ else:
         SyntaxType = None
         TreeType = None
 
-from tarsio._core import decode_raw, probe_struct
+from tarsio._core import TraceNode, decode_raw, decode_trace, probe_struct
 
 click = click_module
 
@@ -88,15 +88,12 @@ def deep_probe(data: Any) -> Any:
     return data
 
 
-def build_tree(
-    data: Any, parent: TreeType | None = None, key: str = "root"
-) -> TreeType:
-    """递归构建 rich Tree (移植自 0.3.1 风格).
+def build_trace_tree(node: TraceNode, parent: TreeType | None = None) -> TreeType:
+    """基于 TraceNode 构建 rich Tree.
 
     Args:
-        data: 要展示的数据.
-        parent: 父节点.
-        key: 当前节点的键名/标签.
+        node: TraceNode 根节点.
+        parent: 父 rich 节点.
 
     Returns:
         构建的 Tree 对象.
@@ -107,93 +104,68 @@ def build_tree(
     # 样式定义
     style_tag = "bold blue"
     style_type = "cyan"
-    style_value_str = "green"
-    style_value_num = "magenta"
+    style_name = "yellow"
+    style_value = "green"
+
+    # 构建当前节点的标签
+    label = Text()
+
+    # Tag (ROOT 不显示 Tag 0)
+    if node.jce_type != "ROOT":
+        label.append(f"Tag {node.tag} ", style=style_tag)
+
+    # Type & Name
+    type_desc = node.jce_type
+    if node.type_name:
+        type_desc = f"{node.type_name}"  # 优先显示语义类型名
+
+    label.append(f"({type_desc})", style=style_type)
+
+    if node.name:
+        label.append(f" [{node.name}]", style=style_name)
+
+    # Value
+    if node.value is not None:
+        val_str = str(node.value)
+        if isinstance(node.value, str):
+            val_str = repr(node.value)
+        elif isinstance(node.value, bytes):
+            hex_val = node.value.hex().upper()
+            if len(hex_val) > 20:
+                val_str = f"<{len(node.value)} bytes> {hex_val[:20]}..."
+            else:
+                val_str = f"<{len(node.value)} bytes> {hex_val}"
+
+        label.append(": ", style="white")
+        label.append(val_str, style=style_value)
+
+    # Path (optional, maybe too verbose for default view)
+    # label.append(f"  {node.path}", style=style_path)
 
     if parent is None:
-        # 根节点
-        tree = Tree(f"[bold white]{key}[/]")
+        tree = Tree(label)
     else:
-        # 子节点,通常 key 是 "[0]" 或 "Key" 等前缀
-        tree = parent
+        tree = parent.add(label)
 
-    # 1. Struct (Dict with int keys)
-    if isinstance(data, dict) and all(isinstance(k, int) for k in data.keys()):
-        label = Text()
-        if key != "root" and parent is not None:
-            label.append(f"{key} ", style=style_tag)
-        label.append("Struct", style="bold yellow")
+    # Children
+    for child in node.children:
+        build_trace_tree(child, tree)
 
-        branch = tree.add(label)
-        for k, v in sorted(data.items()):
-            build_tree(v, branch, f"[{k}]")
-
-    # 2. Map (Dict with mixed/other keys)
-    elif isinstance(data, dict):
-        label = Text()
-        if key != "root" and parent is not None:
-            label.append(f"{key} ", style=style_tag)
-        label.append(f"Map (len={len(data)})", style=style_type)
-
-        branch = tree.add(label)
-        for k, v in data.items():
-            item_branch = branch.add(Text("Item", style="dim"))
-            # Key
-            build_tree(k, item_branch, "Key")
-            # Value
-            build_tree(v, item_branch, "Value")
-
-    # 3. List
-    elif isinstance(data, list):
-        label = Text()
-        if key != "root" and parent is not None:
-            label.append(f"{key} ", style=style_tag)
-        label.append(f"List (len={len(data)})", style=style_type)
-
-        branch = tree.add(label)
-        for i, item in enumerate(data):
-            build_tree(item, branch, f"[{i}]")
-
-    # 4. Bytes (SimpleList)
-    elif isinstance(data, bytes):
-        label = Text()
-        if key != "root" and parent is not None:
-            label.append(f"{key} ", style=style_tag)
-        # 显示 SimpleList=长度
-        label.append(f"SimpleList(len={len(data)}): ", style=style_type)
-
-        # Hex display
-        hex_str = data.hex(" ").upper()
-        if len(hex_str) > 50:
-            display_hex = hex_str[:50] + "..."
-        else:
-            display_hex = hex_str
-        label.append(display_hex, style="dim")
-
-        tree.add(label)
-
-        # 尝试探测内部结构
-        if struct := probe_struct(data):
-            build_tree(struct, tree, "Decoded Structure")
-
-    # 5. String
-    elif isinstance(data, str):
-        label = Text()
-        if key != "root" and parent is not None:
-            label.append(f"{key} ", style=style_tag)
-        # 显示 String=长度
-        label.append(f"String(len={len(data)}): ", style=style_type)
-        label.append(repr(data), style=style_value_str)
-        tree.add(label)
-
-    # 6. Primitives (int, float, etc.)
-    else:
-        label = Text()
-        if key != "root" and parent is not None:
-            label.append(f"{key} ", style=style_tag)
-        label.append(f"{type(data).__name__}: ", style=style_type)
-        label.append(str(data), style=style_value_num)
-        tree.add(label)
+    # Special handling for SimpleList (bytes) -> probe inner struct
+    if node.jce_type == "SimpleList" and isinstance(node.value, bytes):
+        struct = probe_struct(node.value)
+        if struct:
+            # 如果探测成功，我们这里为了展示方便，再次调用 decode_trace
+            # 但 decode_trace 需要 schema，这里没有，所以只能是 Raw Trace
+            # 这是一个递归调用新解析树的过程
+            inner_trace = decode_trace(node.value)
+            # 添加一个特殊的节点表示 "Decoded Inner"
+            inner_branch = tree.add(
+                Text(">>> Probed Structure >>>", style="bold magenta")
+            )
+            # 递归添加子树的 children (跳过 ROOT)
+            for child in inner_trace.children:
+                build_trace_tree(child, inner_branch)
 
     return tree
 
@@ -214,36 +186,59 @@ class BytesEncoder(json.JSONEncoder):
         return super().default(o)
 
 
-def format_output(data: dict, fmt: str) -> str | None:
+def format_output(data: Any, fmt: str) -> None:
     """格式化输出数据.
 
     Args:
-        data: 解码后的数据.
+        data: 解码后的数据 (TraceNode 或 dict).
         fmt: 输出格式 (pretty/json/tree).
-
-    Returns:
-        格式化后的字符串, 或 None (如果直接输出到 console).
     """
     from rich.console import Console
 
     console = Console()
 
     if fmt == "json":
-        json_str = json.dumps(data, cls=BytesEncoder, indent=2, ensure_ascii=False)
-        # 使用 Syntax 高亮
+        # 如果是 TraceNode，先转 dict
+        output_data = data
+        if hasattr(data, "to_dict"):
+            output_data = data.to_dict()
+
+        # 深度探测 Raw 数据中的 Struct (仅针对 Raw dict 模式)
+        if isinstance(output_data, dict):
+            output_data = deep_probe(output_data)
+
+        json_str = json.dumps(
+            output_data, cls=BytesEncoder, indent=2, ensure_ascii=False
+        )
         from rich.syntax import Syntax
 
         syntax = Syntax(json_str, "json", theme="monokai", word_wrap=True)
         console.print(syntax)
-        return None
+
     elif fmt == "tree":
-        tree = build_tree(data, key="Tars Data")
+        # 此时 data 必须是 TraceNode
+        if not isinstance(data, TraceNode):
+            console.print("[red]Internal Error: Tree format requires TraceNode[/]")
+            return
+
+        tree = build_trace_tree(data)
         console.print(tree)
-        return None
 
     else:  # pretty
-        console.print(data)
-        return None
+        # 如果是 TraceNode，转为 dict 再打印，或者打印 repr？
+        # 用户选 pretty 通常是想看 Python 对象结构
+        output_data = data
+        if isinstance(data, TraceNode):
+            # TraceNode 的 repr 不太好看，转为 dict 结构展示 value
+            # 但为了 pretty，我们可能更想要 deep_probe 后的 raw dict
+            # 这里有点歧义。如果用户选 pretty，通常意味着 decode_raw 的结果。
+            # 所以在 main 里如果不选 tree，我们还是调 decode_raw。
+            pass
+
+        if isinstance(output_data, dict):
+            output_data = deep_probe(output_data)
+
+        console.print(output_data)
 
 
 def _create_cli() -> Any:
@@ -339,29 +334,35 @@ def _create_cli() -> Any:
 
         # 解码
         try:
-            raw_decoded = decode_raw(data)
-            # 对于 JSON/Pretty 格式,我们希望直接替换 bytes 为解码后的结构
-            # 对于 Tree 格式,我们在 build_tree 中动态探测并展示为子节点(保留 SimpleList 标签)
-            if fmt != "tree":
-                decoded = deep_probe(raw_decoded)
+            if fmt == "tree":
+                # Tree 模式：使用 Trace 引擎
+                decoded = decode_trace(data)
             else:
-                decoded = raw_decoded
+                # 其他模式：使用 Raw 引擎
+                decoded = decode_raw(data)
+
         except Exception as e:
             error_console.print(f"[red]Error:[/] 解码失败: {e}")
             raise SystemExit(1) from e
 
         # 输出
         if output is not None:
-            # 保存到文件
-            if fmt == "json":
-                result = json.dumps(
-                    decoded, cls=BytesEncoder, indent=2, ensure_ascii=False
-                )
-            else:
-                import pprint as pp
+            save_data = decoded
+            to_dict_method = getattr(decoded, "to_dict", None)
+            if to_dict_method:
+                save_data = to_dict_method()
 
-                result = pp.pformat(decoded, width=100)
-            output.write_text(result, encoding="utf-8")
+            if isinstance(save_data, dict):
+                save_data = deep_probe(save_data)
+
+            with open(output, "w", encoding="utf-8") as f:
+                json.dump(
+                    save_data,
+                    f,
+                    cls=BytesEncoder,
+                    indent=2,
+                    ensure_ascii=False,
+                )
             console.print(f"[green]输出已保存到:[/] {output}")
         else:
             format_output(decoded, fmt)
