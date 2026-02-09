@@ -86,7 +86,6 @@ class NoneType(Type):
     编码：不能直接编码，仅用于 Optional/Union 的语义分支。
     """
 
-
 class EnumType(Type):
     """Enum 类型.
 

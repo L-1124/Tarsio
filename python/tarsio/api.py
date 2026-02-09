@@ -65,8 +65,6 @@ def encode(obj: Any) -> bytes:
 def decode(
     data: bytes,
     cls: type[TarsDict],
-    *,
-    auto_simplelist: bool = ...,
 ) -> TarsDict: ...
 
 
@@ -74,16 +72,12 @@ def decode(
 def decode(
     data: bytes,
     cls: type[_StructT],
-    *,
-    auto_simplelist: bool = ...,
 ) -> _StructT: ...
 
 
 def decode(
     data: bytes,
     cls: type = TarsDict,
-    *,
-    auto_simplelist: bool = False,
 ) -> Any:
     """从 Tars 二进制数据反序列化.
 
@@ -103,4 +97,4 @@ def decode(
     if issubclass(cls, (Struct)):
         return _core_decode(cls, data)
     else:
-        return _core_decode_raw(data, auto_simplelist=auto_simplelist)
+        return _core_decode_raw(data)

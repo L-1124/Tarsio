@@ -14,7 +14,6 @@ from . import inspect
 _StructT = TypeVar("_StructT")
 _SM = TypeVar("_SM", bound="StructMeta")
 
-
 __all__ = [
     "Meta",
     "Struct",
