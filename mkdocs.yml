@@ -48,6 +48,7 @@ theme:
 
 nav:
   - 简介: index.md
+  - 协议规范: protocol.md
   - 使用指南:
     - 定义模型: usage/models.md
     - 支持类型: usage/types.md

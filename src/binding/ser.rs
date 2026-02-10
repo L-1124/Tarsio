@@ -1,4 +1,4 @@
-use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{
@@ -8,29 +8,14 @@ use std::cell::RefCell;
 
 use bytes::BufMut;
 
-use crate::binding::any_codec::{
-    PySequenceFast, check_exact_sequence_type, dataclass_fields, serialize_any,
-    serialize_struct_fields, write_tarsdict_fields,
-};
+use crate::binding::raw::{serialize_any, serialize_struct_fields, write_tarsdict_fields};
 use crate::binding::schema::{TarsDict, TypeExpr, WireType, ensure_schema_for_class};
+use crate::binding::utils::{
+    BUFFER_DEFAULT_CAPACITY, BUFFER_SHRINK_THRESHOLD, PySequenceFast, check_depth,
+    check_exact_sequence_type, dataclass_fields,
+};
 use crate::codec::consts::TarsType;
 use crate::codec::writer::TarsWriter;
-
-const MAX_DEPTH: usize = 100;
-// Capacity threshold (1MB). If buffer exceeds this, we shrink it back.
-const BUFFER_SHRINK_THRESHOLD: usize = 1024 * 1024;
-// Default initial capacity (128 bytes).
-const BUFFER_DEFAULT_CAPACITY: usize = 128;
-
-#[inline]
-fn check_depth(depth: usize) -> PyResult<()> {
-    if depth > MAX_DEPTH {
-        return Err(PyValueError::new_err(
-            "Recursion limit exceeded or circular reference detected",
-        ));
-    }
-    Ok(())
-}
 
 thread_local! {
     static ENCODE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(128));
@@ -439,5 +424,3 @@ fn value_matches_type<'py>(
         }
     }
 }
-
-// Any 编解码相关逻辑已迁移至 any_codec.rs

@@ -1,4 +1,3 @@
-pub mod any_codec;
 pub mod de;
 pub mod error;
 pub mod inspect;
@@ -9,3 +8,4 @@ pub mod raw;
 pub mod schema;
 pub mod ser;
 pub mod trace;
+pub mod utils;

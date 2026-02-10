@@ -84,8 +84,6 @@ def decode(
     Args:
         cls: 目标类
         data: 二进制数据
-        auto_simplelist: 是否自动解析 SimpleList 的 bytes.
-            仅在 Raw 模式生效。
 
     Returns:
         反序列化的类实例或 TarsDict。

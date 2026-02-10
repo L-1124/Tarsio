@@ -5,30 +5,16 @@ use simdutf8::basic::from_utf8;
 use std::cmp::Ordering;
 
 use crate::ValidationError;
-use crate::binding::any_codec::{
-    decode_any_struct_fields, decode_any_value, read_size_non_negative,
-};
 use crate::binding::error::{DeError, DeResult, PathItem};
-use crate::binding::raw::decode_raw;
+use crate::binding::raw::{
+    decode_any_struct_fields, decode_any_value, decode_raw, read_size_non_negative,
+};
 use crate::binding::schema::{
     Constraints, StructDef, TarsDict, TypeExpr, WireType, ensure_schema_for_class,
 };
+use crate::binding::utils::check_depth;
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
-
-const MAX_DEPTH: usize = 100;
-
-#[inline]
-fn check_depth(depth: usize) -> DeResult<()> {
-    if depth > MAX_DEPTH {
-        return Err(DeError::new(
-            "Recursion limit exceeded during deserialization".into(),
-        ));
-    }
-    Ok(())
-}
-
-// read_size_non_negative 由 any_codec 提供
 
 /// 将 Tars 二进制数据解码为 Struct 实例(Schema API).
 ///
@@ -79,7 +65,7 @@ fn deserialize_struct<'py>(
     def: &StructDef,
     depth: usize,
 ) -> DeResult<Bound<'py, PyAny>> {
-    check_depth(depth)?;
+    check_depth(depth).map_err(DeError::wrap)?;
 
     let class_obj = def.bind_class(py);
     let mut seen = vec![false; def.fields_sorted.len()];
@@ -288,7 +274,7 @@ fn deserialize_value<'py>(
     type_expr: &TypeExpr,
     depth: usize,
 ) -> DeResult<Bound<'py, PyAny>> {
-    check_depth(depth)?;
+    check_depth(depth).map_err(DeError::wrap)?;
 
     match type_expr {
         TypeExpr::Primitive(wire_type) => match wire_type {
