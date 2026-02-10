@@ -68,8 +68,25 @@ fn deserialize_struct<'py>(
     check_depth(depth).map_err(DeError::wrap)?;
 
     let class_obj = def.bind_class(py);
-    let mut seen = vec![false; def.fields_sorted.len()];
-    let mut values: Vec<Option<Bound<'py, PyAny>>> = vec![None; def.fields_sorted.len()];
+    let field_count = def.fields_sorted.len();
+
+    // 预分配 Python 对象
+    let instance = unsafe {
+        let type_ptr = class_obj.as_ptr() as *mut ffi::PyTypeObject;
+        let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
+        if obj_ptr.is_null() {
+            return Err(DeError::wrap(PyErr::fetch(py)));
+        }
+        Bound::from_owned_ptr(py, obj_ptr)
+    };
+
+    // 使用位掩码追踪已见字段 (支持高达 64 个字段)
+    let mut seen_mask: u64 = 0;
+    let mut seen_vec: Option<Vec<bool>> = if field_count > 64 {
+        Some(vec![false; field_count])
+    } else {
+        None
+    };
 
     // 读取字段,直到遇到 StructEnd 或 EOF
     while !reader.is_end() {
@@ -78,17 +95,12 @@ fn deserialize_struct<'py>(
             Err(_) => break,
         };
 
-        // 判断是否为 StructEnd
         if type_id == TarsType::StructEnd {
-            reader
-                .read_head()
-                .map_err(|e| DeError::new(format!("Read head error: {}", e)))?; // Consume StructEnd
+            let _ = reader.read_head();
             break;
         }
 
-        reader
-            .read_head()
-            .map_err(|e| DeError::new(format!("Read head error: {}", e)))?; // Consume the head
+        let _ = reader.read_head();
 
         let idx_opt = if (tag as usize) < def.tag_lookup_vec.len() {
             def.tag_lookup_vec[tag as usize]
@@ -100,74 +112,81 @@ fn deserialize_struct<'py>(
             let field = &def.fields_sorted[idx];
             let value = deserialize_value(py, reader, type_id, &field.ty, depth + 1)
                 .map_err(|e| e.prepend(PathItem::Field(field.name.clone())))?;
+
             if let Some(constraints) = field.constraints.as_deref() {
                 validate_value(field.name.as_str(), &value, constraints)
                     .map_err(|e| e.prepend(PathItem::Field(field.name.clone())))?;
             }
-            seen[idx] = true;
-            values[idx] = Some(value);
+
+            // 直接设置属性
+            unsafe {
+                let name_py = field.name_py.bind(py);
+                let res = ffi::PyObject_GenericSetAttr(
+                    instance.as_ptr(),
+                    name_py.as_ptr(),
+                    value.as_ptr(),
+                );
+                if res != 0 {
+                    return Err(DeError::wrap(PyErr::fetch(py)));
+                }
+            }
+
+            if let Some(vec) = seen_vec.as_mut() {
+                vec[idx] = true;
+            } else {
+                seen_mask |= 1 << idx;
+            }
         } else {
-            // 未知 tag,跳过
             if def.forbid_unknown_tags {
                 return Err(DeError::new(format!(
                     "Unknown tag {} found in deserialization (forbid_unknown_tags=True)",
                     tag
                 )));
             }
-            reader
-                .skip_field(type_id)
-                .map_err(|e| DeError::new(format!("Failed to skip unknown field: {}", e)))?;
+            let _ = reader.skip_field(type_id);
         }
     }
 
+    // 处理未出现的字段 (默认值/必填检查)
     for (idx, field) in def.fields_sorted.iter().enumerate() {
-        if seen[idx] {
-            continue;
-        }
-        let value = if let Some(default_value) = field.default_value.as_ref() {
-            Some(default_value.bind(py).clone())
-        } else if let Some(factory) = field.default_factory.as_ref() {
-            let produced = factory.bind(py).call0().map_err(DeError::wrap)?;
-            Some(produced)
-        } else if field.is_optional {
-            Some(py.None().into_bound(py))
-        } else if field.is_required {
-            return Err(DeError::new(format!(
-                "Missing required field '{}' in deserialization",
-                field.name
-            )));
+        let is_seen = if let Some(vec) = &seen_vec {
+            vec[idx]
         } else {
-            None
+            (seen_mask & (1 << idx)) != 0
         };
-        values[idx] = value;
-    }
 
-    let instance = unsafe {
-        // SAFETY: class_obj 由 Schema 持有,生命周期覆盖本次反序列化。
-        // 这里使用 PyType_GenericAlloc 创建未初始化对象,后续逐字段写入。
-        let type_ptr = class_obj.as_ptr() as *mut ffi::PyTypeObject;
-        let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
-        if obj_ptr.is_null() {
-            return Err(DeError::wrap(PyErr::fetch(py)));
-        }
-        Bound::from_owned_ptr(py, obj_ptr)
-    };
-    for (idx, field) in def.fields_sorted.iter().enumerate() {
-        if let Some(val) = values[idx].as_ref() {
-            unsafe {
-                // SAFETY: name_py/val 均由 PyO3 管理引用计数。
-                // 若设置属性失败,显式 drop 以确保引用及时释放,避免半初始化对象泄漏。
-                let name_py = field.name_py.bind(py);
-                let res =
-                    ffi::PyObject_GenericSetAttr(instance.as_ptr(), name_py.as_ptr(), val.as_ptr());
-                if res != 0 {
-                    let err = PyErr::fetch(py);
-                    drop(instance);
-                    return Err(DeError::wrap(err));
+        if !is_seen {
+            let value_opt = if let Some(default_value) = field.default_value.as_ref() {
+                Some(default_value.bind(py).clone())
+            } else if let Some(factory) = field.default_factory.as_ref() {
+                Some(factory.bind(py).call0().map_err(DeError::wrap)?)
+            } else if field.is_optional {
+                Some(py.None().into_bound(py))
+            } else if field.is_required {
+                return Err(DeError::new(format!(
+                    "Missing required field '{}' in deserialization",
+                    field.name
+                )));
+            } else {
+                None
+            };
+
+            if let Some(val) = value_opt {
+                unsafe {
+                    let name_py = field.name_py.bind(py);
+                    let res = ffi::PyObject_GenericSetAttr(
+                        instance.as_ptr(),
+                        name_py.as_ptr(),
+                        val.as_ptr(),
+                    );
+                    if res != 0 {
+                        return Err(DeError::wrap(PyErr::fetch(py)));
+                    }
                 }
             }
         }
     }
+
     Ok(instance)
 }
 
