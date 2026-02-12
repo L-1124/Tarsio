@@ -55,24 +55,24 @@ pub fn decode_object<'py>(
     let def = ensure_schema_for_class(py, cls)?;
 
     let mut reader = TarsReader::new(data);
-    deserialize_struct(py, &mut reader, &def, 0).map_err(|e| e.to_pyerr(py))
+    deserialize_struct(py, cls, &mut reader, &def, 0).map_err(|e| e.to_pyerr(py))
 }
 
 /// 从读取器中反序列化结构体.
 fn deserialize_struct<'py>(
     py: Python<'py>,
+    cls: &Bound<'py, PyType>,
     reader: &mut TarsReader,
     def: &StructDef,
     depth: usize,
 ) -> DeResult<Bound<'py, PyAny>> {
     check_depth(depth).map_err(DeError::wrap)?;
 
-    let class_obj = def.bind_class(py);
     let field_count = def.fields_sorted.len();
 
     // 预分配 Python 对象
     let instance = unsafe {
-        let type_ptr = class_obj.as_ptr() as *mut ffi::PyTypeObject;
+        let type_ptr = cls.as_ptr() as *mut ffi::PyTypeObject;
         let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
         if obj_ptr.is_null() {
             return Err(DeError::wrap(PyErr::fetch(py)));
@@ -376,7 +376,7 @@ fn deserialize_value<'py>(
                 .cast::<PyType>()
                 .map_err(|e| DeError::new(e.to_string()))?;
             let nested_def = ensure_schema_for_class(py, nested_cls).map_err(DeError::wrap)?;
-            deserialize_struct(py, reader, &nested_def, depth + 1)
+            deserialize_struct(py, nested_cls, reader, &nested_def, depth + 1)
         }
         TypeExpr::TarsDict => {
             if type_id != TarsType::StructBegin {

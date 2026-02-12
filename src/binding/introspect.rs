@@ -68,7 +68,7 @@ struct IntrospectionContext<'py> {
     literal_cls: Bound<'py, PyAny>,
     final_cls: Option<Bound<'py, PyAny>>,
     type_alias: Option<Bound<'py, PyAny>>,
-    type_alias_type: Option<Bound<'py, PyAny>>,
+    type_alias_types: Vec<Bound<'py, PyAny>>,
     required_cls: Option<Bound<'py, PyAny>>,
     not_required_cls: Option<Bound<'py, PyAny>>,
     any_type: Bound<'py, PyAny>,
@@ -119,11 +119,17 @@ impl<'py> IntrospectionContext<'py> {
 
         let final_cls = typing.getattr("Final").ok();
         let type_alias = typing.getattr("TypeAlias").ok();
-        let type_alias_type = typing.getattr("TypeAliasType").ok().or_else(|| {
-            typing_extensions
-                .as_ref()
-                .and_then(|m| m.getattr("TypeAliasType").ok())
-        });
+        let mut type_alias_types = Vec::new();
+        if let Ok(type_alias_type) = typing.getattr("TypeAliasType") {
+            type_alias_types.push(type_alias_type);
+        }
+        if let Some(type_alias_type) = typing_extensions
+            .as_ref()
+            .and_then(|m| m.getattr("TypeAliasType").ok())
+            && !type_alias_types.iter().any(|t| t.is(&type_alias_type))
+        {
+            type_alias_types.push(type_alias_type);
+        }
         let required_cls = typing.getattr("Required").ok().or_else(|| {
             typing_extensions
                 .as_ref()
@@ -171,7 +177,7 @@ impl<'py> IntrospectionContext<'py> {
             literal_cls,
             final_cls,
             type_alias,
-            type_alias_type,
+            type_alias_types,
             required_cls,
             not_required_cls,
             any_type,
@@ -391,6 +397,22 @@ fn is_subclass<'py>(
     issubclass.call1((cls, base))?.is_truthy()
 }
 
+fn is_instance_of_any<'py>(
+    value: &Bound<'py, PyAny>,
+    candidates: &[Bound<'py, PyAny>],
+) -> PyResult<bool> {
+    for candidate in candidates {
+        if value.is_instance(candidate)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn is_identity_of_any<'py>(value: &Bound<'py, PyAny>, candidates: &[Bound<'py, PyAny>]) -> bool {
+    candidates.iter().any(|candidate| value.is(candidate))
+}
+
 fn introspect_tars_struct_fields<'py>(
     py: Python<'py>,
     cls: &Bound<'py, PyType>,
@@ -594,9 +616,7 @@ fn translate_type_info_ir<'py>(
             continue;
         }
 
-        if let Some(type_alias_type) = ctx.type_alias_type.as_ref()
-            && resolved.is_instance(type_alias_type)?
-        {
+        if is_instance_of_any(&resolved, &ctx.type_alias_types)? {
             if let Ok(value) = resolved.getattr("__value__") {
                 resolved = value;
                 continue;
@@ -647,9 +667,7 @@ fn translate_type_info_ir<'py>(
             continue;
         }
 
-        if let Some(type_alias_type) = ctx.type_alias_type.as_ref()
-            && origin.is(type_alias_type)
-        {
+        if is_identity_of_any(&origin, &ctx.type_alias_types) {
             let args_any = ctx.typing.call_method1("get_args", (&resolved,))?;
             let args = args_any.cast::<PyTuple>()?;
             if args.is_empty() {

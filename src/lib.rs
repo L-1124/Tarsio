@@ -10,6 +10,7 @@ create_exception!(_core, ValidationError, PyValueError);
 
 fn init_core_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
     binding::metaclass::add_struct_meta(m)?;
+    m.add_class::<binding::schema::Schema>()?;
     m.add_class::<binding::schema::Struct>()?;
     m.add_class::<binding::schema::StructConfig>()?;
     m.add_class::<binding::meta::Meta>()?;

@@ -5,15 +5,14 @@
     clippy::manual_map
 )]
 use pyo3::ffi;
+use pyo3::gc::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
 use pyo3::types::{PyAny, PyDict, PyList, PyString, PyTuple, PyType};
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::CStr;
-use std::os::raw::c_void;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::binding::introspect::{
     ConstraintsIR, TypeInfoIR, detect_struct_kind, introspect_struct_fields,
@@ -97,7 +96,8 @@ pub struct FieldDef {
 
 #[derive(Debug)]
 pub struct StructDef {
-    pub class: Arc<Py<PyType>>,
+    pub class_ptr: usize,
+    pub name: String,
     pub fields_sorted: Vec<FieldDef>,
     pub tag_lookup_vec: Vec<Option<usize>>,
     pub name_to_tag: HashMap<String, u8>,
@@ -112,65 +112,91 @@ pub struct StructDef {
     pub weakref: bool,
 }
 
-impl StructDef {
-    /// 绑定类到 Python 解释器并返回绑定引用.
-    pub fn bind_class<'py>(&self, py: Python<'py>) -> Bound<'py, PyType> {
-        self.class.bind(py).clone()
-    }
-}
-
 pub const SCHEMA_ATTR: &str = "__tarsio_schema__";
-
-#[derive(Clone)]
-enum SchemaCacheEntry {
-    Struct(Arc<StructDef>),
-    NotStruct,
-}
 
 thread_local! {
     // 线程内 schema 缓存,用于减少高频 getattr 开销。
-    // 使用 SchemaCacheEntry 同时记录正向(Struct)和负向(NotStruct)结果，避免对普通类型(dict, list)重复探测。
-    static SCHEMA_CACHE: RefCell<HashMap<usize, SchemaCacheEntry>> = RefCell::new(HashMap::new());
+    // 使用 Weak 引用，避免循环引用导致的内存泄漏。
+    static SCHEMA_CACHE: RefCell<HashMap<usize, Weak<StructDef>>> = RefCell::new(HashMap::new());
 }
 
-const SCHEMA_CAPSULE_NAME: &CStr = c"tarsio.Schema";
-
-unsafe extern "C" fn schema_capsule_destructor(capsule: *mut ffi::PyObject) {
-    let ptr = unsafe { ffi::PyCapsule_GetPointer(capsule, SCHEMA_CAPSULE_NAME.as_ptr()) };
-    if ptr.is_null() {
-        return;
+fn traverse_type_expr(ty: &TypeExpr, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+    match ty {
+        TypeExpr::Primitive(_) => Ok(()),
+        TypeExpr::Struct(_) => Ok(()),
+        TypeExpr::TarsDict => Ok(()),
+        TypeExpr::NamedTuple(cls, items) => {
+            visit.call(cls)?;
+            for item in items {
+                traverse_type_expr(item, visit)?;
+            }
+            Ok(())
+        }
+        TypeExpr::Dataclass(cls) => visit.call(cls),
+        TypeExpr::Any => Ok(()),
+        TypeExpr::NoneType => Ok(()),
+        TypeExpr::Set(inner) => traverse_type_expr(inner, visit),
+        TypeExpr::Enum(cls, inner) => {
+            visit.call(cls)?;
+            traverse_type_expr(inner, visit)
+        }
+        TypeExpr::Union(items) => {
+            for item in items {
+                traverse_type_expr(item, visit)?;
+            }
+            Ok(())
+        }
+        TypeExpr::List(inner) => traverse_type_expr(inner, visit),
+        TypeExpr::Tuple(items) => {
+            for item in items {
+                traverse_type_expr(item, visit)?;
+            }
+            Ok(())
+        }
+        TypeExpr::VarTuple(inner) => traverse_type_expr(inner, visit),
+        TypeExpr::Map(k, v) => {
+            traverse_type_expr(k, visit)?;
+            traverse_type_expr(v, visit)
+        }
+        TypeExpr::Optional(inner) => traverse_type_expr(inner, visit),
     }
-    let boxed = unsafe { Box::from_raw(ptr as *mut Arc<StructDef>) };
-    drop(boxed);
 }
 
-fn schema_to_capsule(py: Python<'_>, def: Arc<StructDef>) -> PyResult<Py<PyAny>> {
-    let boxed = Box::new(def);
-    let ptr = Box::into_raw(boxed) as *mut c_void;
-    unsafe {
-        let obj = ffi::PyCapsule_New(
-            ptr,
-            SCHEMA_CAPSULE_NAME.as_ptr(),
-            Some(schema_capsule_destructor),
-        );
-        if obj.is_null() {
-            return Err(PyErr::fetch(py));
+#[pyclass(module = "tarsio._core", name = "Schema")]
+pub struct Schema {
+    pub def: Arc<StructDef>,
+}
+
+#[pymethods]
+impl Schema {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        for field in &self.def.fields_sorted {
+            visit.call(&field.name_py)?;
+            if let Some(v) = &field.default_value {
+                visit.call(v)?;
+            }
+            if let Some(v) = &field.default_factory {
+                visit.call(v)?;
+            }
+            traverse_type_expr(&field.ty, &visit)?;
         }
-        Ok(Bound::from_owned_ptr(py, obj).unbind())
+        Ok(())
     }
+
+    fn __clear__(&mut self) {}
 }
 
-fn schema_from_capsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Option<Arc<StructDef>>> {
-    unsafe {
-        if ffi::PyCapsule_CheckExact(obj.as_ptr()) == 0 {
-            return Ok(None);
-        }
-        let ptr = ffi::PyCapsule_GetPointer(obj.as_ptr(), SCHEMA_CAPSULE_NAME.as_ptr());
-        if ptr.is_null() {
-            return Err(PyErr::fetch(py));
-        }
-        let arc = &*(ptr as *mut Arc<StructDef>);
-        Ok(Some(Arc::clone(arc)))
+fn schema_to_python(py: Python<'_>, def: Arc<StructDef>) -> PyResult<Py<PyAny>> {
+    let schema = Schema { def };
+    let instance = Py::new(py, schema)?;
+    Ok(instance.into_any())
+}
+
+fn schema_from_python(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Option<Arc<StructDef>>> {
+    if let Ok(schema) = obj.extract::<Py<Schema>>() {
+        Ok(Some(schema.borrow(py).def.clone()))
+    } else {
+        Ok(None)
     }
 }
 
@@ -179,23 +205,26 @@ pub fn schema_from_class<'py>(
     cls: &Bound<'py, PyType>,
 ) -> PyResult<Option<Arc<StructDef>>> {
     let cls_key = cls.as_ptr() as usize;
-    if let Some(entry) = SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).cloned()) {
-        return match entry {
-            SchemaCacheEntry::Struct(def) => Ok(Some(def)),
-            SchemaCacheEntry::NotStruct => Ok(None),
-        };
+
+    // 1. Try to get from cache and upgrade
+    let cached =
+        SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).and_then(|weak| weak.upgrade()));
+
+    if let Some(def) = cached {
+        return Ok(Some(def));
     }
 
+    // 2. If not in cache or upgrade failed, try get from class attribute
     if let Ok(schema_obj) = cls.getattr(SCHEMA_ATTR) {
-        if let Some(def) = schema_from_capsule(py, &schema_obj)? {
+        if let Some(def) = schema_from_python(py, &schema_obj)? {
+            // Update cache with new Weak reference
             SCHEMA_CACHE.with(|cache| {
-                cache
-                    .borrow_mut()
-                    .insert(cls_key, SchemaCacheEntry::Struct(Arc::clone(&def)));
+                cache.borrow_mut().insert(cls_key, Arc::downgrade(&def));
             });
             return Ok(Some(def));
         }
     }
+
     Ok(None)
 }
 
@@ -204,33 +233,20 @@ pub fn ensure_schema_for_class<'py>(
     cls: &Bound<'py, PyType>,
 ) -> PyResult<Arc<StructDef>> {
     let cls_key = cls.as_ptr() as usize;
-    // Check cache first (includes negative results)
-    if let Some(entry) = SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).cloned()) {
-        return match entry {
-            SchemaCacheEntry::Struct(def) => Ok(def),
-            SchemaCacheEntry::NotStruct => {
-                let class_name = cls
-                    .name()
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|_| "Unknown".to_string());
-                Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                    "Unsupported class type: {}",
-                    class_name
-                )))
-            }
-        };
+
+    // 1. Check cache first
+    let cached =
+        SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).and_then(|weak| weak.upgrade()));
+
+    if let Some(def) = cached {
+        return Ok(def);
     }
 
-    // Parameters check for generic classes
+    // 2. Parameters check for generic classes
     if let Ok(params) = cls.getattr("__parameters__")
         && let Ok(tuple) = params.cast::<PyTuple>()
         && !tuple.is_empty()
     {
-        SCHEMA_CACHE.with(|cache| {
-            cache
-                .borrow_mut()
-                .insert(cls_key, SchemaCacheEntry::NotStruct)
-        });
         let class_name = cls
             .name()
             .map(|n| n.to_string())
@@ -241,12 +257,12 @@ pub fn ensure_schema_for_class<'py>(
         )));
     }
 
-    // Try normal schema lookup
+    // 3. Try normal schema lookup
     if let Some(def) = schema_from_class(py, cls)? {
         return Ok(def);
     }
 
-    // Internal introspection for automated schema building
+    // 4. Internal introspection for automated schema building
     if detect_struct_kind(py, cls)? {
         let default_config = SchemaConfig {
             frozen: false,
@@ -265,12 +281,7 @@ pub fn ensure_schema_for_class<'py>(
         }
     }
 
-    // Mark as not a struct to avoid repeat checks
-    SCHEMA_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .insert(cls_key, SchemaCacheEntry::NotStruct)
-    });
+    // 5. Fallback: not a struct
     let class_name = cls
         .name()
         .map(|n| n.to_string())
@@ -473,7 +484,8 @@ fn compile_schema_from_fields<'py>(
     }
 
     let def = StructDef {
-        class: Arc::new(cls.clone().unbind()),
+        class_ptr: cls.as_ptr() as usize,
+        name: cls.name()?.to_string(),
         fields_sorted: fields_def,
         tag_lookup_vec,
         name_to_tag,
@@ -489,13 +501,12 @@ fn compile_schema_from_fields<'py>(
     };
 
     let def = Arc::new(def);
-    let capsule = schema_to_capsule(py, Arc::clone(&def))?;
+    let capsule = schema_to_python(py, Arc::clone(&def))?;
     cls.setattr(SCHEMA_ATTR, capsule)?;
     SCHEMA_CACHE.with(|cache| {
-        cache.borrow_mut().insert(
-            cls.as_ptr() as usize,
-            SchemaCacheEntry::Struct(Arc::clone(&def)),
-        );
+        cache
+            .borrow_mut()
+            .insert(cls.as_ptr() as usize, Arc::downgrade(&def));
     });
 
     let mut field_names = Vec::with_capacity(def.fields_sorted.len());
@@ -812,8 +823,7 @@ fn has_any_constraints(
     subclass,
     extends = PyDict,
     module = "tarsio._core",
-    name = "TarsDict",
-    freelist = 1000
+    name = "TarsDict"
 )]
 pub struct TarsDict;
 
@@ -826,6 +836,12 @@ impl TarsDict {
         // 这里实际上只需要空结构体占位，让 Python 侧继承 dict
         Ok(TarsDict)
     }
+
+    fn __traverse__(&self, _visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        Ok(())
+    }
+
+    fn __clear__(&mut self) {}
 }
 
 /// Tarsio 的 Struct 基类.
@@ -844,12 +860,7 @@ impl TarsDict {
 ///
 /// Notes:
 ///     解码时, wire 缺失字段会使用模型默认值; Optional 字段未显式赋默认值时视为 None.
-#[pyclass(
-    subclass,
-    module = "tarsio._core",
-    name = "_StructBase",
-    freelist = 1000
-)]
+#[pyclass(subclass, weakref, module = "tarsio._core", name = "_StructBase")]
 pub struct Struct;
 
 #[pymethods]
@@ -859,6 +870,12 @@ impl Struct {
     fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
         Struct
     }
+
+    fn __traverse__(&self, _visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        Ok(())
+    }
+
+    fn __clear__(&mut self) {}
 
     #[pyo3(signature = (*args, **kwargs))]
     fn __init__(

@@ -60,17 +60,6 @@ pub fn _tarsio_structmeta_new<'py>(
             weakref = v.extract::<bool>()?;
             k.del_item("weakref")?;
         }
-        if k.get_item("tag")?.is_some()
-            || k.get_item("tag_field")?.is_some()
-            || k.get_item("rename")?.is_some()
-            || k.get_item("array_like")?.is_some()
-            || k.get_item("gc")?.is_some()
-            || k.get_item("cache_hash")?.is_some()
-        {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "Unsupported struct config: tag/tag_field/rename/array_like/gc/cache_hash",
-            ));
-        }
     }
 
     let mut field_names: Vec<String> = Vec::new();
