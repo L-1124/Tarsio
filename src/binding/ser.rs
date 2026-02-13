@@ -1,15 +1,14 @@
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
-use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{
-    PyAny, PyBool, PyBytes, PyDict, PyFloat, PyFrozenSet, PySequence, PySet, PyString, PyType,
+    PyAny, PyBool, PyBytes, PyDict, PyFloat, PyFrozenSet, PySequence, PySet, PyString,
 };
 use std::cell::RefCell;
 
 use bytes::BufMut;
 
 use crate::binding::raw::{serialize_any, serialize_struct_fields, write_tarsdict_fields};
-use crate::binding::schema::{TarsDict, TypeExpr, WireType, ensure_schema_for_class};
+use crate::binding::schema::{TarsDict, TypeExpr, UnionCache, WireType, ensure_schema_for_class};
 use crate::binding::utils::{
     BUFFER_DEFAULT_CAPACITY, BUFFER_SHRINK_THRESHOLD, PySequenceFast, check_depth,
     check_exact_sequence_type, dataclass_fields,
@@ -167,8 +166,8 @@ pub(crate) fn serialize_impl(
             let value = val.getattr("value")?;
             serialize_impl(writer, tag, inner, &value, depth + 1)?;
         }
-        TypeExpr::Union(variants) => {
-            let variant = select_union_variant(val.py(), variants, val)?;
+        TypeExpr::Union(variants, cache) => {
+            let variant = select_union_variant(val.py(), variants, cache, val)?;
             serialize_impl(writer, tag, variant, val, depth + 1)?;
         }
         TypeExpr::Struct(ptr) => {
@@ -304,23 +303,25 @@ pub(crate) fn serialize_impl(
     Ok(())
 }
 
-fn class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> PyResult<Bound<'py, PyType>> {
-    let obj_ptr = ptr as *mut ffi::PyObject;
+fn class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> PyResult<Bound<'py, pyo3::types::PyType>> {
+    let obj_ptr = ptr as *mut pyo3::ffi::PyObject;
     if obj_ptr.is_null() {
         return Err(PyTypeError::new_err("Invalid struct pointer"));
     }
-    // SAFETY:
-    // 指针 ptr 来自我们需要自己的模式/结构定义系统。
-    // 我们假设它指向一个有效的、存活的 PyObject（具体来说是 PyTypeObject）。
-    // from_borrowed_ptr 创建一个借用该对象的 Bound 包装器。
+    // SAFETY: 指针 ptr 来自 Schema 系统，生命周期受控。
     let any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
-    let cls = any.cast::<PyType>()?;
+    let cls = any.cast::<pyo3::types::PyType>()?;
     Ok(cls.clone())
 }
 
+/// 从 Union 变体列表中选择与给定值匹配的变体.
+///
+/// 优先查询 `UnionCache` 以实现 O(1) 快速分发. 若未命中, 则回退到 O(N) 线性扫描,
+/// 并将成功匹配的类型记录到缓存中. 依据“同类型视为同一分发目标”的原则进行加速.
 fn select_union_variant<'py>(
     py: Python<'py>,
     variants: &'py [TypeExpr],
+    cache: &UnionCache,
     value: &Bound<'py, PyAny>,
 ) -> PyResult<&'py TypeExpr> {
     if value.is_none() {
@@ -333,9 +334,21 @@ fn select_union_variant<'py>(
         return Err(PyTypeError::new_err("Union does not accept None"));
     }
 
+    // 1. O(1) Lookup: 检查缓存中是否存在精确类型匹配
+    let type_ptr = value.get_type().as_ptr() as usize;
+
+    if let Some(idx) = cache.get(type_ptr) {
+        // 基于“同 Python 类型视为同一分发目标”的原则，直接使用缓存索引
+        if idx < variants.len() {
+            return Ok(&variants[idx]);
+        }
+    }
+
+    // 2. O(N) Scan: 缓存未命中时回退到线性扫描
     for (idx, variant) in variants.iter().enumerate() {
         if value_matches_type(py, variant, value)? {
-            let _ = idx;
+            // 记录匹配成功的索引，以便后续相同类型的值实现 O(1) 分发
+            cache.insert(type_ptr, idx);
             return Ok(variant);
         }
     }
@@ -414,7 +427,7 @@ fn value_matches_type<'py>(
                 value_matches_type(py, inner, value)
             }
         }
-        TypeExpr::Union(variants) => {
+        TypeExpr::Union(variants, _) => {
             for variant in variants {
                 if value_matches_type(py, variant, value)? {
                     return Ok(true);

@@ -43,7 +43,7 @@ pub enum TypeExpr {
     NoneType,
     Set(Box<TypeExpr>),
     Enum(Py<PyType>, Box<TypeExpr>),
-    Union(Vec<TypeExpr>),
+    Union(Vec<TypeExpr>, UnionCache),
     List(Box<TypeExpr>),
     Tuple(Vec<TypeExpr>),
     VarTuple(Box<TypeExpr>),
@@ -54,6 +54,49 @@ pub enum TypeExpr {
 impl TypeExpr {
     pub fn is_optional(&self) -> bool {
         matches!(self, TypeExpr::Optional(_))
+    }
+}
+
+/// Union 类型的变体分发缓存.
+///
+/// 内部采用 `RwLock` 确保跨线程 Schema 共享时的访问安全.
+/// Key 为 Python 类型对象的地址 (usize), Value 为对应变体在 `TypeExpr::Union` 中的索引.
+#[derive(Default)]
+pub struct UnionCache {
+    map: std::sync::RwLock<HashMap<usize, usize>>,
+}
+
+impl std::fmt::Debug for UnionCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnionCache").finish_non_exhaustive()
+    }
+}
+
+impl Clone for UnionCache {
+    /// 克隆时清空缓存, 确保新实例从头开始学习.
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for UnionCache {
+    /// 缓存内容不参与类型语义相等性判断.
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl UnionCache {
+    /// 获取指定类型在变体列表中的索引.
+    pub fn get(&self, type_ptr: usize) -> Option<usize> {
+        self.map.read().ok().and_then(|m| m.get(&type_ptr).copied())
+    }
+
+    /// 记录类型与变体索引的映射关系.
+    pub fn insert(&self, type_ptr: usize, idx: usize) {
+        if let Ok(mut m) = self.map.write() {
+            m.insert(type_ptr, idx);
+        }
     }
 }
 
@@ -134,7 +177,7 @@ fn traverse_type_expr(ty: &TypeExpr, visit: &PyVisit<'_>) -> Result<(), PyTraver
             visit.call(cls)?;
             traverse_type_expr(inner, visit)
         }
-        TypeExpr::Union(items) => {
+        TypeExpr::Union(items, _) => {
             for item in items {
                 traverse_type_expr(item, visit)?;
             }
@@ -557,7 +600,7 @@ fn type_info_ir_to_type_expr(py: Python<'_>, typ: &TypeInfoIR) -> PyResult<TypeE
             for item in items {
                 variants.push(type_info_ir_to_type_expr(py, item)?);
             }
-            Ok(TypeExpr::Union(variants))
+            Ok(TypeExpr::Union(variants, UnionCache::default()))
         }
         TypeInfoIR::List(inner) => Ok(TypeExpr::List(Box::new(type_info_ir_to_type_expr(
             py, inner,
@@ -744,7 +787,7 @@ fn parse_type_info(obj: &Bound<'_, PyAny>) -> PyResult<TypeExpr> {
             for v in variants.iter() {
                 items.push(parse_type_info(&v)?);
             }
-            Ok(TypeExpr::Union(items))
+            Ok(TypeExpr::Union(items, UnionCache::default()))
         }
         "struct" => {
             let cls_any = obj.getattr("cls")?;

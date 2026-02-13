@@ -368,7 +368,7 @@ fn deserialize_value<'py>(
             }
             Ok(set.into_any())
         }
-        TypeExpr::Union(variants) => decode_union_value(py, reader, type_id, variants, depth),
+        TypeExpr::Union(variants, _) => decode_union_value(py, reader, type_id, variants, depth),
         TypeExpr::Struct(ptr) => {
             let obj_ptr = *ptr as *mut ffi::PyObject;
             // SAFETY: ptr 指向 Schema 内部持有的 PyType,生命周期受 Py<PyType> 保障。
@@ -624,7 +624,7 @@ fn union_variant_matches_type_id(variant: &TypeExpr, type_id: TarsType) -> bool 
             _ => false,
         },
         TypeExpr::Enum(_, inner) => union_variant_matches_type_id(inner, type_id),
-        TypeExpr::Union(items) => items
+        TypeExpr::Union(items, _) => items
             .iter()
             .any(|item| union_variant_matches_type_id(item, type_id)),
         TypeExpr::Struct(_) => type_id == TarsType::StructBegin,
