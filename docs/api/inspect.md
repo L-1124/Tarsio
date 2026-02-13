@@ -11,6 +11,7 @@
 * `struct_info(cls)`：解析结构体类型，返回 `StructInfo`
 
 返回对象都包含 `kind` 字段，可用于分支判断。
+`FieldInfo` 为 `Field` 的兼容别名，语义一致。
 
 ::: tarsio.inspect
     options:
@@ -18,6 +19,9 @@
         - type_info
         - struct_info
         - TypeInfo
+        - Type
+        - BasicType
+        - CompoundType
         - IntType
         - StrType
         - FloatType
@@ -34,6 +38,7 @@
         - SetType
         - OptionalType
         - StructType
+        - RefType
+        - Field
         - FieldInfo
         - StructInfo
-        - Constraints

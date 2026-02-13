@@ -1,6 +1,6 @@
 """测试 Schema/Meta/Inspect 相关行为."""
 
-from typing import Annotated, Optional
+from typing import Annotated, Optional, cast
 
 import pytest
 from tarsio import inspect as tinspect
@@ -206,8 +206,21 @@ def test_struct_info_meta_constraints() -> None:
     info = tinspect.struct_info(Sample)
     assert info is not None
     field = info.fields[0]
-    assert field.constraints is not None
-    assert field.constraints.gt == 0
+    int_type = cast(tinspect.IntType, field.type)
+    assert int_type.gt == 0
+
+
+def test_fieldinfo_alias_to_field() -> None:
+    """FieldInfo 应作为 Field 的兼容别名可用."""
+
+    class Sample(Struct):
+        a: Annotated[int, 0]
+
+    info = tinspect.struct_info(Sample)
+    assert info is not None
+    field = info.fields[0]
+    assert isinstance(field, tinspect.Field)
+    assert tinspect.FieldInfo is tinspect.Field
 
 
 def test_struct_info_missing_tag_raises() -> None:

@@ -434,6 +434,40 @@ def test_inspect_type_info_supported_kinds() -> None:
     struct_info = cast(inspect.StructType, cases["struct"])
     assert enum_info.value_type.kind == "int"
     assert struct_info.cls is Inner
+    assert isinstance(cases["int"], inspect.Type)
+    assert isinstance(cases["int"], inspect.BasicType)
+    assert isinstance(cases["list"], inspect.CompoundType)
+
+
+def test_inspect_struct_type_contains_fields_tree() -> None:
+    """验证 StructType 提供 fields 递归类型树."""
+
+    class Inner(Struct):
+        v: Annotated[int, 0]
+
+    class Outer(Struct):
+        item: Annotated[Inner, 0]
+
+    info = cast(inspect.StructType, inspect.type_info(Outer))
+    assert info.kind == "struct"
+    assert [f.name for f in info.fields] == ["item"]
+    assert info.fields[0].type.kind == "struct"
+    assert cast(inspect.StructType, info.fields[0].type).cls is Inner
+
+
+def test_inspect_struct_type_cycle_uses_ref_type() -> None:
+    """验证递归结构在循环位置返回 RefType."""
+
+    class Node(Struct):
+        val: Annotated[int, 0]
+        next: Annotated[Optional["Node"], 1] = None
+
+    info = cast(inspect.StructType, inspect.type_info(Node))
+    assert info.kind == "struct"
+    next_type = cast(inspect.OptionalType, info.fields[1].type)
+    assert next_type.kind == "optional"
+    assert next_type.inner_type.kind == "ref"
+    assert cast(inspect.RefType, next_type.inner_type).cls is Node
 
 
 def test_inspect_struct_info_fields() -> None:
@@ -472,9 +506,23 @@ def test_inspect_constraints_from_meta() -> None:
     info = inspect.struct_info(Limited)
     assert info is not None
     field = info.fields[0]
-    assert field.constraints is not None
-    assert field.constraints.gt == 1
-    assert field.constraints.le == 10
+    int_type = cast(inspect.IntType, field.type)
+    assert int_type.gt == 1
+    assert int_type.le == 10
+
+
+def test_inspect_direct_constraints_for_str_type() -> None:
+    """验证字符串类型可直接访问约束属性."""
+
+    class Limited(Struct):
+        name: Annotated[str, Meta(tag=0, min_len=1, max_len=8, pattern=r"^[a-z]+$")]
+
+    info = inspect.struct_info(Limited)
+    assert info is not None
+    str_type = cast(inspect.StrType, info.fields[0].type)
+    assert str_type.min_length == 1
+    assert str_type.max_length == 8
+    assert str_type.pattern == r"^[a-z]+$"
 
 
 AliasInt2 = TypeAliasType("AliasInt2", int)

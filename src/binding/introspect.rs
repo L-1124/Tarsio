@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use crate::binding::meta::Meta;
 use crate::binding::schema::{Struct, TarsDict};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstraintsIR {
     pub gt: Option<f64>,
     pub lt: Option<f64>,

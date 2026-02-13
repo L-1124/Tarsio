@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated, Any, Optional, cast
 
 from tarsio._core import (
     Struct,
@@ -7,6 +7,7 @@ from tarsio._core import (
     decode_raw,
     encode,
     encode_raw,
+    inspect,
     probe_struct,
 )
 from typing_extensions import assert_type
@@ -111,3 +112,20 @@ def test_type_probe_struct() -> None:
     # probe_struct 返回 TarsDict | None
 
     assert_type(res, TarsDict | None)
+
+
+def test_type_inspect_hierarchy() -> None:
+    """验证 inspect 类型树与别名的静态类型."""
+
+    class Node(Struct):
+        val: Annotated[int, 0]
+        next: Annotated[Optional["Node"], 1] = None
+
+    int_info = cast(inspect.IntType, inspect.type_info(int))
+    node_info = cast(inspect.StructType, inspect.type_info(Node))
+
+    assert_type(int_info, inspect.IntType)
+    assert_type(node_info, inspect.StructType)
+    assert_type(node_info.fields[0], inspect.Field)
+    assert_type(node_info.fields[0], inspect.FieldInfo)
+    assert_type(int_info.ge, float | None)

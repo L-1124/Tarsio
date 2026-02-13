@@ -43,7 +43,9 @@ fn init_struct_class(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 fn init_inspect_submodule(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     let inspect_mod = PyModule::new(py, "tarsio._core.inspect")?;
-    inspect_mod.add_class::<binding::inspect::Constraints>()?;
+    inspect_mod.add_class::<binding::inspect::TypeBase>()?;
+    inspect_mod.add_class::<binding::inspect::BasicTypeBase>()?;
+    inspect_mod.add_class::<binding::inspect::CompoundTypeBase>()?;
     inspect_mod.add_class::<binding::inspect::IntType>()?;
     inspect_mod.add_class::<binding::inspect::StrType>()?;
     inspect_mod.add_class::<binding::inspect::FloatType>()?;
@@ -60,7 +62,9 @@ fn init_inspect_submodule(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<(
     inspect_mod.add_class::<binding::inspect::SetType>()?;
     inspect_mod.add_class::<binding::inspect::OptionalType>()?;
     inspect_mod.add_class::<binding::inspect::StructType>()?;
-    inspect_mod.add_class::<binding::inspect::FieldInfo>()?;
+    inspect_mod.add_class::<binding::inspect::RefType>()?;
+    inspect_mod.add_class::<binding::inspect::Field>()?;
+    inspect_mod.add("FieldInfo", inspect_mod.getattr("Field")?)?;
     inspect_mod.add_class::<binding::inspect::StructInfo>()?;
     inspect_mod.add_function(wrap_pyfunction!(binding::inspect::type_info, &inspect_mod)?)?;
     inspect_mod.add_function(wrap_pyfunction!(

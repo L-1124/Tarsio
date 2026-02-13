@@ -20,6 +20,10 @@ class User(Struct):
 info = tinspect.struct_info(User)
 assert info is not None
 assert [f.name for f in info.fields] == ["uid", "name", "score"]
+
+typ = tinspect.type_info(User)
+assert typ.kind == "struct"
+assert [f.name for f in typ.fields] == ["uid", "name", "score"]
 ```
 
 ## 类型解析
@@ -31,6 +35,26 @@ assert tinspect.type_info(int).kind == "int"
 assert tinspect.type_info(list[str]).kind == "list"
 ```
 
+## 递归结构
+
+```python
+from typing import Annotated, Optional
+from tarsio import Struct
+from tarsio import inspect as tinspect
+
+
+class Node(Struct):
+    val: Annotated[int, 0]
+    child: Annotated[Optional["Node"], 1] = None
+
+
+info = tinspect.type_info(Node)
+child_type = info.fields[1].type
+assert child_type.kind == "optional"
+assert child_type.inner_type.kind == "ref"
+assert child_type.inner_type.cls is Node
+```
+
 ## 注意事项
 
 * 支持的类型与 `tarsio.inspect.TypeInfo` 分支一致，包含：
@@ -38,6 +62,7 @@ assert tinspect.type_info(list[str]).kind == "list"
     * 容器：`list`、`tuple`、`tuple[T, ...]`、`dict`、`set`/`frozenset`。
     * 组合：`Optional`、`Union`。
     * 结构：`Struct` 子类。
+    * 循环引用：`RefType`（仅在递归结构中出现）。
     * 枚举：`Enum`（按 `value` 的内层类型解析）。
 * `typing.Annotated` 中的 `Meta` 约束会被解析到 `constraints`。
 * 不支持的类型或未支持的前向引用会抛出 `TypeError`。
