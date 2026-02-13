@@ -1,14 +1,14 @@
 use crate::codec::consts::TarsType;
 use crate::codec::error::{Error, Result};
-use byteorder::{BigEndian, ReadBytesExt};
-use std::io::Cursor;
+use std::convert::TryFrom;
 
 /// Tars 数据流读取器.
 ///
-/// 基于 `Cursor` 实现,支持对字节切片的零拷贝读取.
+/// 直接基于字节切片 (`&[u8]`) 实现。
 /// 内部维护了解码深度 (`depth`),以防止恶意的深度嵌套攻击.
 pub struct TarsReader<'a> {
-    cursor: Cursor<&'a [u8]>,
+    data: &'a [u8],
+    pos: usize,
     depth: usize,
 }
 
@@ -18,9 +18,11 @@ impl<'a> TarsReader<'a> {
     /// # 参数
     ///
     /// * `bytes`: 包含 Tars 编码数据的字节切片.
+    #[inline]
     pub fn new(bytes: &'a [u8]) -> Self {
         Self {
-            cursor: Cursor::new(bytes),
+            data: bytes,
+            pos: 0,
             depth: 0,
         }
     }
@@ -28,19 +30,22 @@ impl<'a> TarsReader<'a> {
     /// 获取当前偏移量.
     #[inline]
     pub fn position(&self) -> u64 {
-        self.cursor.position()
+        self.pos as u64
     }
 
     /// 检查是否已到达末尾.
     #[inline]
     pub fn is_end(&self) -> bool {
-        self.cursor.position() >= self.cursor.get_ref().len() as u64
+        self.pos >= self.data.len()
     }
 
+    #[inline]
     pub fn remaining(&self) -> &'a [u8] {
-        let pos = self.cursor.position() as usize;
-        let data = self.cursor.get_ref();
-        &data[pos..]
+        if self.pos < self.data.len() {
+            &self.data[self.pos..]
+        } else {
+            &[]
+        }
     }
 
     /// 读取字段头部信息 (Tag 和 Type).
@@ -54,22 +59,26 @@ impl<'a> TarsReader<'a> {
     /// 如果类型 ID 非法 (不在 0-13 范围内),返回 `Error::InvalidType`.
     #[inline]
     pub fn read_head(&mut self) -> Result<(u8, TarsType)> {
-        let pos = self.position();
-        let b = self.cursor.read_u8().map_err(|_| Error::BufferOverflow {
-            offset: pos as usize,
-        })?;
+        let start_pos = self.pos;
+        if self.pos >= self.data.len() {
+            return Err(Error::BufferOverflow { offset: start_pos });
+        }
+        let b = self.data[self.pos];
+        self.pos += 1;
 
         let type_id = b & 0x0F;
         let mut tag = (b & 0xF0) >> 4;
 
         if tag == 15 {
-            tag = self.cursor.read_u8().map_err(|_| Error::BufferOverflow {
-                offset: self.position() as usize,
-            })?;
+            if self.pos >= self.data.len() {
+                return Err(Error::BufferOverflow { offset: self.pos });
+            }
+            tag = self.data[self.pos];
+            self.pos += 1;
         }
 
         let tars_type = TarsType::try_from(type_id).map_err(|id| Error::InvalidType {
-            offset: pos as usize,
+            offset: start_pos,
             type_id: id,
         })?;
 
@@ -78,139 +87,131 @@ impl<'a> TarsReader<'a> {
 
     /// 预览头部信息而不移动指针.
     pub fn peek_head(&mut self) -> Result<(u8, TarsType)> {
-        let pos = self.position();
+        let pos = self.pos;
         let res = self.read_head();
-        self.cursor.set_position(pos);
+        self.pos = pos;
         res
     }
 
     /// 读取有符号整数.
     ///
     /// 根据 `type_id` 自动识别整数宽度 (i8/i16/i32/i64),并统一返回 `i64`.
-    ///
-    /// # 错误
-    ///
-    /// * `Error::BufferOverflow`: 数据不足.
-    /// * `Error::Custom`: `type_id` 不是整数类型.
     #[inline]
     pub fn read_int(&mut self, type_id: TarsType) -> Result<i64> {
-        let pos = self.position();
+        let start_pos = self.pos;
         match type_id {
             TarsType::ZeroTag => Ok(0),
             TarsType::Int1 => {
-                let v = self.cursor.read_i8().map_err(|_| Error::BufferOverflow {
-                    offset: pos as usize,
-                })?;
+                if self.pos >= self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let v = self.data[self.pos] as i8;
+                self.pos += 1;
                 Ok(v as i64)
             }
             TarsType::Int2 => {
-                let v = self
-                    .cursor
-                    .read_i16::<BigEndian>()
-                    .map_err(|_| Error::BufferOverflow {
-                        offset: pos as usize,
-                    })?;
+                if self.pos + 2 > self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let bytes = self.data[self.pos..self.pos + 2].try_into().unwrap();
+                let v = i16::from_be_bytes(bytes);
+                self.pos += 2;
                 Ok(v as i64)
             }
             TarsType::Int4 => {
-                let v = self
-                    .cursor
-                    .read_i32::<BigEndian>()
-                    .map_err(|_| Error::BufferOverflow {
-                        offset: pos as usize,
-                    })?;
+                if self.pos + 4 > self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let bytes = self.data[self.pos..self.pos + 4].try_into().unwrap();
+                let v = i32::from_be_bytes(bytes);
+                self.pos += 4;
                 Ok(v as i64)
             }
             TarsType::Int8 => {
-                let v = self
-                    .cursor
-                    .read_i64::<BigEndian>()
-                    .map_err(|_| Error::BufferOverflow {
-                        offset: pos as usize,
-                    })?;
+                if self.pos + 8 > self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let bytes = self.data[self.pos..self.pos + 8].try_into().unwrap();
+                let v = i64::from_be_bytes(bytes);
+                self.pos += 8;
                 Ok(v)
             }
             _ => Err(Error::new(
-                pos as usize,
+                start_pos,
                 format!("Cannot read int from type {:?}", type_id),
             )),
         }
     }
 
     /// 读取无符号整数(向上转型为 u64).
-    ///
-    /// 将 `u8`、`u16`、`u32` 读取并转换为 `u64`,以避免有符号数解析导致的负数问题.
-    /// 适用于 `Schema` 中标记为 `is_unsigned` 的字段.
-    ///
-    /// # 错误
-    ///
-    /// 类似于 `read_int`.
     #[inline]
     pub fn read_uint(&mut self, type_id: TarsType) -> Result<u64> {
-        let pos = self.position();
+        let start_pos = self.pos;
         match type_id {
             TarsType::ZeroTag => Ok(0),
             TarsType::Int1 => {
-                let v = self.cursor.read_u8().map_err(|_| Error::BufferOverflow {
-                    offset: pos as usize,
-                })?;
+                if self.pos >= self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let v = self.data[self.pos];
+                self.pos += 1;
                 Ok(v as u64)
             }
             TarsType::Int2 => {
-                let v = self
-                    .cursor
-                    .read_u16::<BigEndian>()
-                    .map_err(|_| Error::BufferOverflow {
-                        offset: pos as usize,
-                    })?;
+                if self.pos + 2 > self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let bytes = self.data[self.pos..self.pos + 2].try_into().unwrap();
+                let v = u16::from_be_bytes(bytes);
+                self.pos += 2;
                 Ok(v as u64)
             }
             TarsType::Int4 => {
-                let v = self
-                    .cursor
-                    .read_u32::<BigEndian>()
-                    .map_err(|_| Error::BufferOverflow {
-                        offset: pos as usize,
-                    })?;
+                if self.pos + 4 > self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let bytes = self.data[self.pos..self.pos + 4].try_into().unwrap();
+                let v = u32::from_be_bytes(bytes);
+                self.pos += 4;
                 Ok(v as u64)
             }
             TarsType::Int8 => {
-                let v = self
-                    .cursor
-                    .read_u64::<BigEndian>()
-                    .map_err(|_| Error::BufferOverflow {
-                        offset: pos as usize,
-                    })?;
+                if self.pos + 8 > self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let bytes = self.data[self.pos..self.pos + 8].try_into().unwrap();
+                let v = u64::from_be_bytes(bytes);
+                self.pos += 8;
                 Ok(v)
             }
             _ => Err(Error::new(
-                pos as usize,
+                start_pos,
                 format!("Cannot read uint from type {:?}", type_id),
             )),
         }
     }
 
     /// 跳过指定的 Tars 类型值.
-    pub fn skip_element(&mut self, type_id: TarsType) -> Result<()> {
+    fn skip_element(&mut self, type_id: TarsType) -> Result<()> {
         match type_id {
-            TarsType::Int1 => self.skip_bytes(1),
-            TarsType::Int2 => self.skip_bytes(2),
-            TarsType::Int4 => self.skip_bytes(4),
-            TarsType::Int8 => self.skip_bytes(8),
-            TarsType::Float => self.skip_bytes(4),
-            TarsType::Double => self.skip_bytes(8),
+            TarsType::Int1 => self.skip(1),
+            TarsType::Int2 => self.skip(2),
+            TarsType::Int4 => self.skip(4),
+            TarsType::Int8 => self.skip(8),
+            TarsType::Float => self.skip(4),
+            TarsType::Double => self.skip(8),
             TarsType::String1 => {
-                let len = self.read_u8()? as u64;
-                self.skip_bytes(len)
+                let len = self.read_u8()? as usize;
+                self.skip(len)
             }
             TarsType::String4 => {
-                let len =
-                    self.cursor
-                        .read_u32::<BigEndian>()
-                        .map_err(|_| Error::BufferOverflow {
-                            offset: self.position() as usize,
-                        })? as u64;
-                self.skip_bytes(len)
+                if self.pos + 4 > self.data.len() {
+                    return Err(Error::BufferOverflow { offset: self.pos });
+                }
+                let bytes = self.data[self.pos..self.pos + 4].try_into().unwrap();
+                let len = u32::from_be_bytes(bytes) as usize;
+                self.pos += 4;
+                self.skip(len)
             }
             TarsType::StructBegin => {
                 loop {
@@ -218,7 +219,7 @@ impl<'a> TarsReader<'a> {
                     if t == TarsType::StructEnd {
                         break;
                     }
-                    self.skip_element(t)?;
+                    self.skip_recursive(t)?;
                 }
                 Ok(())
             }
@@ -228,18 +229,18 @@ impl<'a> TarsReader<'a> {
                 let t = self.read_u8()?; // 内部类型(byte)
                 if t != 0 {
                     return Err(Error::new(
-                        self.position() as usize,
+                        self.pos,
                         format!("SimpleList must contain Byte (0), got {}", t),
                     ));
                 }
                 let size = self.read_size()?;
-                self.skip_bytes(size as u64)
+                self.skip(size as usize)
             }
             TarsType::Map => {
                 let size = self.read_size()?;
                 for _ in 0..size * 2 {
                     let (_, t) = self.read_head()?;
-                    self.skip_element(t)?;
+                    self.skip_recursive(t)?;
                 }
                 Ok(())
             }
@@ -247,22 +248,28 @@ impl<'a> TarsReader<'a> {
                 let size = self.read_size()?;
                 for _ in 0..size {
                     let (_, t) = self.read_head()?;
-                    self.skip_element(t)?;
+                    self.skip_recursive(t)?;
                 }
                 Ok(())
             }
         }
     }
 
-    /// skip_bytes 内部辅助函数.
     #[inline]
-    fn skip_bytes(&mut self, len: u64) -> Result<()> {
-        if self.cursor.position() + len > self.cursor.get_ref().len() as u64 {
-            return Err(Error::BufferOverflow {
-                offset: self.position() as usize,
-            });
+    fn skip_recursive(&mut self, type_id: TarsType) -> Result<()> {
+        match type_id {
+            TarsType::StructBegin | TarsType::List | TarsType::Map => self.skip_field(type_id),
+            _ => self.skip_element(type_id),
         }
-        self.cursor.set_position(self.cursor.position() + len);
+    }
+
+    #[inline]
+    fn skip(&mut self, len: usize) -> Result<()> {
+        let new_pos = self.pos + len;
+        if new_pos > self.data.len() {
+            return Err(Error::BufferOverflow { offset: self.pos });
+        }
+        self.pos = new_pos;
         Ok(())
     }
 
@@ -272,15 +279,17 @@ impl<'a> TarsReader<'a> {
         match type_id {
             TarsType::ZeroTag => Ok(0.0),
             TarsType::Float => {
-                let pos = self.position();
-                self.cursor
-                    .read_f32::<BigEndian>()
-                    .map_err(|_| Error::BufferOverflow {
-                        offset: pos as usize,
-                    })
+                let start_pos = self.pos;
+                if self.pos + 4 > self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let bytes = self.data[self.pos..self.pos + 4].try_into().unwrap();
+                let v = f32::from_be_bytes(bytes);
+                self.pos += 4;
+                Ok(v)
             }
             _ => Err(Error::new(
-                self.position() as usize,
+                self.pos,
                 format!("Cannot read float from type {:?}", type_id),
             )),
         }
@@ -293,15 +302,17 @@ impl<'a> TarsReader<'a> {
             TarsType::ZeroTag => Ok(0.0),
             TarsType::Float => self.read_float(type_id).map(|v| v as f64),
             TarsType::Double => {
-                let pos = self.position();
-                self.cursor
-                    .read_f64::<BigEndian>()
-                    .map_err(|_| Error::BufferOverflow {
-                        offset: pos as usize,
-                    })
+                let start_pos = self.pos;
+                if self.pos + 8 > self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let bytes = self.data[self.pos..self.pos + 8].try_into().unwrap();
+                let v = f64::from_be_bytes(bytes);
+                self.pos += 8;
+                Ok(v)
             }
             _ => Err(Error::new(
-                self.position() as usize,
+                self.pos,
                 format!("Cannot read double from type {:?}", type_id),
             )),
         }
@@ -311,188 +322,103 @@ impl<'a> TarsReader<'a> {
     ///
     /// 仅做长度与越界检查,返回指向输入缓冲区的切片.
     pub fn read_string(&mut self, type_id: TarsType) -> Result<&'a [u8]> {
-        let pos = self.position();
+        let start_pos = self.pos;
 
         let len = match type_id {
-            TarsType::String1 => self.cursor.read_u8().map_err(|_| Error::BufferOverflow {
-                offset: pos as usize,
-            })? as usize,
+            TarsType::String1 => {
+                if self.pos >= self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let l = self.data[self.pos] as usize;
+                self.pos += 1;
+                l
+            }
             TarsType::String4 => {
-                self.cursor
-                    .read_u32::<BigEndian>()
-                    .map_err(|_| Error::BufferOverflow {
-                        offset: pos as usize,
-                    })? as usize
+                if self.pos + 4 > self.data.len() {
+                    return Err(Error::BufferOverflow { offset: start_pos });
+                }
+                let bytes = self.data[self.pos..self.pos + 4].try_into().unwrap();
+                let l = u32::from_be_bytes(bytes) as usize;
+                self.pos += 4;
+                l
             }
             _ => {
                 return Err(Error::new(
-                    pos as usize,
+                    start_pos,
                     format!("Cannot read string bytes from type {:?}", type_id),
                 ));
             }
         };
 
-        let start = self.cursor.position() as usize;
-        let end = start.saturating_add(len);
-        let data_len = self.cursor.get_ref().len();
-
-        if end > data_len {
-            return Err(Error::BufferOverflow { offset: start });
+        if self.pos + len > self.data.len() {
+            return Err(Error::BufferOverflow { offset: self.pos });
         }
 
-        self.cursor.set_position(end as u64);
-        let data = self.cursor.get_ref();
-        Ok(&data[start..end])
+        let slice = &self.data[self.pos..self.pos + len];
+        self.pos += len;
+        Ok(slice)
     }
 
     /// 跳过当前字段.
     pub fn skip_field(&mut self, type_id: TarsType) -> Result<()> {
         if self.depth > 100 {
             return Err(Error::new(
-                self.position() as usize,
+                self.pos,
                 "Max recursion depth exceeded in skip_field",
             ));
         }
 
         self.depth += 1;
-        let res = self.do_skip_field(type_id);
+        let res = self.skip_element(type_id); // Reused skip_element logic
         self.depth -= 1;
         res
-    }
-
-    /// 实际的跳过逻辑.
-    ///
-    /// 递归处理容器类型(Map、List、Struct).
-    fn do_skip_field(&mut self, type_id: TarsType) -> Result<()> {
-        let pos = self.position();
-        match type_id {
-            TarsType::Int1 => self.skip(1),
-            TarsType::Int2 => self.skip(2),
-            TarsType::Int4 => self.skip(4),
-            TarsType::Int8 => self.skip(8),
-            TarsType::Float => self.skip(4),
-            TarsType::Double => self.skip(8),
-            TarsType::String1 => {
-                let len = self.cursor.read_u8().map_err(|_| Error::BufferOverflow {
-                    offset: pos as usize,
-                })?;
-                self.skip(len as u64)
-            }
-            TarsType::String4 => {
-                let len =
-                    self.cursor
-                        .read_u32::<BigEndian>()
-                        .map_err(|_| Error::BufferOverflow {
-                            offset: pos as usize,
-                        })?;
-                self.skip(len as u64)
-            }
-            TarsType::Map => {
-                let size = self.read_size()?;
-                for _ in 0..size * 2 {
-                    let (_, t) = self.read_head()?;
-                    self.skip_field(t)?;
-                }
-                Ok(())
-            }
-            TarsType::List => {
-                let size = self.read_size()?;
-                for _ in 0..size {
-                    let (_, t) = self.read_head()?;
-                    self.skip_field(t)?;
-                }
-                Ok(())
-            }
-            TarsType::SimpleList => {
-                let t = self.read_u8()?;
-                if t != 0 {
-                    return Err(Error::new(
-                        self.position() as usize,
-                        format!("SimpleList must contain Byte (0), got {}", t),
-                    ));
-                }
-                let len = self.read_size()?;
-                self.skip_bytes(len as u64)
-            }
-            TarsType::StructBegin => {
-                loop {
-                    let (_, t) = self.read_head()?;
-                    if t == TarsType::StructEnd {
-                        break;
-                    }
-                    self.skip_field(t)?;
-                }
-                Ok(())
-            }
-            TarsType::StructEnd => Ok(()),
-            TarsType::ZeroTag => Ok(()),
-        }
     }
 
     pub fn read_simplelist_bytes(&mut self) -> Result<&'a [u8]> {
         let subtype = self.read_u8()?;
         if subtype != 0 {
             return Err(Error::new(
-                self.position() as usize,
+                self.pos,
                 format!("SimpleList must contain Byte (0), got {}", subtype),
             ));
         }
 
         let len = self.read_size()?;
         if len < 0 {
-            return Err(Error::new(
-                self.position() as usize,
-                "Invalid SimpleList size",
-            ));
+            return Err(Error::new(self.pos, "Invalid SimpleList size"));
         }
 
-        self.read_bytes(len as usize)
+        let len = len as usize;
+        if self.pos + len > self.data.len() {
+            return Err(Error::BufferOverflow { offset: self.pos });
+        }
+        let slice = &self.data[self.pos..self.pos + len];
+        self.pos += len;
+        Ok(slice)
     }
 
     /// 读取字节数组(零拷贝).
     pub fn read_bytes(&mut self, len: usize) -> Result<&'a [u8]> {
-        let pos = self.position() as usize;
-        let data = self.cursor.get_ref();
-        let end = pos + len;
-
-        if end > data.len() {
-            return Err(Error::BufferOverflow { offset: pos });
+        if self.pos + len > self.data.len() {
+            return Err(Error::BufferOverflow { offset: self.pos });
         }
-
-        let slice = &data[pos..end];
-        self.cursor.set_position(end as u64);
+        let slice = &self.data[self.pos..self.pos + len];
+        self.pos += len;
         Ok(slice)
-    }
-
-    /// 跳过指定长度的字节.
-    ///
-    /// 检查边界,更新游标位置.
-    fn skip(&mut self, len: u64) -> Result<()> {
-        let pos = self.position();
-        let new_pos = pos + len;
-        if new_pos > self.cursor.get_ref().len() as u64 {
-            return Err(Error::BufferOverflow {
-                offset: pos as usize,
-            });
-        }
-        self.cursor.set_position(new_pos);
-        Ok(())
     }
 
     /// 读取一个字节.
     #[inline]
     pub fn read_u8(&mut self) -> Result<u8> {
-        let pos = self.position();
-        self.cursor.read_u8().map_err(|_| Error::BufferOverflow {
-            offset: pos as usize,
-        })
+        if self.pos >= self.data.len() {
+            return Err(Error::BufferOverflow { offset: self.pos });
+        }
+        let v = self.data[self.pos];
+        self.pos += 1;
+        Ok(v)
     }
 
     /// 读取 Tars 容器的大小(List/Map/SimpleList 长度).
-    /// 读取容器大小(Size).
-    ///
-    /// Tars 中大小也是一个 Tag 为 0 的整数,但类型可能是 Int1/2/4.
-    /// 此方法自动解析并返回 i32 大小.
     #[inline]
     pub fn read_size(&mut self) -> Result<i32> {
         let (_, t) = self.read_head()?;

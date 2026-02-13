@@ -1,9 +1,3 @@
-#![allow(
-    clippy::collapsible_if,
-    clippy::needless_borrows_for_generic_args,
-    clippy::needless_match,
-    clippy::manual_map
-)]
 use pyo3::ffi;
 use pyo3::gc::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
@@ -215,14 +209,14 @@ pub fn schema_from_class<'py>(
     }
 
     // 2. If not in cache or upgrade failed, try get from class attribute
-    if let Ok(schema_obj) = cls.getattr(SCHEMA_ATTR) {
-        if let Some(def) = schema_from_python(py, &schema_obj)? {
-            // Update cache with new Weak reference
-            SCHEMA_CACHE.with(|cache| {
-                cache.borrow_mut().insert(cls_key, Arc::downgrade(&def));
-            });
-            return Ok(Some(def));
-        }
+    if let Ok(schema_obj) = cls.getattr(SCHEMA_ATTR)
+        && let Some(def) = schema_from_python(py, &schema_obj)?
+    {
+        // Update cache with new Weak reference
+        SCHEMA_CACHE.with(|cache| {
+            cache.borrow_mut().insert(cls_key, Arc::downgrade(&def));
+        });
+        return Ok(Some(def));
     }
 
     Ok(None)
@@ -349,12 +343,11 @@ pub fn compile_schema_from_info<'py>(
     info: &Bound<'py, PyAny>,
     config: SchemaConfig,
 ) -> PyResult<Option<Arc<StructDef>>> {
-    if let Ok(params) = cls.getattr("__parameters__") {
-        if let Ok(tuple) = params.cast::<PyTuple>() {
-            if !tuple.is_empty() {
-                return Ok(None);
-            }
-        }
+    if let Ok(params) = cls.getattr("__parameters__")
+        && let Ok(tuple) = params.cast::<PyTuple>()
+        && !tuple.is_empty()
+    {
+        return Ok(None);
     }
     if info.is_none() {
         return Ok(None);
@@ -997,12 +990,11 @@ impl Struct {
             };
 
             // 使用 Python 的 repr() 获取值的字符串表示
-            if def.repr_omit_defaults {
-                if let Some(default_val) = &field.default_value {
-                    if val.eq(default_val)? {
-                        continue;
-                    }
-                }
+            if def.repr_omit_defaults
+                && let Some(default_val) = &field.default_value
+                && val.eq(default_val)?
+            {
+                continue;
             }
             let val_repr = val.repr()?.extract::<String>()?;
             fields_str.push(format!("{}={}", field.name, val_repr));
@@ -1049,7 +1041,7 @@ impl Struct {
             }
             CompareOp::Ne => {
                 let eq = Self::__richcmp__(slf, other, CompareOp::Eq)?;
-                if eq.bind(py).is(&py.NotImplemented()) {
+                if eq.bind(py).is(py.NotImplemented()) {
                     return Ok(py.NotImplemented());
                 }
                 let is_eq: bool = eq.bind(py).extract()?;
@@ -1123,13 +1115,13 @@ impl Struct {
         value: Bound<'_, PyAny>,
     ) -> PyResult<()> {
         let cls = slf.get_type();
-        if let Some(def) = schema_from_class(slf.py(), &cls)? {
-            if def.frozen {
-                return Err(pyo3::exceptions::PyAttributeError::new_err(format!(
-                    "can't set attributes of frozen instance '{}'",
-                    cls.name()?
-                )));
-            }
+        if let Some(def) = schema_from_class(slf.py(), &cls)?
+            && def.frozen
+        {
+            return Err(pyo3::exceptions::PyAttributeError::new_err(format!(
+                "can't set attributes of frozen instance '{}'",
+                cls.name()?
+            )));
         }
         unsafe {
             let res =
@@ -1176,22 +1168,19 @@ pub fn construct_instance(
         let val = if i < num_positional {
             // 位置参数提供
             // 检查与 kwargs 冲突
-            if let Some(k) = kwargs {
-                if k.contains(field.name_py.bind(self_obj.py()))? {
-                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                        "__init__() got multiple values for argument '{}'",
-                        field.name
-                    )));
-                }
+            if let Some(k) = kwargs
+                && k.contains(field.name_py.bind(self_obj.py()))?
+            {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "__init__() got multiple values for argument '{}'",
+                    field.name
+                )));
             }
             Some(given_args.get_item(i)?)
         } else {
             // 从关键字参数中读取
             if let Some(k) = kwargs {
-                match k.get_item(field.name_py.bind(self_obj.py()))? {
-                    Some(v) => Some(v),
-                    None => None,
-                }
+                k.get_item(field.name_py.bind(self_obj.py()))?
             } else {
                 None
             }
