@@ -267,14 +267,15 @@ fn validate_value<'py>(
         }
     }
 
-    if let Some(pattern) = constraints.pattern.as_ref() {
-        let s: &str = value.extract().map_err(|_| {
-            DeError::wrap(ValidationError::new_err(format!(
-                "Field '{}' must be a string to apply pattern constraint",
-                field_name
-            )))
-        })?;
-        if !pattern.is_match(s) {
+    if let Some(pattern_py) = constraints.pattern.as_ref() {
+        let py = value.py();
+        let pattern = pattern_py.bind(py);
+        // 调用 re.Pattern.search(value)
+        let res = pattern
+            .call_method1("search", (value,))
+            .map_err(DeError::wrap)?;
+
+        if res.is_none() {
             return Err(DeError::wrap(ValidationError::new_err(format!(
                 "Field '{}' does not match pattern",
                 field_name

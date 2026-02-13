@@ -3,7 +3,6 @@ use pyo3::gc::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
 use pyo3::types::{PyAny, PyDict, PyList, PyString, PyTuple, PyType};
-use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
@@ -62,7 +61,7 @@ impl TypeExpr {
 // 结构定义
 // ==========================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Constraints {
     pub gt: Option<f64>,
     pub lt: Option<f64>,
@@ -70,7 +69,8 @@ pub struct Constraints {
     pub le: Option<f64>,
     pub min_len: Option<usize>,
     pub max_len: Option<usize>,
-    pub pattern: Option<Regex>,
+    /// Python 正则对象 (re.Pattern).
+    pub pattern: Option<Py<PyAny>>,
 }
 
 #[derive(Debug)]
@@ -171,6 +171,11 @@ impl Schema {
             }
             if let Some(v) = &field.default_factory {
                 visit.call(v)?;
+            }
+            if let Some(constraints) = &field.constraints
+                && let Some(pattern) = &constraints.pattern
+            {
+                visit.call(pattern)?;
             }
             traverse_type_expr(&field.ty, &visit)?;
         }
@@ -421,7 +426,8 @@ pub fn compile_schema_from_class<'py>(
         let name = field.name;
         let name_py = PyString::intern(py, name.as_str()).unbind();
         let type_expr = type_info_ir_to_type_expr(py, &field.typ)?;
-        let constraints = constraints_ir_to_constraints(field.constraints.as_ref(), name.as_str())?;
+        let constraints =
+            constraints_ir_to_constraints(py, field.constraints.as_ref(), name.as_str())?;
 
         let default_value = if field.has_default {
             field.default_value.as_ref().map(|v| v.clone_ref(py))
@@ -578,6 +584,7 @@ fn type_info_ir_to_type_expr(py: Python<'_>, typ: &TypeInfoIR) -> PyResult<TypeE
 }
 
 fn constraints_ir_to_constraints(
+    py: Python<'_>,
     constraints: Option<&ConstraintsIR>,
     field_name: &str,
 ) -> PyResult<Option<Box<Constraints>>> {
@@ -597,17 +604,19 @@ fn constraints_ir_to_constraints(
         return Ok(None);
     }
 
-    let pattern = c
-        .pattern
-        .as_deref()
-        .map(Regex::new)
-        .transpose()
-        .map_err(|e| {
+    let pattern = if let Some(p) = c.pattern.as_deref() {
+        let re = py.import("re")?;
+        let compile = re.getattr("compile")?;
+        let pattern_obj = compile.call1((p,)).map_err(|e| {
             pyo3::exceptions::PyTypeError::new_err(format!(
                 "Invalid regex pattern for field '{}': {}",
                 field_name, e
             ))
         })?;
+        Some(pattern_obj.unbind())
+    } else {
+        None
+    };
 
     Ok(Some(Box::new(Constraints {
         gt: c.gt,
@@ -777,16 +786,20 @@ fn parse_constraints(
         return Ok(None);
     }
 
-    let pattern = pattern_str
-        .as_deref()
-        .map(Regex::new)
-        .transpose()
-        .map_err(|e| {
-            pyo3::exceptions::PyTypeError::new_err(format!(
-                "Invalid regex pattern for field '{}': {}",
-                field_name, e
-            ))
-        })?;
+    let pattern = match pattern_str.as_deref() {
+        Some(p) => {
+            let py = obj.py();
+            let re_module = py.import("re")?;
+            let pattern_obj = re_module.call_method1("compile", (p,)).map_err(|e| {
+                pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Invalid regex pattern for field '{}': {}",
+                    field_name, e
+                ))
+            })?;
+            Some(pattern_obj.unbind())
+        }
+        None => None,
+    };
 
     Ok(Some(Box::new(Constraints {
         gt,
@@ -825,8 +838,6 @@ impl TarsDict {
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
-        // TarsDict(dict) 继承行为，PyO3 会自动处理父类初始化（如果我们需要自定义初始化逻辑才写）
-        // 这里实际上只需要空结构体占位，让 Python 侧继承 dict
         Ok(TarsDict)
     }
 

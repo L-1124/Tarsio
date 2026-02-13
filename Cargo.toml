@@ -13,7 +13,6 @@ bytes = "1.11.1"
 simdutf8 = "0.1.5"
 thiserror = "2.0"
 pyo3 = { version = "0.28.0", features = ["extension-module", "generate-import-lib"] }
-regex = "1.11.1"
 
 [dev-dependencies]
 proptest = "1.10.0"
