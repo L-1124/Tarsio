@@ -53,12 +53,13 @@ def encode(obj: Any) -> bytes:
     ):
         return _core_encode_raw(obj)
 
-    # 尝试作为 Struct 处理 (Struct, dataclass, NamedTuple)
-    try:
+    # 尝试作为 Struct 处理 (Struct)
+    # 优化：通过检查特征属性避免 try-except 开销
+    if isinstance(obj, Struct):
         return _core_encode(obj)
-    except TypeError:
-        # 如果不是 Struct，最后尝试 Raw 兜底
-        return _core_encode_raw(obj)
+
+    # 如果不是 Struct，最后尝试 Raw 兜底
+    return _core_encode_raw(obj)
 
 
 @overload

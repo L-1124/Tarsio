@@ -391,10 +391,8 @@ fn decode_any_map<'py>(
             .read_head()
             .map_err(|e| DeError::new(format!("Failed to read map value head: {e}")))?;
 
-        let key_str = key.to_string(); // 尝试获取 key 的字符串表示用于错误路径，如果不行就忽略
-
         let val = decode_any_value(py, reader, vt, depth + 1)
-            .map_err(|e| e.prepend(PathItem::Key(key_str)))?;
+            .map_err(|e| e.prepend(PathItem::Key(key.to_string())))?;
 
         if key.hash().is_err() {
             return Err(DeError::new("Map key must be hashable".into()));

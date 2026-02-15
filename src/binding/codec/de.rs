@@ -96,17 +96,14 @@ fn deserialize_struct<'py>(
 
     // 读取字段,直到遇到 StructEnd 或 EOF
     while !reader.is_end() {
-        let (tag, type_id) = match reader.peek_head() {
+        let (tag, type_id) = match reader.read_head() {
             Ok(h) => h,
             Err(_) => break,
         };
 
         if type_id == TarsType::StructEnd {
-            let _ = reader.read_head();
             break;
         }
-
-        let _ = reader.read_head();
 
         let idx_opt = if (tag as usize) < def.tag_lookup_vec.len() {
             def.tag_lookup_vec[tag as usize]
@@ -436,10 +433,8 @@ fn deserialize_value<'py>(
                     .read_head()
                     .map_err(|e| DeError::new(format!("Failed to read map value head: {}", e)))?;
 
-                let key_str = key.to_string();
-
                 let val = deserialize_value(py, reader, vt, &TypeExpr::Any, depth + 1)
-                    .map_err(|e| e.prepend(PathItem::Key(key_str)))?;
+                    .map_err(|e| e.prepend(PathItem::Key(key.to_string())))?;
 
                 dict.set_item(key, val).map_err(DeError::wrap)?;
             }
@@ -524,10 +519,8 @@ fn deserialize_value<'py>(
                     .read_head()
                     .map_err(|e| DeError::new(format!("Failed to read map value head: {}", e)))?;
 
-                let key_str = key.to_string();
-
                 let val = deserialize_value(py, reader, vt, v_type, depth + 1)
-                    .map_err(|e| e.prepend(PathItem::Key(key_str)))?;
+                    .map_err(|e| e.prepend(PathItem::Key(key.to_string())))?;
 
                 dict.set_item(key, val).map_err(DeError::wrap)?;
             }

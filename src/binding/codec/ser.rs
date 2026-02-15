@@ -203,8 +203,7 @@ pub(crate) fn serialize_impl(
             let len = fields.len();
             writer.write_int(0, len as i64);
             for (name_any, _field) in fields {
-                let name: String = name_any.extract()?;
-                let value = val.getattr(name.as_str())?;
+                let value = val.getattr(name_any.cast::<PyString>()?)?;
                 serialize_impl(
                     writer,
                     0,
