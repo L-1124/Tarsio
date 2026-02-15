@@ -1,7 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyTuple, PyType};
 
-use crate::binding::schema::{SchemaConfig, compile_schema_from_class};
+use crate::binding::compiler::compile_schema_from_class;
+use crate::binding::schema::SchemaConfig;
 
 #[pyfunction]
 #[pyo3(signature = (mcls, name, bases, namespace, **kwargs))]

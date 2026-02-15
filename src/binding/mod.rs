@@ -1,11 +1,10 @@
-pub mod de;
+pub mod codec;
+pub mod compiler;
+pub mod core;
 pub mod error;
 pub mod inspect;
-pub mod introspect;
 pub mod meta;
 pub mod metaclass;
-pub mod raw;
+pub mod parse;
 pub mod schema;
-pub mod ser;
-pub mod trace;
 pub mod utils;

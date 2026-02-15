@@ -8,9 +8,9 @@ use pyo3::types::{
 use simdutf8::basic::from_utf8;
 use std::cell::RefCell;
 
+use crate::binding::codec::ser;
 use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{Struct, StructDef, TarsDict, TypeExpr, ensure_schema_for_class};
-use crate::binding::ser;
 use crate::binding::utils::{
     BUFFER_DEFAULT_CAPACITY, BUFFER_SHRINK_THRESHOLD, PySequenceFast, check_depth,
     check_exact_sequence_type, dataclass_fields, with_stdlib_cache,

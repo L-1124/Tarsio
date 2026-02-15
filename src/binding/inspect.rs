@@ -3,7 +3,7 @@ use pyo3::pyclass_init::PyClassInitializer;
 use pyo3::types::{PyAny, PyTuple, PyType};
 use std::collections::HashSet;
 
-use crate::binding::introspect::{
+use crate::binding::parse::{
     ConstraintsIR, FieldInfoIR, TypeInfoIR, introspect_struct_fields, introspect_type_info_ir,
 };
 

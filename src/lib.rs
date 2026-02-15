@@ -1,32 +1,29 @@
-use pyo3::create_exception;
-use pyo3::exceptions::PyValueError;
+use crate::binding::error::ValidationError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple};
 
 pub mod binding;
 pub mod codec;
 
-create_exception!(_core, ValidationError, PyValueError);
-
 fn init_core_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
     binding::metaclass::add_struct_meta(m)?;
-    m.add_class::<binding::schema::Schema>()?;
-    m.add_class::<binding::schema::Struct>()?;
-    m.add_class::<binding::schema::StructConfig>()?;
-    m.add_class::<binding::meta::Meta>()?;
-    m.add_class::<binding::schema::TarsDict>()?;
+    m.add_class::<binding::core::Schema>()?;
+    m.add_class::<binding::core::Struct>()?;
+    m.add_class::<binding::core::StructConfig>()?;
+    m.add_class::<binding::core::Meta>()?;
+    m.add_class::<binding::core::TarsDict>()?;
     m.add("ValidationError", m.py().get_type::<ValidationError>())?;
     Ok(())
 }
 
 fn init_core_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(binding::ser::encode, m)?)?;
-    m.add_function(wrap_pyfunction!(binding::de::decode, m)?)?;
-    m.add_function(wrap_pyfunction!(binding::raw::encode_raw, m)?)?;
-    m.add_function(wrap_pyfunction!(binding::raw::decode_raw, m)?)?;
-    m.add_function(wrap_pyfunction!(binding::raw::probe_struct, m)?)?;
-    m.add_class::<binding::trace::TraceNode>()?;
-    m.add_function(wrap_pyfunction!(binding::trace::decode_trace, m)?)?;
+    m.add_function(wrap_pyfunction!(binding::codec::ser::encode, m)?)?;
+    m.add_function(wrap_pyfunction!(binding::codec::de::decode, m)?)?;
+    m.add_function(wrap_pyfunction!(binding::codec::raw::encode_raw, m)?)?;
+    m.add_function(wrap_pyfunction!(binding::codec::raw::decode_raw, m)?)?;
+    m.add_function(wrap_pyfunction!(binding::codec::raw::probe_struct, m)?)?;
+    m.add_class::<binding::codec::trace::TraceNode>()?;
+    m.add_function(wrap_pyfunction!(binding::codec::trace::decode_trace, m)?)?;
     Ok(())
 }
 

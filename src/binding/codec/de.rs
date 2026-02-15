@@ -1,3 +1,5 @@
+use crate::codec::consts::TarsType;
+use crate::codec::reader::TarsReader;
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PySet, PyTuple, PyType};
@@ -5,16 +7,14 @@ use simdutf8::basic::from_utf8;
 use std::cmp::Ordering;
 
 use crate::ValidationError;
-use crate::binding::error::{DeError, DeResult, PathItem};
-use crate::binding::raw::{
+use crate::binding::codec::raw::{
     decode_any_struct_fields, decode_any_value, decode_raw, read_size_non_negative,
 };
+use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{
     Constraints, StructDef, TarsDict, TypeExpr, WireType, ensure_schema_for_class,
 };
 use crate::binding::utils::check_depth;
-use crate::codec::consts::TarsType;
-use crate::codec::reader::TarsReader;
 
 /// 将 Tars 二进制数据解码为 Struct 实例(Schema API).
 ///

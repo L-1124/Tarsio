@@ -1,6 +1,9 @@
-use crate::ValidationError;
+use pyo3::create_exception;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::fmt;
+
+create_exception!(tarsio._core, ValidationError, PyValueError);
 
 #[derive(Debug, Clone)]
 pub enum PathItem {
@@ -53,8 +56,6 @@ impl DeError {
     }
 
     pub fn to_pyerr(mut self, py: Python<'_>) -> PyErr {
-        use pyo3::exceptions::PyValueError;
-
         // 如果根本原因是 ValidationError，直接抛出，不附加路径信息
         if let Some(cause) = &self.cause
             && cause.is_instance_of::<ValidationError>(py)
@@ -79,11 +80,11 @@ impl DeError {
         let msg = format!("Error at {}: {}", path_str, self.msg);
 
         if let Some(cause) = self.cause {
-            let new_err = PyValueError::new_err(msg);
+            let new_err = ValidationError::new_err(msg);
             new_err.set_cause(py, Some(cause));
             new_err
         } else {
-            PyValueError::new_err(msg)
+            ValidationError::new_err(msg)
         }
     }
 }

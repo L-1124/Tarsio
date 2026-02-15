@@ -3,8 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyString, PyTuple, PyType};
 use std::collections::{HashMap, HashSet};
 
-use crate::binding::meta::Meta;
-use crate::binding::schema::{Struct, TarsDict};
+use crate::binding::core::{Meta, Struct, TarsDict};
 
 #[derive(Debug, Clone)]
 pub struct ConstraintsIR {

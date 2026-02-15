@@ -7,7 +7,7 @@ use std::cell::RefCell;
 
 use bytes::BufMut;
 
-use crate::binding::raw::{serialize_any, serialize_struct_fields, write_tarsdict_fields};
+use crate::binding::codec::raw::{serialize_any, serialize_struct_fields, write_tarsdict_fields};
 use crate::binding::schema::{TarsDict, TypeExpr, UnionCache, WireType, ensure_schema_for_class};
 use crate::binding::utils::{
     BUFFER_DEFAULT_CAPACITY, BUFFER_SHRINK_THRESHOLD, PySequenceFast, check_depth,
