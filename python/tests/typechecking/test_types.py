@@ -1,12 +1,14 @@
 from typing import Annotated, Any, Optional, cast
 
 from tarsio._core import (
+    NODEFAULT,
     Struct,
     TarsDict,
     decode,
     decode_raw,
     encode,
     encode_raw,
+    field,
     inspect,
     probe_struct,
 )
@@ -129,3 +131,14 @@ def test_type_inspect_hierarchy() -> None:
     assert_type(node_info.fields[0], inspect.Field)
     assert_type(node_info.fields[0], inspect.FieldInfo)
     assert_type(int_info.ge, float | None)
+
+
+def test_type_field_and_nodefault() -> None:
+    """验证 field 与 NODEFAULT 的静态类型可用性."""
+
+    class Box(Struct):
+        val: Annotated[list[int], 0] = field(default_factory=list)
+
+    b = Box()
+    assert_type(b.val, list[int])
+    assert_type(NODEFAULT, object)

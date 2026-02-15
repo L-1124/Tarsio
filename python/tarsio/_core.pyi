@@ -5,7 +5,7 @@
 """
 
 from inspect import Signature
-from typing import Any, ClassVar, TypeVar
+from typing import Any, ClassVar, Final, TypeVar
 
 from typing_extensions import dataclass_transform
 
@@ -15,6 +15,7 @@ _StructT = TypeVar("_StructT")
 _SM = TypeVar("_SM", bound="StructMeta")
 
 __all__ = [
+    "NODEFAULT",
     "Meta",
     "Struct",
     "StructConfig",
@@ -27,9 +28,27 @@ __all__ = [
     "decode_trace",
     "encode",
     "encode_raw",
+    "field",
     "inspect",
     "probe_struct",
 ]
+
+NODEFAULT: Final[object]
+
+def field(*, default: Any = NODEFAULT, default_factory: Any = NODEFAULT) -> Any:
+    """声明字段默认值或默认值工厂.
+
+    Args:
+        default: 字段默认值。
+        default_factory: 字段默认值工厂（可调用对象）。
+
+    Returns:
+        内部字段规格对象。
+
+    Raises:
+        TypeError: 同时提供 default 与 default_factory，或 default_factory 不可调用时抛出。
+    """
+    ...
 
 class TarsDict(dict[int, Any]):
     """TarsDict 是一个特殊的字典类型，用于表示 Tars 结构中的 Tag-Value 映射.
@@ -124,6 +143,7 @@ class Meta:
     order_default=False,
     kw_only_default=False,
     frozen_default=False,
+    field_specifiers=(field,),
 )
 class StructMeta(type):
     """Struct 的元类.

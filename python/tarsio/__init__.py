@@ -1,4 +1,5 @@
 from ._core import (
+    NODEFAULT,
     Meta,
     Struct,
     StructConfig,
@@ -7,6 +8,7 @@ from ._core import (
     TraceNode,
     ValidationError,
     decode_trace,
+    field,
     inspect,
     probe_struct,
 )
@@ -15,6 +17,7 @@ from .api import decode, encode
 __version__ = "0.4.3"
 
 __all__ = [
+    "NODEFAULT",
     "Meta",
     "Struct",
     "StructConfig",
@@ -25,6 +28,7 @@ __all__ = [
     "decode",
     "decode_trace",
     "encode",
+    "field",
     "inspect",
     "probe_struct",
 ]

@@ -4,7 +4,15 @@ from typing import Annotated, Optional, cast
 
 import pytest
 from tarsio import inspect as tinspect
-from tarsio._core import Meta, Struct, TarsDict, ValidationError, encode_raw
+from tarsio._core import (
+    NODEFAULT,
+    Meta,
+    Struct,
+    TarsDict,
+    ValidationError,
+    encode_raw,
+    field,
+)
 
 
 def test_classic_mode_allows_extra_non_meta_annotations() -> None:
@@ -221,6 +229,20 @@ def test_fieldinfo_alias_to_field() -> None:
     field = info.fields[0]
     assert isinstance(field, tinspect.Field)
     assert tinspect.FieldInfo is tinspect.Field
+
+
+def test_struct_info_field_default_factory_visible() -> None:
+    """struct_info 字段应暴露 default_factory 并与 default 区分."""
+
+    class Sample(Struct):
+        a: Annotated[list[int], 0] = field(default_factory=list)
+
+    info = tinspect.struct_info(Sample)
+    assert info is not None
+    f = info.fields[0]
+    assert f.has_default is True
+    assert f.default is NODEFAULT
+    assert f.default_factory is list
 
 
 def test_struct_info_missing_tag_raises() -> None:

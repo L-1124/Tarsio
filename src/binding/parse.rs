@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyString, PyTuple, PyType};
 use std::collections::{HashMap, HashSet};
 
-use crate::binding::core::{Meta, Struct, TarsDict};
+use crate::binding::core::{FieldSpec, Meta, Struct, TarsDict, is_nodefault};
 
 #[derive(Debug, Clone)]
 pub struct ConstraintsIR {
@@ -54,6 +54,13 @@ pub struct FieldInfoIR {
     pub constraints: Option<ConstraintsIR>,
 }
 
+#[derive(Debug)]
+struct DefaultSpecIR {
+    has_default: bool,
+    default_value: Option<Py<PyAny>>,
+    default_factory: Option<Py<PyAny>>,
+}
+
 struct IntrospectionContext<'py> {
     typing: Bound<'py, PyModule>,
     builtins: Bound<'py, PyModule>,
@@ -77,6 +84,7 @@ struct IntrospectionContext<'py> {
     builtin_float: Bound<'py, PyAny>,
     builtin_bool: Bound<'py, PyAny>,
     builtin_bytes: Bound<'py, PyAny>,
+    builtin_bytearray: Bound<'py, PyAny>,
     builtin_list: Bound<'py, PyAny>,
     builtin_tuple: Bound<'py, PyAny>,
     builtin_dict: Bound<'py, PyAny>,
@@ -147,6 +155,7 @@ impl<'py> IntrospectionContext<'py> {
         let builtin_float = builtins.getattr("float")?;
         let builtin_bool = builtins.getattr("bool")?;
         let builtin_bytes = builtins.getattr("bytes")?;
+        let builtin_bytearray = builtins.getattr("bytearray")?;
         let builtin_list = builtins.getattr("list")?;
         let builtin_tuple = builtins.getattr("tuple")?;
         let builtin_dict = builtins.getattr("dict")?;
@@ -186,6 +195,7 @@ impl<'py> IntrospectionContext<'py> {
             builtin_float,
             builtin_bool,
             builtin_bytes,
+            builtin_bytearray,
             builtin_list,
             builtin_tuple,
             builtin_dict,
@@ -451,22 +461,16 @@ fn introspect_tars_struct_fields<'py>(
 
         let (typ, is_optional) = translate_type_info_ir(py, &real_type, &typevar_map, ctx)?;
 
-        let (has_default, default_val) = lookup_default_value(py, cls, name.as_str(), ctx)?;
-        let (has_default, default_value) = if has_default {
-            (true, default_val)
-        } else {
-            (false, None)
-        };
-
-        let is_required = !is_optional && default_value.is_none();
+        let default_spec = lookup_default_value(py, cls, name.as_str(), ctx)?;
+        let is_required = !is_optional && !default_spec.has_default;
 
         fields.push(FieldInfoIR {
             name,
             tag,
             typ,
-            default_value,
-            default_factory: None,
-            has_default,
+            default_value: default_spec.default_value,
+            default_factory: default_spec.default_factory,
+            has_default: default_spec.has_default,
             is_optional,
             is_required,
             init: true,
@@ -1055,7 +1059,7 @@ fn lookup_default_value<'py>(
     cls: &Bound<'py, PyType>,
     field_name: &str,
     ctx: &IntrospectionContext<'py>,
-) -> PyResult<(bool, Option<Py<PyAny>>)> {
+) -> PyResult<DefaultSpecIR> {
     let member_descriptor = ctx.types_mod.getattr("MemberDescriptorType")?;
     let getset_descriptor = ctx.types_mod.getattr("GetSetDescriptorType")?;
 
@@ -1067,7 +1071,7 @@ fn lookup_default_value<'py>(
             && let Ok(defaults) = defaults_any.cast::<PyDict>()
             && let Some(v) = defaults.get_item(field_name)?
         {
-            return Ok((true, Some(v.unbind())));
+            return normalize_default_spec(py, &v, field_name, ctx);
         }
 
         if let Ok(base_dict_any) = base.getattr(intern!(py, "__dict__"))
@@ -1077,9 +1081,109 @@ fn lookup_default_value<'py>(
             if v.is_instance(&member_descriptor)? || v.is_instance(&getset_descriptor)? {
                 continue;
             }
-            return Ok((true, Some(v.unbind())));
+            return normalize_default_spec(py, &v, field_name, ctx);
         }
     }
 
-    Ok((false, None))
+    Ok(DefaultSpecIR {
+        has_default: false,
+        default_value: None,
+        default_factory: None,
+    })
+}
+
+fn normalize_default_spec<'py>(
+    py: Python<'py>,
+    value: &Bound<'py, PyAny>,
+    field_name: &str,
+    ctx: &IntrospectionContext<'py>,
+) -> PyResult<DefaultSpecIR> {
+    if let Ok(spec) = value.extract::<PyRef<'py, FieldSpec>>() {
+        if spec.default_value.is_some() && spec.default_factory.is_some() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Field '{}' cannot specify both default and default_factory",
+                field_name
+            )));
+        }
+        if let Some(default_factory) = spec.default_factory.as_ref()
+            && !default_factory.bind(py).is_callable()
+        {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Field '{}' default_factory must be callable",
+                field_name
+            )));
+        }
+
+        if !spec.has_default {
+            return Ok(DefaultSpecIR {
+                has_default: false,
+                default_value: None,
+                default_factory: None,
+            });
+        }
+
+        if let Some(default_value) = spec.default_value.as_ref() {
+            return normalize_default_value(py, default_value.bind(py), field_name, ctx);
+        }
+
+        if let Some(default_factory) = spec.default_factory.as_ref() {
+            return Ok(DefaultSpecIR {
+                has_default: true,
+                default_value: None,
+                default_factory: Some(default_factory.clone_ref(py)),
+            });
+        }
+    }
+
+    if is_nodefault(value)? {
+        return Ok(DefaultSpecIR {
+            has_default: false,
+            default_value: None,
+            default_factory: None,
+        });
+    }
+
+    normalize_default_value(py, value, field_name, ctx)
+}
+
+fn normalize_default_value<'py>(
+    _py: Python<'py>,
+    default_value: &Bound<'py, PyAny>,
+    field_name: &str,
+    ctx: &IntrospectionContext<'py>,
+) -> PyResult<DefaultSpecIR> {
+    if default_value.is_instance(&ctx.builtin_list)?
+        || default_value.is_instance(&ctx.builtin_dict)?
+        || default_value.is_instance(&ctx.builtin_set)?
+        || default_value.is_instance(&ctx.builtin_bytearray)?
+    {
+        let len: usize = default_value.call_method0("__len__")?.extract()?;
+        if len == 0 {
+            let default_factory = if default_value.is_instance(&ctx.builtin_list)? {
+                ctx.builtin_list.clone().unbind()
+            } else if default_value.is_instance(&ctx.builtin_dict)? {
+                ctx.builtin_dict.clone().unbind()
+            } else if default_value.is_instance(&ctx.builtin_set)? {
+                ctx.builtin_set.clone().unbind()
+            } else {
+                ctx.builtin_bytearray.clone().unbind()
+            };
+            return Ok(DefaultSpecIR {
+                has_default: true,
+                default_value: None,
+                default_factory: Some(default_factory),
+            });
+        }
+
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "Field '{}' has a non-empty mutable default; use field(default_factory=...)",
+            field_name
+        )));
+    }
+
+    Ok(DefaultSpecIR {
+        has_default: true,
+        default_value: Some(default_value.clone().unbind()),
+        default_factory: None,
+    })
 }

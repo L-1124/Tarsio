@@ -291,6 +291,103 @@ impl Meta {
     }
 }
 
+/// `field` 默认值哨兵类型.
+#[pyclass(module = "tarsio._core", name = "_NoDefaultType")]
+pub struct NoDefaultType;
+
+#[pymethods]
+impl NoDefaultType {
+    fn __repr__(&self) -> &'static str {
+        "NODEFAULT"
+    }
+}
+
+/// 字段默认值规格（内部使用）.
+#[pyclass(module = "tarsio._core", name = "_FieldSpec")]
+pub struct FieldSpec {
+    pub has_default: bool,
+    pub default_value: Option<Py<PyAny>>,
+    pub default_factory: Option<Py<PyAny>>,
+}
+
+/// 获取 `NODEFAULT` 单例.
+pub fn nodefault_singleton(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let core = py.import("tarsio._core")?;
+    Ok(core.getattr("NODEFAULT")?.unbind())
+}
+
+/// 判断对象是否为 `NODEFAULT` 哨兵.
+pub fn is_nodefault(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let py = obj.py();
+    let nodefault = nodefault_singleton(py)?;
+    Ok(obj.is(nodefault.bind(py)))
+}
+
+/// 创建字段默认值规格.
+///
+/// Returns:
+///     内部 `_FieldSpec` 对象。
+///
+/// Raises:
+///     TypeError: 参数非法、未知关键字、或默认值与工厂冲突时抛出。
+#[pyfunction(signature = (**kwargs))]
+pub fn field(py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<FieldSpec>> {
+    let nodefault = nodefault_singleton(py)?;
+    let nodefault_ref = nodefault.bind(py);
+    let mut default_value: Option<Py<PyAny>> = None;
+    let mut default_factory: Option<Py<PyAny>> = None;
+
+    if let Some(k) = kwargs {
+        for (key, value) in k.iter() {
+            let key_str: String = key.extract().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("field() keyword names must be strings")
+            })?;
+            match key_str.as_str() {
+                "default" => {
+                    if !value.is(nodefault_ref) {
+                        default_value = Some(value.unbind());
+                    }
+                }
+                "default_factory" => {
+                    if !value.is(nodefault_ref) {
+                        default_factory = Some(value.unbind());
+                    }
+                }
+                _ => {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "field() got an unexpected keyword argument '{}'",
+                        key_str
+                    )));
+                }
+            }
+        }
+    }
+
+    if default_value.is_some() && default_factory.is_some() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "field() cannot specify both 'default' and 'default_factory'",
+        ));
+    }
+
+    if let Some(factory) = default_factory.as_ref()
+        && !factory.bind(py).is_callable()
+    {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "field() 'default_factory' must be a callable",
+        ));
+    }
+
+    let has_default = default_value.is_some() || default_factory.is_some();
+    Py::new(
+        py,
+        FieldSpec {
+            has_default,
+            default_value,
+            default_factory,
+        },
+    )
+}
+
 // 基础类定义
 
 #[pyclass(subclass, weakref, module = "tarsio._core", name = "_StructBase")]

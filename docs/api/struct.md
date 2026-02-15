@@ -16,4 +16,8 @@
 
 ::: tarsio.Meta
 
+::: tarsio.field
+
+::: tarsio.NODEFAULT
+
 ::: tarsio.TarsDict

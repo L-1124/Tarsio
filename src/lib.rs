@@ -11,7 +11,11 @@ fn init_core_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<binding::core::Struct>()?;
     m.add_class::<binding::core::StructConfig>()?;
     m.add_class::<binding::core::Meta>()?;
+    m.add_class::<binding::core::NoDefaultType>()?;
+    m.add_class::<binding::core::FieldSpec>()?;
     m.add_class::<binding::core::TarsDict>()?;
+    let nodefault = Py::new(m.py(), binding::core::NoDefaultType {})?;
+    m.add("NODEFAULT", nodefault)?;
     m.add("ValidationError", m.py().get_type::<ValidationError>())?;
     Ok(())
 }
@@ -22,6 +26,7 @@ fn init_core_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(binding::codec::raw::encode_raw, m)?)?;
     m.add_function(wrap_pyfunction!(binding::codec::raw::decode_raw, m)?)?;
     m.add_function(wrap_pyfunction!(binding::codec::raw::probe_struct, m)?)?;
+    m.add_function(wrap_pyfunction!(binding::core::field, m)?)?;
     m.add_class::<binding::codec::trace::TraceNode>()?;
     m.add_function(wrap_pyfunction!(binding::codec::trace::decode_trace, m)?)?;
     Ok(())

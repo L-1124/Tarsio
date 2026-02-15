@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::binding::core::{
     Constraints, FieldDef, SCHEMA_ATTR, SCHEMA_CACHE, Schema, SchemaConfig, StructConfig,
-    StructDef, StructMetaData, TypeExpr, UnionCache, WireType,
+    StructDef, StructMetaData, TypeExpr, UnionCache, WireType, is_nodefault, nodefault_singleton,
 };
 use crate::binding::parse::{ConstraintsIR, TypeInfoIR, introspect_struct_fields};
 
@@ -53,15 +53,29 @@ pub fn compile_schema_from_info<'py>(
         let is_optional: bool = field_any.getattr("optional")?.extract()?;
         let has_default: bool = field_any.getattr("has_default")?.extract()?;
         let default_any = field_any.getattr("default")?;
-        let mut default_value = if has_default {
+        let default_factory_any = field_any.getattr("default_factory").ok();
+        let mut default_value = if has_default && !is_nodefault(&default_any)? {
             Some(default_any.unbind())
+        } else {
+            None
+        };
+        let default_factory = if has_default {
+            if let Some(factory_obj) = default_factory_any.as_ref() {
+                if !is_nodefault(factory_obj)? {
+                    Some(factory_obj.clone().unbind())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         } else {
             None
         };
         if default_value.is_none() && is_optional {
             default_value = Some(py.None());
         }
-        let is_required = !is_optional && default_value.is_none();
+        let is_required = !is_optional && default_value.is_none() && default_factory.is_none();
 
         let constraints_any = field_any.getattr("constraints")?;
         let constraints = parse_constraints(&constraints_any, name.as_str())?;
@@ -72,7 +86,7 @@ pub fn compile_schema_from_info<'py>(
             tag,
             ty: type_expr,
             default_value,
-            default_factory: None,
+            default_factory,
             is_optional,
             is_required,
             init: true,
@@ -312,6 +326,7 @@ fn build_signature(py: Python<'_>, def: &StructDef, config: &SchemaConfig) -> Py
     let param_cls = inspect.getattr("Parameter")?;
     let sig_cls = inspect.getattr("Signature")?;
     let params = PyList::empty(py);
+    let nodefault = nodefault_singleton(py)?;
     let mut seen_default = false;
 
     for field in &def.fields_sorted {
@@ -320,6 +335,9 @@ fn build_signature(py: Python<'_>, def: &StructDef, config: &SchemaConfig) -> Py
 
         if let Some(default_val) = field.default_value.as_ref() {
             kwargs.set_item("default", default_val.bind(py))?;
+            has_default = true;
+        } else if field.default_factory.is_some() {
+            kwargs.set_item("default", nodefault.bind(py))?;
             has_default = true;
         } else if field.is_optional {
             kwargs.set_item("default", py.None())?;

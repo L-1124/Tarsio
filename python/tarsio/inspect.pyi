@@ -276,6 +276,7 @@ class Field:
         tag: 字段 tag。
         type: 字段类型内省结果。
         default: 字段默认值。
+        default_factory: 字段默认值工厂；无工厂时为 `tarsio.NODEFAULT`。
         has_default: 是否显式有默认值。
         optional: 是否可选。
         required: 是否必填。
@@ -285,6 +286,7 @@ class Field:
     tag: int
     type: TypeInfo
     default: Any
+    default_factory: Any
     has_default: bool
     optional: bool
     required: bool

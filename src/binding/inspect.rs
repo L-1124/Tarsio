@@ -3,6 +3,7 @@ use pyo3::pyclass_init::PyClassInitializer;
 use pyo3::types::{PyAny, PyTuple, PyType};
 use std::collections::HashSet;
 
+use crate::binding::core::nodefault_singleton;
 use crate::binding::parse::{
     ConstraintsIR, FieldInfoIR, TypeInfoIR, introspect_struct_fields, introspect_type_info_ir,
 };
@@ -579,6 +580,7 @@ impl TarsDictType {
 ///     tag: 字段 tag。
 ///     typ: 字段类型内省结果。
 ///     default: 字段默认值。
+///     default_factory: 字段默认值工厂。
 ///     has_default: 是否显式有默认值。
 ///     optional: 是否可选。
 ///     required: 是否必填。
@@ -593,6 +595,8 @@ pub struct Field {
     pub typ: Py<PyAny>,
     #[pyo3(get)]
     pub default: Py<PyAny>,
+    #[pyo3(get)]
+    pub default_factory: Py<PyAny>,
     #[pyo3(get)]
     pub has_default: bool,
     #[pyo3(get)]
@@ -948,7 +952,13 @@ fn build_field(
     build_ctx: &mut TypeBuildContext,
 ) -> PyResult<Py<Field>> {
     let typ_obj = build_type_info(py, &field_ir.typ, field_ir.constraints.clone(), build_ctx)?;
-    let default = field_ir.default_value.unwrap_or_else(|| py.None());
+    let nodefault = nodefault_singleton(py)?;
+    let default = field_ir
+        .default_value
+        .unwrap_or_else(|| nodefault.clone_ref(py));
+    let default_factory = field_ir
+        .default_factory
+        .unwrap_or_else(|| nodefault.clone_ref(py));
 
     Py::new(
         py,
@@ -957,6 +967,7 @@ fn build_field(
             tag: field_ir.tag,
             typ: typ_obj,
             default,
+            default_factory,
             has_default: field_ir.has_default,
             optional: field_ir.is_optional,
             required: field_ir.is_required,

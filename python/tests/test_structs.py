@@ -7,12 +7,14 @@ from typing import Annotated, Any, Optional
 
 import pytest
 from tarsio._core import (
+    NODEFAULT,
     Struct,
     TarsDict,
     decode,
     decode_raw,
     encode,
     encode_raw,
+    field,
 )
 
 
@@ -127,6 +129,76 @@ def test_default_value_used_when_field_missing() -> None:
     p = Point(x=10)
     assert p.x == 10
     assert p.y == 0  # Default
+
+
+def test_field_default_value_used_when_missing() -> None:
+    """field(default=...) 在缺参时应提供默认值."""
+
+    class D(Struct):
+        val: Annotated[int, 0] = field(default=7)
+
+    d = D()
+    assert d.val == 7
+
+
+def test_field_default_factory_produces_distinct_instances() -> None:
+    """field(default_factory=...) 应为每个实例生成独立对象."""
+
+    class D(Struct):
+        val: Annotated[list[int], 0] = field(default_factory=list)
+
+    d1 = D()
+    d2 = D()
+    assert d1.val == []
+    assert d2.val == []
+    assert d1.val is not d2.val
+
+
+def test_empty_mutable_literal_defaults_are_auto_factory() -> None:
+    """空可变默认值字面量应自动转为 default_factory."""
+
+    class D(Struct):
+        a: Annotated[list[int], 0] = []  # noqa: RUF012
+        b: Annotated[dict[str, int], 1] = {}  # noqa: RUF012
+        c: Annotated[set[int], 2] = set()  # noqa: RUF012
+        d: Annotated[Any, 3] = bytearray()
+
+    x = D()
+    y = D()
+    assert x.a is not y.a
+    assert x.b is not y.b
+    assert x.c is not y.c
+    assert x.d is not y.d
+
+
+def test_non_empty_mutable_literal_default_raises_type_error() -> None:
+    """非空可变默认值应在类定义期抛出 TypeError."""
+    with pytest.raises(TypeError, match="non-empty mutable default"):
+
+        class D(Struct):
+            val: Annotated[list[int], 0] = [1]  # noqa: RUF012
+
+
+def test_field_rejects_both_default_and_default_factory() -> None:
+    """Field 同时传 default 与 default_factory 应抛 TypeError."""
+    with pytest.raises(TypeError, match="cannot specify both"):
+        field(default=1, default_factory=list)
+
+
+def test_field_rejects_non_callable_default_factory() -> None:
+    """Field 的 default_factory 不可调用时应抛 TypeError."""
+    with pytest.raises(TypeError, match="must be a callable"):
+        field(default_factory=123)
+
+
+def test_field_accepts_nodefault_sentinel() -> None:
+    """Field 传入 NODEFAULT 时应视为未设置默认值."""
+
+    class D(Struct):
+        val: Annotated[int, 0] = field(default=NODEFAULT)
+
+    with pytest.raises(TypeError, match=r"missing .* argument"):
+        D()  # pyright: ignore[reportCallIssue]
 
 
 def test_missing_non_optional_field_without_default_raises() -> None:

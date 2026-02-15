@@ -72,6 +72,25 @@ class Product(Struct):
 
 建议为所有字段提供默认值，通常是 `None`。
 
+### 使用 `field` 指定默认值工厂
+
+`field` 用于声明默认值与默认值工厂（`default_factory`）。
+注意：Tag 仍然必须写在 `Annotated[...]` 里，`field` 不负责定义 tag。
+
+```python
+from typing import Annotated
+from tarsio import Struct, field
+
+class Cache(Struct):
+    # 每个实例都会得到新的 list
+    items: Annotated[list[int], 0] = field(default_factory=list)
+```
+
+### 可变默认值规则（严格模式）
+
+* 空可变字面量（`[]`、`{}`、`set()`、`bytearray()`）会自动转为 `default_factory` 语义。
+* 非空可变默认值（如 `[1]`、`{"k": 1}`）会在类定义阶段抛出 `TypeError`。
+
 ### 必填字段 (Required)
 
 不提供默认值的字段为必填项。如果在解码数据中找不到对应的 Tag，且该字段没有默认值，将抛出异常。
