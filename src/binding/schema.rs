@@ -132,12 +132,18 @@ pub struct FieldDef {
 }
 
 #[derive(Debug)]
+pub struct StructMetaData {
+    pub name_to_index: HashMap<String, usize>,
+    pub name_ptr_to_index: HashMap<usize, usize>,
+}
+
+#[derive(Debug)]
 pub struct StructDef {
     pub class_ptr: usize,
     pub name: String,
     pub fields_sorted: Vec<FieldDef>,
     pub tag_lookup_vec: Vec<Option<usize>>,
-    pub name_to_tag: HashMap<String, u8>,
+    pub meta: Arc<StructMetaData>,
     pub frozen: bool,
     pub order: bool,
     pub forbid_unknown_tags: bool,
@@ -347,7 +353,7 @@ pub struct SchemaConfig {
     pub weakref: bool,
 }
 
-#[pyclass]
+#[pyclass(module = "tarsio._core")]
 pub struct StructConfig {
     #[pyo3(get)]
     pub frozen: bool,
@@ -510,15 +516,22 @@ fn compile_schema_from_fields<'py>(
 
     fields_def.sort_by_key(|f| f.tag);
 
-    let mut name_to_tag = HashMap::new();
+    let mut name_to_index = HashMap::with_capacity(fields_def.len());
+    let mut name_ptr_to_index = HashMap::with_capacity(fields_def.len());
     let mut max_tag = 0;
 
-    for f in &fields_def {
-        name_to_tag.insert(f.name.clone(), f.tag);
+    for (idx, f) in fields_def.iter().enumerate() {
+        name_to_index.insert(f.name.clone(), idx);
+        name_ptr_to_index.insert(f.name_py.as_ptr() as usize, idx);
         if f.tag > max_tag {
             max_tag = f.tag;
         }
     }
+
+    let meta = Arc::new(StructMetaData {
+        name_to_index,
+        name_ptr_to_index,
+    });
 
     let mut tag_lookup_vec = vec![None; (max_tag as usize) + 1];
     for (idx, f) in fields_def.iter().enumerate() {
@@ -530,7 +543,7 @@ fn compile_schema_from_fields<'py>(
         name: cls.name()?.to_string(),
         fields_sorted: fields_def,
         tag_lookup_vec,
-        name_to_tag,
+        meta,
         frozen: config.frozen,
         order: config.order,
         forbid_unknown_tags: config.forbid_unknown_tags,
@@ -1192,15 +1205,53 @@ impl Struct {
 // 构造器逻辑
 // ==========================================
 
+fn set_field_value(
+    self_obj: &Bound<'_, PyAny>,
+    field: &FieldDef,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    unsafe {
+        let name_py = field.name_py.bind(self_obj.py());
+        let res =
+            pyo3::ffi::PyObject_GenericSetAttr(self_obj.as_ptr(), name_py.as_ptr(), value.as_ptr());
+        if res != 0 {
+            return Err(PyErr::fetch(self_obj.py()));
+        }
+    }
+    Ok(())
+}
+
+fn missing_required_argument_error(field: &FieldDef) -> PyErr {
+    pyo3::exceptions::PyTypeError::new_err(format!(
+        "__init__() missing 1 required positional argument: '{}'",
+        field.name
+    ))
+}
+
+#[inline]
+fn lookup_keyword_index(def: &StructDef, key: &Bound<'_, PyAny>) -> PyResult<Option<usize>> {
+    if let Ok(key_str_obj) = key.cast::<PyString>() {
+        let key_ptr = key_str_obj.as_ptr() as usize;
+        if let Some(idx) = def.meta.name_ptr_to_index.get(&key_ptr) {
+            return Ok(Some(*idx));
+        }
+
+        let key_str = key_str_obj.to_str()?;
+        return Ok(def.meta.name_to_index.get(key_str).copied());
+    }
+    Ok(None)
+}
+
 pub fn construct_instance(
     def: &StructDef,
     self_obj: &Bound<'_, PyAny>,
     args: &Bound<'_, PyTuple>,
     kwargs: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<()> {
+    let py = self_obj.py();
     // 位置参数按字段顺序映射到 args
     let num_positional = args.len();
-    let given_args = args;
+    let num_fields = def.fields_sorted.len();
 
     if def.kw_only && num_positional > 0 {
         return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -1209,8 +1260,8 @@ pub fn construct_instance(
         )));
     }
 
-    if num_positional > def.fields_sorted.len() {
-        let expected = def.fields_sorted.len() + 1;
+    if num_positional > num_fields {
+        let expected = num_fields + 1;
         let given = num_positional + 1;
         return Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "__init__() takes {} positional arguments but {} were given",
@@ -1218,40 +1269,79 @@ pub fn construct_instance(
         )));
     }
 
-    for (i, field) in def.fields_sorted.iter().enumerate() {
-        let val = if i < num_positional {
-            // 位置参数提供
-            // 检查与 kwargs 冲突
-            if let Some(k) = kwargs
-                && k.contains(field.name_py.bind(self_obj.py()))?
-            {
-                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                    "__init__() got multiple values for argument '{}'",
-                    field.name
-                )));
-            }
-            Some(given_args.get_item(i)?)
-        } else {
-            // 从关键字参数中读取
-            if let Some(k) = kwargs {
-                k.get_item(field.name_py.bind(self_obj.py()))?
-            } else {
-                None
-            }
-        };
+    let mut mapped_values: Vec<Option<Py<PyAny>>> =
+        std::iter::repeat_with(|| None).take(num_fields).collect();
 
-        let val_to_set = match val {
-            Some(v) => v,
+    for (idx, slot) in mapped_values.iter_mut().enumerate().take(num_positional) {
+        *slot = Some(args.get_item(idx)?.unbind());
+    }
+
+    if let Some(k) = kwargs {
+        const KWARGS_DIRECT_ITER_THRESHOLD: usize = 8;
+        let kw_len = k.len();
+        let use_kwargs_iteration =
+            kw_len <= KWARGS_DIRECT_ITER_THRESHOLD || kw_len.saturating_mul(2) < num_fields;
+
+        if use_kwargs_iteration {
+            for (key, value) in k.iter() {
+                let idx = lookup_keyword_index(def, &key)?.ok_or_else(|| {
+                    pyo3::exceptions::PyTypeError::new_err(format!(
+                        "__init__() got an unexpected keyword argument '{}'",
+                        key.extract::<String>()
+                            .unwrap_or_else(|_| "<non-string-key>".to_string())
+                    ))
+                })?;
+
+                // 位置参数已占用，或 kwargs 冲突（防御性检查）
+                if idx < num_positional || mapped_values[idx].is_some() {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "__init__() got multiple values for argument '{}'",
+                        def.fields_sorted[idx].name
+                    )));
+                }
+                mapped_values[idx] = Some(value.unbind());
+            }
+        } else {
+            let mut matched = 0usize;
+            for (idx, field) in def.fields_sorted.iter().enumerate() {
+                if let Some(value) = k.get_item(field.name_py.bind(py))? {
+                    matched += 1;
+                    if idx < num_positional {
+                        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                            "__init__() got multiple values for argument '{}'",
+                            field.name
+                        )));
+                    }
+                    mapped_values[idx] = Some(value.unbind());
+                }
+            }
+
+            if matched != kw_len {
+                for key in k.keys() {
+                    if lookup_keyword_index(def, &key)?.is_none() {
+                        let key_str = key
+                            .extract::<String>()
+                            .unwrap_or_else(|_| "<non-string-key>".to_string());
+                        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                            "__init__() got an unexpected keyword argument '{}'",
+                            key_str
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    for (idx, field) in def.fields_sorted.iter().enumerate() {
+        let val_to_set = match mapped_values[idx].as_ref() {
+            Some(v) => v.bind(py).clone(),
             None => {
                 if let Some(default_value) = field.default_value.as_ref() {
-                    default_value.bind(self_obj.py()).clone()
+                    default_value.bind(py).clone()
                 } else if let Some(factory) = field.default_factory.as_ref() {
-                    factory.bind(self_obj.py()).call0()?
+                    factory.bind(py).call0()?
                 } else if field.is_optional || field.is_required {
-                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                        "__init__() missing 1 required positional argument: '{}'",
-                        field.name
-                    )));
+                    return Err(missing_required_argument_error(field));
                 } else {
                     // 理论上被 required 校验覆盖,这里作为安全兜底
                     return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -1262,31 +1352,7 @@ pub fn construct_instance(
             }
         };
 
-        // 使用 PyObject_GenericSetAttr 绕过 frozen 检查
-        unsafe {
-            let name_py = field.name_py.bind(self_obj.py());
-            let res = pyo3::ffi::PyObject_GenericSetAttr(
-                self_obj.as_ptr(),
-                name_py.as_ptr(),
-                val_to_set.as_ptr(),
-            );
-            if res != 0 {
-                return Err(PyErr::fetch(self_obj.py()));
-            }
-        }
-    }
-
-    // 检查未声明的关键字参数
-    if let Some(k) = kwargs {
-        for key in k.keys() {
-            let key_str = key.extract::<String>()?;
-            if !def.name_to_tag.contains_key(&key_str) {
-                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                    "__init__() got an unexpected keyword argument '{}'",
-                    key_str
-                )));
-            }
-        }
+        set_field_value(self_obj, field, &val_to_set)?;
     }
 
     Ok(())

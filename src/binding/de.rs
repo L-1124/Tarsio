@@ -55,7 +55,13 @@ pub fn decode_object<'py>(
     let def = ensure_schema_for_class(py, cls)?;
 
     let mut reader = TarsReader::new(data);
-    deserialize_struct(py, cls, &mut reader, &def, 0).map_err(|e| e.to_pyerr(py))
+    let res = deserialize_struct(py, cls, &mut reader, &def, 0).map_err(|e| e.to_pyerr(py))?;
+    if !reader.is_end() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Trailing bytes after decode",
+        ));
+    }
+    Ok(res)
 }
 
 /// 从读取器中反序列化结构体.

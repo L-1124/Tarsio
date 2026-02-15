@@ -25,7 +25,7 @@ use pyo3::prelude::*;
 ///         # 代码必须是 1-10 位大写字母
 ///         code: Annotated[str, Meta(tag=1, min_len=1, max_len=10, pattern=r"^[A-Z]+$")]
 ///     ```
-#[pyclass]
+#[pyclass(module = "tarsio._core")]
 pub struct Meta {
     #[pyo3(get, set)]
     pub tag: Option<u8>,

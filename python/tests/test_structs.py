@@ -88,6 +88,12 @@ def test_init_extra_positional_arg_raises_type_error() -> None:
         User(1, "a", 3)  # pyright: ignore[reportCallIssue]
 
 
+def test_init_unexpected_keyword_raises_type_error() -> None:
+    """未知关键字参数应抛出 TypeError."""
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        User(uid=1, name="a", unknown=1)  # pyright: ignore[reportCallIssue]
+
+
 # ==========================================
 # 默认值与 Optional 行为测试
 # ==========================================
@@ -546,4 +552,15 @@ def test_invariant_truncated_data_raises_value_error() -> None:
     # Tag 0 Head Int1(1) -> 00 01. Truncate last byte.
     data = bytes.fromhex("00")
     with pytest.raises(ValueError, match="Unexpected end of buffer"):
+        decode(S, data)
+
+
+def test_invariant_trailing_bytes_raises_value_error() -> None:
+    """尾随无关字节应抛出 ValueError."""
+
+    class S(Struct):
+        a: Annotated[int, 0]
+
+    data = bytes.fromhex("0001FF")
+    with pytest.raises(ValueError, match="Trailing bytes after decode"):
         decode(S, data)
