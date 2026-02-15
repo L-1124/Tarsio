@@ -1,6 +1,6 @@
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PySet, PyType};
+use pyo3::types::{PyBytes, PyDict, PySet, PyTuple, PyType};
 use simdutf8::basic::from_utf8;
 use std::cmp::Ordering;
 
@@ -402,30 +402,7 @@ fn deserialize_value<'py>(
                     "Tuple length does not match annotation".into(),
                 ));
             }
-            let list_any = unsafe {
-                let ptr = ffi::PyList_New(len as isize);
-                if ptr.is_null() {
-                    return Err(DeError::wrap(PyErr::fetch(py)));
-                }
-                Bound::from_owned_ptr(py, ptr)
-            };
-            for (idx, item_type) in items.iter().enumerate() {
-                let (_, item_type_id) = reader
-                    .read_head()
-                    .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
-                let item = deserialize_value(py, reader, item_type_id, item_type, depth + 1)
-                    .map_err(|e| e.prepend(PathItem::Index(idx)))?;
-                let set_res = unsafe {
-                    ffi::PyList_SetItem(list_any.as_ptr(), idx as isize, item.into_ptr())
-                };
-                if set_res != 0 {
-                    return Err(DeError::wrap(PyErr::fetch(py)));
-                }
-            }
-            let list = list_any
-                .cast::<PyList>()
-                .map_err(|e| DeError::new(e.to_string()))?;
-            let tuple = list.to_tuple();
+            let tuple = build_fixed_tuple(py, reader, items, depth)?;
             let instance = cls.bind(py).call1(tuple).map_err(DeError::wrap)?;
             Ok(instance.into_any())
         }
@@ -463,7 +440,7 @@ fn deserialize_value<'py>(
             let instance = cls.bind(py).call((), Some(&dict)).map_err(DeError::wrap)?;
             Ok(instance.into_any())
         }
-        TypeExpr::List(inner) | TypeExpr::VarTuple(inner) => {
+        TypeExpr::List(inner) => {
             if type_id == TarsType::SimpleList {
                 let sub_type = reader.read_u8().map_err(|e| {
                     DeError::new(format!("Failed to read SimpleList subtype: {}", e))
@@ -503,16 +480,15 @@ fn deserialize_value<'py>(
                     return Err(DeError::wrap(PyErr::fetch(py)));
                 }
             }
-
-            if matches!(type_expr, TypeExpr::VarTuple(_)) {
-                let list_any_clone = list_any.clone();
-                let list = list_any_clone
-                    .cast::<PyList>()
-                    .map_err(|e| DeError::new(e.to_string()))?;
-                Ok(list.to_tuple().into_any())
-            } else {
-                Ok(list_any)
+            Ok(list_any)
+        }
+        TypeExpr::VarTuple(inner) => {
+            if type_id != TarsType::List {
+                return Err(DeError::new("Tuple value must be encoded as List".into()));
             }
+            let len = read_size_non_negative(reader, "list")?;
+            let tuple = build_var_tuple(py, reader, inner, len, depth)?;
+            Ok(tuple.into_any())
         }
         TypeExpr::Tuple(items) => {
             if type_id != TarsType::List {
@@ -524,30 +500,8 @@ fn deserialize_value<'py>(
                     "Tuple length does not match annotation".into(),
                 ));
             }
-            let list_any = unsafe {
-                let ptr = ffi::PyList_New(len as isize);
-                if ptr.is_null() {
-                    return Err(DeError::wrap(PyErr::fetch(py)));
-                }
-                Bound::from_owned_ptr(py, ptr)
-            };
-            for (idx, item_type) in items.iter().enumerate() {
-                let (_, item_type_id) = reader
-                    .read_head()
-                    .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
-                let item = deserialize_value(py, reader, item_type_id, item_type, depth + 1)
-                    .map_err(|e| e.prepend(PathItem::Index(idx)))?;
-                let set_res = unsafe {
-                    ffi::PyList_SetItem(list_any.as_ptr(), idx as isize, item.into_ptr())
-                };
-                if set_res != 0 {
-                    return Err(DeError::wrap(PyErr::fetch(py)));
-                }
-            }
-            let list = list_any
-                .cast::<PyList>()
-                .map_err(|e| DeError::new(e.to_string()))?;
-            Ok(list.to_tuple().into_any())
+            let tuple = build_fixed_tuple(py, reader, items, depth)?;
+            Ok(tuple.into_any())
         }
         TypeExpr::Map(k_type, v_type) => {
             let len = read_size_non_negative(reader, "map")?;
@@ -575,6 +529,81 @@ fn deserialize_value<'py>(
         }
         TypeExpr::Optional(inner) => deserialize_value(py, reader, type_id, inner, depth),
     }
+}
+
+fn build_fixed_tuple<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    items: &[TypeExpr],
+    depth: usize,
+) -> DeResult<Bound<'py, PyTuple>> {
+    let tuple_any = unsafe {
+        // SAFETY: PyTuple_New 返回新引用；空指针表示 Python 异常已设置。
+        let ptr = ffi::PyTuple_New(items.len() as isize);
+        if ptr.is_null() {
+            return Err(DeError::wrap(PyErr::fetch(py)));
+        }
+        Bound::from_owned_ptr(py, ptr)
+    };
+    let tuple = tuple_any
+        .cast_into::<PyTuple>()
+        .map_err(|e| DeError::new(e.to_string()))?;
+
+    for (idx, item_type) in items.iter().enumerate() {
+        let (_, item_type_id) = reader
+            .read_head()
+            .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
+        let item = deserialize_value(py, reader, item_type_id, item_type, depth + 1)
+            .map_err(|e| e.prepend(PathItem::Index(idx)))?;
+        let set_res = unsafe {
+            // SAFETY: tuple 由 PyTuple_New 新建且每个槽位只写一次；idx 在范围内。
+            // PyTuple_SetItem 会偷引用，因此使用 item.into_ptr() 转移所有权。
+            ffi::PyTuple_SetItem(tuple.as_ptr(), idx as isize, item.into_ptr())
+        };
+        if set_res != 0 {
+            return Err(DeError::wrap(PyErr::fetch(py)));
+        }
+    }
+
+    Ok(tuple)
+}
+
+fn build_var_tuple<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    inner: &TypeExpr,
+    len: usize,
+    depth: usize,
+) -> DeResult<Bound<'py, PyTuple>> {
+    let tuple_any = unsafe {
+        // SAFETY: PyTuple_New 返回新引用；空指针表示 Python 异常已设置。
+        let ptr = ffi::PyTuple_New(len as isize);
+        if ptr.is_null() {
+            return Err(DeError::wrap(PyErr::fetch(py)));
+        }
+        Bound::from_owned_ptr(py, ptr)
+    };
+    let tuple = tuple_any
+        .cast_into::<PyTuple>()
+        .map_err(|e| DeError::new(e.to_string()))?;
+
+    for idx in 0..len {
+        let (_, item_type_id) = reader
+            .read_head()
+            .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
+        let item = deserialize_value(py, reader, item_type_id, inner, depth + 1)
+            .map_err(|e| e.prepend(PathItem::Index(idx)))?;
+        let set_res = unsafe {
+            // SAFETY: tuple 由 PyTuple_New 新建且每个槽位只写一次；idx 在范围内。
+            // PyTuple_SetItem 会偷引用，因此使用 item.into_ptr() 转移所有权。
+            ffi::PyTuple_SetItem(tuple.as_ptr(), idx as isize, item.into_ptr())
+        };
+        if set_res != 0 {
+            return Err(DeError::wrap(PyErr::fetch(py)));
+        }
+    }
+
+    Ok(tuple)
 }
 
 fn decode_union_value<'py>(
