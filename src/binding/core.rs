@@ -101,7 +101,7 @@ impl TypeExpr {
 /// Key 为 Python 类型对象的地址 (usize), Value 为对应变体在 `TypeExpr::Union` 中的索引.
 #[derive(Default)]
 pub struct UnionCache {
-    map: RwLock<HashMap<usize, usize>>,
+    map: RwLock<FxHashMap<usize, usize>>,
 }
 
 impl std::fmt::Debug for UnionCache {

@@ -9,6 +9,8 @@ use pyo3::types::{
 use simdutf8::basic::from_utf8;
 use std::cell::RefCell;
 
+use smallvec::SmallVec;
+
 use crate::binding::codec::ser;
 use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{Struct, StructDef, TarsDict, TypeExpr, ensure_schema_for_class};
@@ -112,7 +114,7 @@ where
 {
     check_depth(depth)?;
 
-    let mut items: Vec<(u8, Bound<'_, PyAny>)> = Vec::with_capacity(dict.len());
+    let mut items: SmallVec<[(u8, Bound<'_, PyAny>); 16]> = SmallVec::with_capacity(dict.len());
     for (key, value) in dict.iter() {
         if value.is_none() {
             continue;
@@ -205,8 +207,7 @@ where
         let len = fields.len();
         writer.write_int(0, len as i64);
         for (name_any, _field) in fields {
-            let name: String = name_any.extract()?;
-            let field_value = value.getattr(name.as_str())?;
+            let field_value = value.getattr(name_any.cast::<PyString>()?)?;
             serialize_any(writer, 0, &name_any, depth + 1, serialize_typed)?;
             serialize_any(writer, 1, &field_value, depth + 1, serialize_typed)?;
         }
@@ -532,7 +533,7 @@ fn encode_raw_dict_to_pybytes(
         {
             let mut writer = TarsWriter::with_buffer(&mut *buffer);
             // Top-level object for encode_raw must be a Struct (dict[int, TarsValue])
-            let mut fields: Vec<(u8, Bound<'_, PyAny>)> = Vec::with_capacity(dict.len());
+            let mut fields: SmallVec<[(u8, Bound<'_, PyAny>); 16]> = SmallVec::with_capacity(dict.len());
             for (key, value) in dict.iter() {
                 if value.is_none() {
                     continue;
@@ -566,7 +567,7 @@ fn encode_raw_dict_to_pybytes(
 
 fn write_struct_fields_from_vec(
     writer: &mut TarsWriter<impl BufMut>,
-    items: Vec<(u8, Bound<'_, PyAny>)>,
+    items: SmallVec<[(u8, Bound<'_, PyAny>); 16]>,
     depth: usize,
 ) -> PyResult<()> {
     check_depth(depth)?;
