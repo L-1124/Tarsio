@@ -1,6 +1,8 @@
+use parking_lot::RwLock;
 use pyo3::gc::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyString, PyType};
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
@@ -95,11 +97,11 @@ impl TypeExpr {
 
 /// Union 类型的变体分发缓存.
 ///
-/// 内部采用 `RwLock` 确保跨线程 Schema 共享时的访问安全.
+/// 使用轻量级 `parking_lot::RwLock` 降低缓存读写开销.
 /// Key 为 Python 类型对象的地址 (usize), Value 为对应变体在 `TypeExpr::Union` 中的索引.
 #[derive(Default)]
 pub struct UnionCache {
-    map: std::sync::RwLock<HashMap<usize, usize>>,
+    map: RwLock<HashMap<usize, usize>>,
 }
 
 impl std::fmt::Debug for UnionCache {
@@ -125,14 +127,12 @@ impl PartialEq for UnionCache {
 impl UnionCache {
     /// 获取指定类型在变体列表中的索引.
     pub fn get(&self, type_ptr: usize) -> Option<usize> {
-        self.map.read().ok().and_then(|m| m.get(&type_ptr).copied())
+        self.map.read().get(&type_ptr).copied()
     }
 
     /// 记录类型与变体索引的映射关系.
     pub fn insert(&self, type_ptr: usize, idx: usize) {
-        if let Ok(mut m) = self.map.write() {
-            m.insert(type_ptr, idx);
-        }
+        self.map.write().insert(type_ptr, idx);
     }
 }
 
@@ -427,7 +427,7 @@ pub const SCHEMA_ATTR: &str = "__tarsio_schema__";
 thread_local! {
     // 线程内 schema 缓存,用于减少高频 getattr 开销。
     // 使用 Weak 引用，避免循环引用导致的内存泄漏。
-    pub static SCHEMA_CACHE: RefCell<HashMap<usize, Weak<StructDef>>> = RefCell::new(HashMap::new());
+    pub static SCHEMA_CACHE: RefCell<FxHashMap<usize, Weak<StructDef>>> = RefCell::new(FxHashMap::default());
 }
 
 #[pyclass(module = "tarsio._core", name = "Schema")]

@@ -60,7 +60,7 @@ where
                 {
                     let nested_cls = struct_class_from_ptr(obj.py(), *ptr)?;
                     let nested_def = ensure_schema_for_class(obj.py(), &nested_cls)?;
-                    let mut nested = Vec::new();
+                    let mut nested = Vec::with_capacity(256);
                     {
                         let mut nested_writer = TarsWriter::with_buffer(&mut nested);
                         serialize_struct_fields(

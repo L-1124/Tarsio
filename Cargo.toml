@@ -14,6 +14,8 @@ simdutf8 = "0.1.5"
 thiserror = "2.0"
 pyo3 = { version = "0.28.0", features = ["extension-module", "generate-import-lib"] }
 smallvec = "1"
+rustc-hash = "2"
+parking_lot = "0.12"
 
 [dev-dependencies]
 proptest = "1.10.0"

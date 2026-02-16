@@ -343,6 +343,7 @@ impl<'a> TarsReader<'a> {
     /// 读取字符串 payload(原始字节,不校验 UTF-8).
     ///
     /// 仅做长度与越界检查,返回指向输入缓冲区的切片.
+    #[inline]
     pub fn read_string(&mut self, type_id: TarsType) -> Result<&'a [u8]> {
         let start_pos = self.pos;
 
@@ -422,6 +423,7 @@ impl<'a> TarsReader<'a> {
     }
 
     /// 读取字节数组(零拷贝).
+    #[inline]
     pub fn read_bytes(&mut self, len: usize) -> Result<&'a [u8]> {
         if self.pos + len > self.data.len() {
             return Err(Error::BufferOverflow { offset: self.pos });
