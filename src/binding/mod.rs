@@ -8,3 +8,4 @@ pub mod metaclass;
 pub mod parse;
 pub mod schema;
 pub mod utils;
+pub mod validation;

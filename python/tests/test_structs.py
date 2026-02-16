@@ -8,8 +8,10 @@ from typing import Annotated, Any, Optional
 import pytest
 from tarsio._core import (
     NODEFAULT,
+    Meta,
     Struct,
     TarsDict,
+    ValidationError,
     decode,
     decode_raw,
     encode,
@@ -96,6 +98,61 @@ def test_init_unexpected_keyword_raises_type_error() -> None:
         User(uid=1, name="a", unknown=1)  # pyright: ignore[reportCallIssue]
 
 
+def test_init_type_mismatch_raises_validation_error() -> None:
+    """构造期类型不匹配应抛出 ValidationError."""
+
+    class Demo(Struct):
+        a: Annotated[int, 0]
+
+    with pytest.raises(ValidationError, match="type mismatch"):
+        Demo(a="x")  # pyright: ignore[reportArgumentType]
+
+
+def test_init_union_type_match_and_mismatch() -> None:
+    """Union 构造期应允许匹配分支并拒绝不匹配值."""
+
+    class Demo(Struct):
+        a: Annotated[int | str, 0]
+
+    ok1 = Demo(a=1)
+    ok2 = Demo(a="x")
+    assert ok1.a == 1
+    assert ok2.a == "x"
+
+    with pytest.raises(ValidationError, match="type mismatch"):
+        Demo(a=1.2)  # pyright: ignore[reportArgumentType]
+
+
+def test_init_numeric_constraints_raises_validation_error() -> None:
+    """构造期数值约束不满足应抛出 ValidationError."""
+
+    class Demo(Struct):
+        a: Annotated[int, Meta(tag=0, gt=0)]
+
+    with pytest.raises(ValidationError, match="must be >"):
+        Demo(a=0)
+
+
+def test_init_length_constraints_raises_validation_error() -> None:
+    """构造期长度约束不满足应抛出 ValidationError."""
+
+    class Demo(Struct):
+        name: Annotated[str, Meta(tag=0, min_len=2, max_len=4)]
+
+    with pytest.raises(ValidationError, match="length must be >="):
+        Demo(name="a")
+
+
+def test_init_pattern_constraints_raises_validation_error() -> None:
+    """构造期 pattern 约束不满足应抛出 ValidationError."""
+
+    class Demo(Struct):
+        code: Annotated[str, Meta(tag=0, pattern=r"^[A-Z]{2}\\d{2}$")]
+
+    with pytest.raises(ValidationError, match="does not match pattern"):
+        Demo(code="aa12")
+
+
 # ==========================================
 # 默认值与 Optional 行为测试
 # ==========================================
@@ -141,6 +198,16 @@ def test_field_default_value_used_when_missing() -> None:
     assert d.val == 7
 
 
+def test_default_value_validated_in_init_path() -> None:
+    """默认值不满足约束时应在构造期抛出 ValidationError."""
+
+    class D(Struct):
+        val: Annotated[int, Meta(tag=0, gt=0)] = 0
+
+    with pytest.raises(ValidationError, match="must be >"):
+        D()
+
+
 def test_field_default_factory_produces_distinct_instances() -> None:
     """field(default_factory=...) 应为每个实例生成独立对象."""
 
@@ -152,6 +219,16 @@ def test_field_default_factory_produces_distinct_instances() -> None:
     assert d1.val == []
     assert d2.val == []
     assert d1.val is not d2.val
+
+
+def test_default_factory_result_validated_in_init_path() -> None:
+    """default_factory 返回非法值时应在构造期抛出 ValidationError."""
+
+    class D(Struct):
+        val: Annotated[int, Meta(tag=0, gt=0)] = field(default_factory=lambda: 0)
+
+    with pytest.raises(ValidationError, match="must be >"):
+        D()
 
 
 def test_empty_mutable_literal_defaults_are_auto_factory() -> None:

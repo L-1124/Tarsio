@@ -165,6 +165,39 @@ def test_string_pattern_validation_raises() -> None:
         User.decode(encode_raw(TarsDict({1: "aa12"})))
 
 
+def test_tuple_length_constraints_validation_raises() -> None:
+    """Tuple 字段应应用 min_len/max_len 约束."""
+
+    class User(Struct):
+        data: Annotated[tuple[int, int], Meta(tag=1, min_len=3)]
+
+    with pytest.raises(ValidationError, match="length must be >="):
+        User.decode(encode_raw(TarsDict({1: (1, 2)})))
+
+
+def test_incompatible_constraints_type_raises() -> None:
+    """约束与值类型不兼容时应抛出 ValidationError."""
+
+    class User(Struct):
+        uid: Annotated[int, Meta(tag=1, min_len=1)]
+
+    with pytest.raises(ValidationError, match="must have length"):
+        User.decode(encode_raw(TarsDict({1: 10})))
+
+
+def test_init_decode_constraint_error_type_consistent() -> None:
+    """同一约束在构造与解码阶段应保持同类异常."""
+
+    class User(Struct):
+        uid: Annotated[int, Meta(tag=1, gt=0)]
+
+    with pytest.raises(ValidationError, match="must be >"):
+        User(uid=0)
+
+    with pytest.raises(ValidationError, match="must be >"):
+        User.decode(encode_raw(TarsDict({1: 0})))
+
+
 def test_type_info_primitives() -> None:
     """type_info 应能解析基础类型."""
     assert tinspect.type_info(int).kind == "int"

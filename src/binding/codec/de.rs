@@ -1,12 +1,3 @@
-use crate::codec::consts::TarsType;
-use crate::codec::reader::TarsReader;
-use pyo3::ffi;
-use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PySet, PyTuple, PyType};
-use simdutf8::basic::from_utf8;
-use std::cmp::Ordering;
-
-use crate::ValidationError;
 use crate::binding::codec::raw::{
     decode_any_struct_fields, decode_any_value, decode_raw, read_size_non_negative,
 };
@@ -15,6 +6,16 @@ use crate::binding::schema::{
     Constraints, StructDef, TarsDict, TypeExpr, WireType, ensure_schema_for_class,
 };
 use crate::binding::utils::check_depth;
+use crate::binding::validation::{
+    validate_constraints_on_value, validate_length_constraints_raw,
+    validate_numeric_constraints_raw,
+};
+use crate::codec::consts::TarsType;
+use crate::codec::reader::TarsReader;
+use pyo3::ffi;
+use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict, PySet, PyTuple, PyType};
+use simdutf8::basic::from_utf8;
 
 /// 将 Tars 二进制数据解码为 Struct 实例(Schema API).
 ///
@@ -113,11 +114,19 @@ fn deserialize_struct<'py>(
 
         if let Some(idx) = idx_opt {
             let field = &def.fields_sorted[idx];
-            let value = deserialize_value(py, reader, type_id, &field.ty, depth + 1)
-                .map_err(|e| e.prepend(PathItem::Field(field.name.clone())))?;
+            let value = deserialize_value(
+                py,
+                reader,
+                type_id,
+                &field.ty,
+                field.constraints.as_deref(),
+                depth + 1,
+            )
+            .map_err(|e| e.prepend(PathItem::Field(field.name.clone())))?;
 
-            if let Some(constraints) = field.constraints.as_deref() {
-                validate_value(field.name.as_str(), &value, constraints)
+            if let Some(c) = field.constraints.as_deref() {
+                validate_constraints_on_value(&value, c, Some(field.name.as_str()))
+                    .map_err(DeError::wrap)
                     .map_err(|e| e.prepend(PathItem::Field(field.name.clone())))?;
             }
 
@@ -193,108 +202,13 @@ fn deserialize_struct<'py>(
     Ok(instance)
 }
 
-fn validate_value<'py>(
-    field_name: &str,
-    value: &Bound<'py, PyAny>,
-    constraints: &Constraints,
-) -> DeResult<()> {
-    if constraints.gt.is_some()
-        || constraints.ge.is_some()
-        || constraints.lt.is_some()
-        || constraints.le.is_some()
-    {
-        let v: f64 = value.extract().map_err(|_| {
-            DeError::wrap(ValidationError::new_err(format!(
-                "Field '{}' must be a number to apply numeric constraints",
-                field_name
-            )))
-        })?;
-
-        if let Some(gt) = constraints.gt
-            && v.partial_cmp(&gt) != Some(Ordering::Greater)
-        {
-            return Err(DeError::wrap(ValidationError::new_err(format!(
-                "Field '{}' must be > {}",
-                field_name, gt
-            ))));
-        }
-        if let Some(ge) = constraints.ge
-            && matches!(v.partial_cmp(&ge), Some(Ordering::Less) | None)
-        {
-            return Err(DeError::wrap(ValidationError::new_err(format!(
-                "Field '{}' must be >= {}",
-                field_name, ge
-            ))));
-        }
-        if let Some(lt) = constraints.lt
-            && v.partial_cmp(&lt) != Some(Ordering::Less)
-        {
-            return Err(DeError::wrap(ValidationError::new_err(format!(
-                "Field '{}' must be < {}",
-                field_name, lt
-            ))));
-        }
-        if let Some(le) = constraints.le
-            && matches!(v.partial_cmp(&le), Some(Ordering::Greater) | None)
-        {
-            return Err(DeError::wrap(ValidationError::new_err(format!(
-                "Field '{}' must be <= {}",
-                field_name, le
-            ))));
-        }
-    }
-
-    if constraints.min_len.is_some() || constraints.max_len.is_some() {
-        let len = value.len().map_err(|_| {
-            DeError::wrap(ValidationError::new_err(format!(
-                "Field '{}' must have length to apply length constraints",
-                field_name
-            )))
-        })?;
-
-        if let Some(min_len) = constraints.min_len
-            && len < min_len
-        {
-            return Err(DeError::wrap(ValidationError::new_err(format!(
-                "Field '{}' length must be >= {}",
-                field_name, min_len
-            ))));
-        }
-        if let Some(max_len) = constraints.max_len
-            && len > max_len
-        {
-            return Err(DeError::wrap(ValidationError::new_err(format!(
-                "Field '{}' length must be <= {}",
-                field_name, max_len
-            ))));
-        }
-    }
-
-    if let Some(pattern_py) = constraints.pattern.as_ref() {
-        let py = value.py();
-        let pattern = pattern_py.bind(py);
-        // 调用 re.Pattern.search(value)
-        let res = pattern
-            .call_method1("search", (value,))
-            .map_err(DeError::wrap)?;
-
-        if res.is_none() {
-            return Err(DeError::wrap(ValidationError::new_err(format!(
-                "Field '{}' does not match pattern",
-                field_name
-            ))));
-        }
-    }
-
-    Ok(())
-}
-
 /// 根据 TypeExpr 反序列化单个值.
 fn deserialize_value<'py>(
     py: Python<'py>,
     reader: &mut TarsReader,
     type_id: TarsType,
     type_expr: &TypeExpr,
+    constraints: Option<&Constraints>,
     depth: usize,
 ) -> DeResult<Bound<'py, PyAny>> {
     check_depth(depth).map_err(DeError::wrap)?;
@@ -305,6 +219,11 @@ fn deserialize_value<'py>(
                 let v = reader
                     .read_int(type_id)
                     .map_err(|e| DeError::new(format!("Failed to read int: {}", e)))?;
+
+                if let Some(c) = constraints {
+                    validate_numeric_constraints_raw(v as f64, c, None).map_err(DeError::wrap)?;
+                }
+
                 Ok(v.into_pyobject(py)
                     .map_err(|e| DeError::new(e.to_string()))?
                     .into_any())
@@ -324,6 +243,11 @@ fn deserialize_value<'py>(
                 let v = reader
                     .read_float(type_id)
                     .map_err(|e| DeError::new(format!("Failed to read float: {}", e)))?;
+
+                if let Some(c) = constraints {
+                    validate_numeric_constraints_raw(v as f64, c, None).map_err(DeError::wrap)?;
+                }
+
                 Ok(v.into_pyobject(py)
                     .map_err(|e| DeError::new(e.to_string()))?
                     .into_any())
@@ -332,6 +256,11 @@ fn deserialize_value<'py>(
                 let v = reader
                     .read_double(type_id)
                     .map_err(|e| DeError::new(format!("Failed to read double: {}", e)))?;
+
+                if let Some(c) = constraints {
+                    validate_numeric_constraints_raw(v, c, None).map_err(DeError::wrap)?;
+                }
+
                 Ok(v.into_pyobject(py)
                     .map_err(|e| DeError::new(e.to_string()))?
                     .into_any())
@@ -340,6 +269,11 @@ fn deserialize_value<'py>(
                 let bytes = reader
                     .read_string(type_id)
                     .map_err(|e| DeError::new(format!("Failed to read string bytes: {}", e)))?;
+
+                if let Some(c) = constraints {
+                    validate_length_constraints_raw(bytes.len(), c, None).map_err(DeError::wrap)?;
+                }
+
                 let s =
                     from_utf8(bytes).map_err(|_| DeError::new("Invalid UTF-8 string".into()))?;
                 Ok(s.into_pyobject(py)
@@ -351,7 +285,7 @@ fn deserialize_value<'py>(
         TypeExpr::Any => decode_any_value(py, reader, type_id, depth),
         TypeExpr::NoneType => Ok(py.None().into_bound(py)),
         TypeExpr::Enum(enum_cls, inner) => {
-            let value = deserialize_value(py, reader, type_id, inner, depth + 1)?;
+            let value = deserialize_value(py, reader, type_id, inner, None, depth + 1)?;
             let cls = enum_cls.bind(py);
             let enum_value = cls.call1((value,)).map_err(DeError::wrap)?;
             Ok(enum_value)
@@ -361,17 +295,24 @@ fn deserialize_value<'py>(
                 return Err(DeError::new("Set value must be encoded as List".into()));
             }
             let len = read_size_non_negative(reader, "list")?;
+
+            if let Some(c) = constraints {
+                validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+            }
+
             let set = PySet::empty(py).map_err(DeError::wrap)?;
             for _ in 0..len {
                 let (_, item_type) = reader
                     .read_head()
                     .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
-                let item = deserialize_value(py, reader, item_type, inner, depth + 1)?;
+                let item = deserialize_value(py, reader, item_type, inner, None, depth + 1)?;
                 set.add(item).map_err(DeError::wrap)?;
             }
             Ok(set.into_any())
         }
-        TypeExpr::Union(variants, _) => decode_union_value(py, reader, type_id, variants, depth),
+        TypeExpr::Union(variants, _) => {
+            decode_union_value(py, reader, type_id, variants, constraints, depth)
+        }
         TypeExpr::Struct(ptr) => {
             let obj_ptr = *ptr as *mut ffi::PyObject;
             // SAFETY: ptr 指向 Schema 内部持有的 PyType,生命周期受 Py<PyType> 保障。
@@ -400,6 +341,9 @@ fn deserialize_value<'py>(
                 ));
             }
             let len = read_size_non_negative(reader, "list")?;
+            if let Some(c) = constraints {
+                validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+            }
             if len != items.len() {
                 return Err(DeError::new(
                     "Tuple length does not match annotation".into(),
@@ -426,6 +370,7 @@ fn deserialize_value<'py>(
                     reader,
                     kt,
                     &TypeExpr::Primitive(WireType::String),
+                    None,
                     depth + 1,
                 )?;
 
@@ -433,7 +378,7 @@ fn deserialize_value<'py>(
                     .read_head()
                     .map_err(|e| DeError::new(format!("Failed to read map value head: {}", e)))?;
 
-                let val = deserialize_value(py, reader, vt, &TypeExpr::Any, depth + 1)
+                let val = deserialize_value(py, reader, vt, &TypeExpr::Any, None, depth + 1)
                     .map_err(|e| e.prepend(PathItem::Key(key.to_string())))?;
 
                 dict.set_item(key, val).map_err(DeError::wrap)?;
@@ -450,6 +395,11 @@ fn deserialize_value<'py>(
                     return Err(DeError::new("SimpleList must contain Byte (0)".into()));
                 }
                 let len = read_size_non_negative(reader, "SimpleList")?;
+
+                if let Some(c) = constraints {
+                    validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+                }
+
                 let bytes = reader
                     .read_bytes(len)
                     .map_err(|e| DeError::new(format!("Failed to read SimpleList bytes: {}", e)))?;
@@ -457,6 +407,10 @@ fn deserialize_value<'py>(
             }
 
             let len = read_size_non_negative(reader, "list")?;
+
+            if let Some(c) = constraints {
+                validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+            }
 
             let list_any = unsafe {
                 // SAFETY: PyList_New 返回新引用并预留 len 个槽位。若返回空指针则抛错。
@@ -470,7 +424,7 @@ fn deserialize_value<'py>(
                 let (_, item_type) = reader
                     .read_head()
                     .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
-                let item = deserialize_value(py, reader, item_type, inner, depth + 1)
+                let item = deserialize_value(py, reader, item_type, inner, None, depth + 1)
                     .map_err(|e| e.prepend(PathItem::Index(idx)))?;
                 let set_res = unsafe {
                     // SAFETY: PyList_SetItem 会“偷”引用, item.into_ptr 转移所有权。
@@ -488,6 +442,9 @@ fn deserialize_value<'py>(
                 return Err(DeError::new("Tuple value must be encoded as List".into()));
             }
             let len = read_size_non_negative(reader, "list")?;
+            if let Some(c) = constraints {
+                validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+            }
             let tuple = build_var_tuple(py, reader, inner, len, depth)?;
             Ok(tuple.into_any())
         }
@@ -496,6 +453,9 @@ fn deserialize_value<'py>(
                 return Err(DeError::new("Tuple value must be encoded as List".into()));
             }
             let len = read_size_non_negative(reader, "list")?;
+            if let Some(c) = constraints {
+                validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+            }
             if len != items.len() {
                 return Err(DeError::new(
                     "Tuple length does not match annotation".into(),
@@ -507,26 +467,32 @@ fn deserialize_value<'py>(
         TypeExpr::Map(k_type, v_type) => {
             let len = read_size_non_negative(reader, "map")?;
 
+            if let Some(c) = constraints {
+                validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+            }
+
             let dict = PyDict::new(py);
             for _ in 0..len {
                 let (_, kt) = reader
                     .read_head()
                     .map_err(|e| DeError::new(format!("Failed to read map key head: {}", e)))?;
-                let key = deserialize_value(py, reader, kt, k_type, depth + 1)
+                let key = deserialize_value(py, reader, kt, k_type, None, depth + 1)
                     .map_err(|e| e.prepend(PathItem::Key("<key>".into())))?;
 
                 let (_, vt) = reader
                     .read_head()
                     .map_err(|e| DeError::new(format!("Failed to read map value head: {}", e)))?;
 
-                let val = deserialize_value(py, reader, vt, v_type, depth + 1)
+                let val = deserialize_value(py, reader, vt, v_type, None, depth + 1)
                     .map_err(|e| e.prepend(PathItem::Key(key.to_string())))?;
 
                 dict.set_item(key, val).map_err(DeError::wrap)?;
             }
             Ok(dict.into_any())
         }
-        TypeExpr::Optional(inner) => deserialize_value(py, reader, type_id, inner, depth),
+        TypeExpr::Optional(inner) => {
+            deserialize_value(py, reader, type_id, inner, constraints, depth)
+        }
     }
 }
 
@@ -552,7 +518,7 @@ fn build_fixed_tuple<'py>(
         let (_, item_type_id) = reader
             .read_head()
             .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
-        let item = deserialize_value(py, reader, item_type_id, item_type, depth + 1)
+        let item = deserialize_value(py, reader, item_type_id, item_type, None, depth + 1)
             .map_err(|e| e.prepend(PathItem::Index(idx)))?;
         let set_res = unsafe {
             // SAFETY: tuple 由 PyTuple_New 新建且每个槽位只写一次；idx 在范围内。
@@ -590,7 +556,7 @@ fn build_var_tuple<'py>(
         let (_, item_type_id) = reader
             .read_head()
             .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
-        let item = deserialize_value(py, reader, item_type_id, inner, depth + 1)
+        let item = deserialize_value(py, reader, item_type_id, inner, None, depth + 1)
             .map_err(|e| e.prepend(PathItem::Index(idx)))?;
         let set_res = unsafe {
             // SAFETY: tuple 由 PyTuple_New 新建且每个槽位只写一次；idx 在范围内。
@@ -610,11 +576,12 @@ fn decode_union_value<'py>(
     reader: &mut TarsReader,
     type_id: TarsType,
     variants: &[TypeExpr],
+    constraints: Option<&Constraints>,
     depth: usize,
 ) -> DeResult<Bound<'py, PyAny>> {
     for variant in variants {
         if union_variant_matches_type_id(variant, type_id) {
-            return deserialize_value(py, reader, type_id, variant, depth + 1);
+            return deserialize_value(py, reader, type_id, variant, constraints, depth + 1);
         }
     }
     Err(DeError::new(

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::binding::compiler::compile_schema_from_class;
 pub use crate::binding::core::*;
 use crate::binding::parse::detect_struct_kind;
+use crate::binding::validation::validate_type_and_constraints;
 
 pub(crate) fn schema_from_class(
     py: Python<'_>,
@@ -494,6 +495,15 @@ pub fn construct_instance(
     if no_kwargs && num_positional == num_fields {
         for (idx, field) in def.fields_sorted.iter().enumerate() {
             let val = args.get_item(idx)?;
+            if !(field.is_optional && val.is_none()) {
+                validate_type_and_constraints(
+                    py,
+                    &val,
+                    &field.ty,
+                    field.constraints.as_deref(),
+                    field.name.as_str(),
+                )?;
+            }
             set_field_value(self_obj, field, &val)?;
         }
         return Ok(());
@@ -582,6 +592,15 @@ pub fn construct_instance(
             }
         };
 
+        if !(field.is_optional && val_to_set.is_none()) {
+            validate_type_and_constraints(
+                py,
+                &val_to_set,
+                &field.ty,
+                field.constraints.as_deref(),
+                field.name.as_str(),
+            )?;
+        }
         set_field_value(self_obj, field, &val_to_set)?;
     }
 
