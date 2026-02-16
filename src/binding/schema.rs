@@ -354,8 +354,8 @@ impl Struct {
                     return Ok(py.NotImplemented());
                 }
 
-                let mut vals1 = Vec::with_capacity(def.fields_sorted.len());
-                let mut vals2 = Vec::with_capacity(def.fields_sorted.len());
+                let mut vals1: SmallVec<[_; 16]> = SmallVec::with_capacity(def.fields_sorted.len());
+                let mut vals2: SmallVec<[_; 16]> = SmallVec::with_capacity(def.fields_sorted.len());
                 for field in &def.fields_sorted {
                     vals1.push(slf.getattr(field.name_py.bind(py))?);
                     vals2.push(other.getattr(field.name_py.bind(py))?);
@@ -388,7 +388,7 @@ impl Struct {
             )));
         }
 
-        let mut vals = Vec::with_capacity(def.fields_sorted.len());
+        let mut vals: SmallVec<[_; 16]> = SmallVec::with_capacity(def.fields_sorted.len());
         for field in &def.fields_sorted {
             vals.push(slf.getattr(field.name_py.bind(py))?);
         }
