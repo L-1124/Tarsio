@@ -2,6 +2,8 @@ use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
 use pyo3::types::{PyAny, PyDict, PyString, PyTuple, PyType};
+use smallvec::SmallVec;
+use std::fmt::Write;
 use std::sync::Arc;
 
 use crate::binding::compiler::compile_schema_from_class;
@@ -255,7 +257,10 @@ impl Struct {
             None => return Ok(format!("{}()", class_name)),
         };
 
-        let mut fields_str = Vec::new();
+        let mut result = String::with_capacity(class_name.len() + 2 + def.fields_sorted.len() * 24);
+        result.push_str(&class_name);
+        result.push('(');
+        let mut first = true;
         for field in &def.fields_sorted {
             let val = match slf.getattr(field.name_py.bind(py)) {
                 Ok(v) => v,
@@ -269,11 +274,20 @@ impl Struct {
             {
                 continue;
             }
-            let val_repr = val.repr()?.extract::<String>()?;
-            fields_str.push(format!("{}={}", field.name, val_repr));
-        }
 
-        Ok(format!("{}({})", class_name, fields_str.join(", ")))
+            if !first {
+                result.push_str(", ");
+            }
+            first = false;
+
+            let val_repr = val.repr()?;
+            let val_repr_str = val_repr.to_str()?;
+            write!(result, "{}={}", field.name, val_repr_str)
+                .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("failed to build repr"))?;
+        }
+        result.push(')');
+
+        Ok(result)
     }
 
     fn __richcmp__(
@@ -475,7 +489,17 @@ pub fn construct_instance(
         )));
     }
 
-    let mut mapped_values: Vec<Option<Py<PyAny>>> =
+    // Fast Path: 全位置参数，无 kwargs，无需中间缓冲区
+    let no_kwargs = kwargs.is_none_or(|k| k.is_empty());
+    if no_kwargs && num_positional == num_fields {
+        for (idx, field) in def.fields_sorted.iter().enumerate() {
+            let val = args.get_item(idx)?;
+            set_field_value(self_obj, field, &val)?;
+        }
+        return Ok(());
+    }
+
+    let mut mapped_values: SmallVec<[Option<Py<PyAny>>; 16]> =
         std::iter::repeat_with(|| None).take(num_fields).collect();
 
     for (idx, slot) in mapped_values.iter_mut().enumerate().take(num_positional) {
