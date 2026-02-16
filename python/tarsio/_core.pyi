@@ -35,10 +35,16 @@ __all__ = [
 
 NODEFAULT: Final[object]
 
-def field(*, default: Any = NODEFAULT, default_factory: Any = NODEFAULT) -> Any:
+def field(
+    *,
+    tag: int | None = None,
+    default: Any = NODEFAULT,
+    default_factory: Any = NODEFAULT,
+) -> Any:
     """声明字段默认值或默认值工厂.
 
     Args:
+        tag: 字段 Tag, 范围 0-255。省略时自动分配。
         default: 字段默认值。
         default_factory: 字段默认值工厂（可调用对象）。
 
@@ -88,25 +94,24 @@ class ValidationError(ValueError):
 class Meta:
     """字段元数据与约束定义.
 
-    用于在 `Annotated` 中替代纯整数 Tag, 提供额外的运行时校验.
+    用于在 `Annotated` 中提供运行时校验约束。
 
     Examples:
         ```python
         from typing import Annotated
-        from tarsio import Struct, Meta
+        from tarsio import Struct, Meta, field
 
         class Product(Struct):
             # 价格必须 > 0
-            price: Annotated[int, Meta(tag=0, gt=0)]
+            price: Annotated[int, Meta(gt=0)] = field(tag=0)
             # 代码必须是 1-10 位大写字母
-            code: Annotated[
-                str, Meta(tag=1, min_len=1, max_len=10, pattern=r"^[A-Z]+$")
-            ]
+            code: Annotated[str, Meta(min_len=1, max_len=10, pattern=r"^[A-Z]+$")] = (
+                field(tag=1)
+            )
         ```
     """
     def __init__(
         self,
-        tag: int | None = ...,
         gt: float | None = ...,
         lt: float | None = ...,
         ge: float | None = ...,
@@ -118,7 +123,6 @@ class Meta:
         """初始化字段元数据.
 
         Args:
-            tag: 字段 Tag, 范围 0-255。
             gt: 数值必须大于该值。
             lt: 数值必须小于该值。
             ge: 数值必须大于或等于该值。
@@ -129,7 +133,6 @@ class Meta:
         """
         ...
 
-    tag: int | None
     gt: float | None
     lt: float | None
     ge: float | None
@@ -218,11 +221,14 @@ class StructConfig:
 class Struct(metaclass=StructMeta):
     """高性能可序列化结构体基类.
 
-    `Struct` 用于定义可编码/解码的 Tars/JCE 数据结构。字段通过类型注解声明，并必须通过
-    `typing.Annotated` 显式绑定 Tag：
+    `Struct` 用于定义可编码/解码的 Tars/JCE 数据结构。字段通过类型注解声明，
+    tag 支持显式与隐式混合：
 
-    - `Annotated[T, tag]`：使用 0-255 的整数 Tag.
-    - `Annotated[T, Meta(...)]`：使用 `Meta(tag=...)` 并携带额外约束（如 `gt/min_len`）。
+    - 显式 tag：通过 `field(tag=...)` 指定。
+    - 隐式 tag：未显式指定时按字段定义顺序自动分配。
+      当未显式指定的字段位于显式 tag 字段之后时，会从该显式 tag 继续递增分配。
+
+    `Annotated` 仅用于附加 `Meta` 约束，不再负责声明 tag。
 
     字段可以提供默认值。带默认值的字段在构造函数中表现为可选参数；当字段是 Optional 且未
     显式提供默认值时，其默认值视为 `None`。
@@ -259,12 +265,12 @@ class Struct(metaclass=StructMeta):
 
         ```python
         from typing import Annotated
-        from tarsio import Struct
+        from tarsio import Meta, Struct, field
 
         class User(Struct):
-            uid: Annotated[int, 0]
-            name: Annotated[str, 1]
-            score: Annotated[int, 2] = 0
+            uid: int = field(tag=0)
+            name: str  # 自动分配 tag=1
+            score: Annotated[int, Meta(ge=0)] = field(tag=2, default=0)
 
         user = User(uid=1, name="Ada")
         data = user.encode()
@@ -275,12 +281,11 @@ class Struct(metaclass=StructMeta):
         启用配置项：
 
         ```python
-        from typing import Annotated
-        from tarsio import Struct
+        from tarsio import Struct, field
 
         class Point(Struct, frozen=True, order=True):
-            x: Annotated[int, 0]
-            y: Annotated[int, 1]
+            x: int = field(tag=0)
+            y: int = field(tag=1)
         ```
     """
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Any, Final, Literal, NewType, Optional, TypeAlias, TypedDict
 from typing_extensions import NotRequired, Required, TypeAliasType
-from tarsio import Struct, encode, decode
+from tarsio import Struct, Meta, TarsDict, decode, encode, field
 ```
 
 ## 标量类型 (Scalar Types)
@@ -204,7 +204,7 @@ class User(Struct, frozen=True):
     id: Annotated[int, 0]
     name: Annotated[str, 1]
     # 支持 Meta 约束
-    score: Annotated[int, Meta(tag=2, ge=0)] = 0
+    score: Annotated[int, Meta(ge=0)] = field(tag=2, default=0)
 
 # 支持位置参数构造 (按 Tag 顺序)
 user1 = User(1, "Ada")
@@ -368,13 +368,20 @@ assert restored.value == Color.RED
 
 ## 特殊标记类型 (Marker Types)
 
+字段 Tag 支持显式与隐式混合：
+
+* 显式 tag：通过 `field(tag=...)` 指定。
+* 隐式 tag：未显式指定时按字段定义顺序自动分配。
+* 隐式字段位于显式字段之后时，会从该显式 tag 继续递增分配。
+
 ### [`Annotated[T, tag]`][typing.Annotated]
 
-编码：按 `T` 的类型映射。
+编码：按 `T` 的类型映射。`Annotated` 主要用于附加约束/标记元数据。
+显式 Tag 建议使用 `field(tag=...)`；`Annotated[T, tag]` 作为兼容语法仍可使用。
 
 ```python
 class S(Struct):
-    value: Annotated[int, 7]
+    value: Annotated[int, Literal["important"]] = field(tag=7)
 
 encoded = encode(S(42))
 restored = decode(S, encoded)

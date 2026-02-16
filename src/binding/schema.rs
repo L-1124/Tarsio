@@ -118,16 +118,17 @@ impl TarsDict {
 
 /// Tarsio 的 Struct 基类.
 ///
-/// 继承该类会在类创建时编译并注册 Schema, 字段使用 `typing.Annotated[T, tag]` 声明.
+/// 继承该类会在类创建时编译并注册 Schema.
+/// 字段 tag 可通过 `field(tag=...)` 显式声明，未声明时按定义顺序自动分配。
 ///
 /// Examples:
 ///     ```python
 ///     from typing import Annotated
-///     from tarsio import Struct
+///     from tarsio import Struct, field
 ///
 ///     class User(Struct):
-///         uid: Annotated[int, 0]
-///         name: Annotated[str, 1]
+///         uid: int = field(tag=0)
+///         name: Annotated[str, "doc"]  # 自动分配 tag
 ///     ```
 ///
 /// Notes:

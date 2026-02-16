@@ -21,7 +21,6 @@ repos:
         entry: uv run ruff check
         language: system
         files: \.(py|pyi)$
-        types: [python]
         args: [--fix]
 
       - id: ruff-format
@@ -29,14 +28,12 @@ repos:
         entry: uv run ruff format
         language: system
         files: \.(py|pyi)$
-        types: [python]
 
       - id: basedpyright
         name: basedpyright
         entry: uv run basedpyright
         language: system
         files: \.(py|pyi)$
-        types: [python]
 
       - id: cargo-fmt
         name: cargo fmt

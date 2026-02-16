@@ -7,14 +7,14 @@
 
 ```python
 from typing import Annotated, Optional
-from tarsio import Struct
+from tarsio import Struct, field
 from tarsio import inspect as tinspect
 
 
 class User(Struct):
-    uid: Annotated[int, 0]
-    name: Annotated[str, 1]
-    score: Annotated[Optional[int], 2] = None
+    uid: int = field(tag=0)
+    name: str  # 自动分配 tag=1
+    score: Annotated[Optional[int], "nullable"] = field(tag=2, default=None)
 
 
 info = tinspect.struct_info(User)
@@ -38,14 +38,14 @@ assert tinspect.type_info(list[str]).kind == "list"
 ## 递归结构
 
 ```python
-from typing import Annotated, Optional
-from tarsio import Struct
+from typing import Optional
+from tarsio import Struct, field
 from tarsio import inspect as tinspect
 
 
 class Node(Struct):
-    val: Annotated[int, 0]
-    child: Annotated[Optional["Node"], 1] = None
+    val: int = field(tag=0)
+    child: Optional["Node"] = field(tag=1, default=None)
 
 
 info = tinspect.type_info(Node)
@@ -65,4 +65,5 @@ assert child_type.inner_type.cls is Node
     * 循环引用：`RefType`（仅在递归结构中出现）。
     * 枚举：`Enum`（按 `value` 的内层类型解析）。
 * `typing.Annotated` 中的 `Meta` 约束会被解析到 `constraints`。
+* 字段 tag 可来自 `field(tag=...)`、自动分配或 `Annotated[T, tag]` 兼容语法。
 * 不支持的类型或未支持的前向引用会抛出 `TypeError`。

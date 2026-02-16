@@ -1,25 +1,29 @@
 # 定义模型
 
-使用 `Struct` 与 `Annotated` 定义 Tars 结构体。
+使用 `Struct` 与类型注解定义 Tars 结构体。
 本页介绍如何定义字段类型、添加元数据约束、配置默认值以及处理嵌套结构。
 
 ## 基础定义
 
-使用 Python 标准库 `typing.Annotated` 将 JCE Tag 绑定到类型上。
+字段 Tag 支持显式与隐式混合：
+
+* **显式 tag**：使用 `field(tag=...)`。
+* **隐式 tag**：未显式声明时按字段定义顺序自动分配。
+* **混合使用**：允许在同一模型中混合显式与隐式字段。若隐式字段位于显式字段之后，会从该显式 tag 继续递增分配。
 
 ### 语法结构
 
 ```python
-from typing import Annotated
-from tarsio import Struct
+from tarsio import Struct, field
 
 class User(Struct):
-    uid: Annotated[int, 0]
-    name: Annotated[str, 1]
+    uid: int = field(tag=0)  # 显式
+    name: str                # 隐式 -> tag 1
 ```
 
-* **Annotated[T, N]**: 定义一个类型为 `T`，Tag 为 `N` 的字段。
-* **N**: 必须是 0-255 之间的整数。
+* **field(tag=N)**: 定义显式 Tag（0-255）。
+* **普通注解字段**: 由系统自动分配 Tag。
+* **Annotated**: 仅用于附加 `Meta` 约束，不负责声明 Tag。
 
 ## 字段类型
 
@@ -38,35 +42,32 @@ Tarsio 支持以下标准 Python 类型与 Tars 类型的映射：
 ### 容器类型示例
 
 ```python
-from typing import Annotated
-from tarsio import Struct
+from tarsio import Struct, field
 
 class Group(Struct):
     # 列表: vector<string>
-    tags: Annotated[list[str], 0]
+    tags: list[str] = field(tag=0)
 
     # 映射: map<string, int>
-    scores: Annotated[dict[str, int], 1]
+    scores: dict[str, int]
 ```
 
 ## 元数据与校验 (Meta)
 
-当需要对字段值进行约束时，使用 `tarsio.Meta` 替代纯整数 Tag。
+当需要对字段值进行约束时，使用 `tarsio.Meta`。
 校验逻辑在 **反序列化 (decode)** 时执行，失败抛出 `ValidationError`。
 
 ```python
 from typing import Annotated
-from tarsio import Struct, Meta
+from tarsio import Struct, Meta, field
 
 class Product(Struct):
     # 必须大于 0
-    price: Annotated[int, Meta(tag=0, gt=0)]
+    price: Annotated[int, Meta(gt=0)] = field(tag=0)
 
     # 长度必须在 1-50 之间，且匹配正则
-    code: Annotated[str, Meta(tag=1, min_len=1, max_len=50, pattern=r"^[A-Z]+$")]
+    code: Annotated[str, Meta(min_len=1, max_len=50, pattern=r"^[A-Z]+$")] = field(tag=1)
 ```
-
-> **注意**: `Meta(tag=N, ...)` 包含了 Tag 信息。同一字段必须二选一：要么用整数 `N`，要么用 `Meta(tag=N, ...)`。
 
 ## 默认值与可选字段
 
@@ -74,16 +75,14 @@ class Product(Struct):
 
 ### 使用 `field` 指定默认值工厂
 
-`field` 用于声明默认值与默认值工厂（`default_factory`）。
-注意：Tag 仍然必须写在 `Annotated[...]` 里，`field` 不负责定义 tag。
+`field` 用于声明 `tag`、默认值与默认值工厂（`default_factory`）。
 
 ```python
-from typing import Annotated
 from tarsio import Struct, field
 
 class Cache(Struct):
     # 每个实例都会得到新的 list
-    items: Annotated[list[int], 0] = field(default_factory=list)
+    items: list[int] = field(tag=0, default_factory=list)
 ```
 
 ### 可变默认值规则（严格模式）
@@ -98,7 +97,7 @@ class Cache(Struct):
 ```python
 class Request(Struct):
     # 必填: 数据中必须包含 Tag 0
-    token: Annotated[str, 0]
+    token: str = field(tag=0)
 ```
 
 ### 可选字段 (Optional)
@@ -106,15 +105,15 @@ class Request(Struct):
 使用 `Optional[T]` 或 `T | None` 并赋值 `= None`。
 
 ```python
-from typing import Annotated, Optional
-from tarsio import Struct
+from typing import Optional
+from tarsio import Struct, field
 
 class Response(Struct):
     # 必填
-    code: Annotated[int, 0]
+    code: int = field(tag=0)
 
     # 可选: 若数据中无 Tag 1，则 message 为 None
-    message: Annotated[Optional[str], 1] = None
+    message: Optional[str] = field(tag=1, default=None)
 ```
 
 ## 嵌套结构体
@@ -123,11 +122,11 @@ class Response(Struct):
 
 ```python
 class Address(Struct):
-    city: Annotated[str, 0]
+    city: str = field(tag=0)
 
 class User(Struct):
-    id: Annotated[int, 0]
-    address: Annotated[Address, 1]  # 嵌套
+    id: int = field(tag=0)
+    address: Address = field(tag=1)  # 嵌套
 ```
 
 ## 模型配置
@@ -143,8 +142,8 @@ class Config(Struct, frozen=True, forbid_unknown_tags=True):
 
 ```python
 class Point(Struct, frozen=True, eq=True):
-    x: Annotated[int, 0]
-    y: Annotated[int, 1]
+    x: int = field(tag=0)
+    y: int = field(tag=1)
 
 p1 = Point(1, 2)
 p2 = Point(1, 2)
@@ -154,9 +153,9 @@ assert hash(p1) == hash(p2)
 
 ```python
 class Config(Struct, repr_omit_defaults=True):
-    host: Annotated[str, 0] = "localhost"
-    port: Annotated[int, 1] = 8080
-    debug: Annotated[bool, 2] = False
+    host: str = field(tag=0, default="localhost")
+    port: int = field(tag=1, default=8080)
+    debug: bool = field(tag=2, default=False)
 
 # 仅输出非默认值字段
 conf = Config(port=9090)
@@ -166,7 +165,7 @@ print(conf)
 
 ```python
 class RuntimeState(Struct, dict=True, kw_only=True):
-    id: Annotated[int, 0]
+    id: int = field(tag=0)
 
 obj = RuntimeState(id=1)
 obj._cache = {"k": "v"}  # dict=True 允许动态属性

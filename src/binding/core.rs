@@ -246,8 +246,6 @@ impl StructConfig {
 #[pyclass(module = "tarsio._core")]
 pub struct Meta {
     #[pyo3(get, set)]
-    pub tag: Option<u8>,
-    #[pyo3(get, set)]
     pub gt: Option<f64>,
     #[pyo3(get, set)]
     pub lt: Option<f64>,
@@ -266,10 +264,9 @@ pub struct Meta {
 #[pymethods]
 impl Meta {
     #[new]
-    #[pyo3(signature=(tag=None, gt=None, lt=None, ge=None, le=None, min_len=None, max_len=None, pattern=None))]
+    #[pyo3(signature=(gt=None, lt=None, ge=None, le=None, min_len=None, max_len=None, pattern=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        tag: Option<u8>,
         gt: Option<f64>,
         lt: Option<f64>,
         ge: Option<f64>,
@@ -279,7 +276,6 @@ impl Meta {
         pattern: Option<String>,
     ) -> Self {
         Self {
-            tag,
             gt,
             lt,
             ge,
@@ -305,6 +301,7 @@ impl NoDefaultType {
 /// 字段默认值规格（内部使用）.
 #[pyclass(module = "tarsio._core", name = "_FieldSpec")]
 pub struct FieldSpec {
+    pub tag: Option<u8>,
     pub has_default: bool,
     pub default_value: Option<Py<PyAny>>,
     pub default_factory: Option<Py<PyAny>>,
@@ -334,6 +331,7 @@ pub fn is_nodefault(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
 pub fn field(py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<FieldSpec>> {
     let nodefault = nodefault_singleton(py)?;
     let nodefault_ref = nodefault.bind(py);
+    let mut tag: Option<u8> = None;
     let mut default_value: Option<Py<PyAny>> = None;
     let mut default_factory: Option<Py<PyAny>> = None;
 
@@ -343,6 +341,19 @@ pub fn field(py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<
                 pyo3::exceptions::PyTypeError::new_err("field() keyword names must be strings")
             })?;
             match key_str.as_str() {
+                "tag" => {
+                    let int_tag = value.extract::<i64>().map_err(|_| {
+                        pyo3::exceptions::PyTypeError::new_err(
+                            "field() 'tag' must be an integer in range 0..=255",
+                        )
+                    })?;
+                    if !(0..=255).contains(&int_tag) {
+                        return Err(pyo3::exceptions::PyTypeError::new_err(
+                            "field() 'tag' must be an integer in range 0..=255",
+                        ));
+                    }
+                    tag = Some(int_tag as u8);
+                }
                 "default" => {
                     if !value.is(nodefault_ref) {
                         default_value = Some(value.unbind());
@@ -381,6 +392,7 @@ pub fn field(py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<
     Py::new(
         py,
         FieldSpec {
+            tag,
             has_default,
             default_value,
             default_factory,

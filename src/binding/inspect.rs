@@ -646,7 +646,11 @@ pub fn type_info(py: Python<'_>, tp: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 ///     `StructInfo` 对象；若无可用字段或为未具体化模板则返回 None。
 ///
 /// Raises:
-///     TypeError: 当字段缺少 tag、tag 重复、混用整数 tag 与 Meta，或字段类型不受支持时抛出。
+///     TypeError: 当字段 tag 重复、`field(tag=...)` 非法、`field(tag=...)` 与 Annotated 整数 tag 混用，或字段类型不受支持时抛出。
+///
+/// Notes:
+///     字段 tag 支持显式与隐式混合：显式通过 `field(tag=...)`，其余字段按定义顺序自动分配。
+///     当隐式字段位于显式字段之后时，会从该显式 tag 继续递增分配。
 #[pyfunction]
 pub fn struct_info(py: Python<'_>, cls: &Bound<'_, PyType>) -> PyResult<Option<StructInfo>> {
     let Some(fields_ir) = introspect_struct_fields(py, cls)? else {

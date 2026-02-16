@@ -21,16 +21,18 @@ Tarsio 的设计哲学是 **"Type Hint as Schema"**。你不需要编写额外�
 
 ```python
 from typing import Annotated
-from tarsio import Struct
+from tarsio import Struct, Meta, field
 
 class Packet(Struct):
-    version: Annotated[int, 0] = 1
-    body: Annotated[bytes, 1]
+    version: int = field(tag=0, default=1)
+    body: bytes
+    note: Annotated[str | None, Meta(max_len=32)] = None
 ```
 
 * **Struct**: 所有 Tarsio 模型的基类。
-* **Annotated**: 用于附加元数据（如 Tag ID）。
-* **Tag ID**: 直接使用整数 (0-255) 指定字段在 JCE 协议中的编号。
+* **field(tag=...)**: 用于显式指定字段 Tag。
+* **Annotated + Meta**: 用于附加约束（如长度、范围、正则）。
+* **Tag ID**: 未显式指定时按字段顺序自动分配，可与显式 tag 混用。
 
 ## 性能
 

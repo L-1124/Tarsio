@@ -98,6 +98,42 @@ def test_init_unexpected_keyword_raises_type_error() -> None:
         User(uid=1, name="a", unknown=1)  # pyright: ignore[reportCallIssue]
 
 
+def test_plain_annotations_init_and_roundtrip() -> None:
+    """全普通注解应支持构造与编解码."""
+
+    class Plain(Struct):
+        uid: int
+        name: str = "n"
+        note: str | None = None
+
+    obj = Plain(1)
+    assert obj.uid == 1
+    assert obj.name == "n"
+    assert obj.note is None
+
+    restored = decode(Plain, encode(obj))
+    assert restored.uid == 1
+    assert restored.name == "n"
+    assert restored.note is None
+
+
+def test_field_tag_explicit_and_implicit_mix_roundtrip() -> None:
+    """field(tag=...) 与隐式 tag 混用时应稳定编解码."""
+
+    class Mixed(Struct):
+        a: int = field(tag=0)
+        b: Annotated[int, Meta(gt=0)]
+        c: str = field(tag=5)
+        d: bytes
+
+    obj = Mixed(a=1, b=2, c="ok", d=b"z")
+    restored = decode(Mixed, encode(obj))
+    assert restored.a == 1
+    assert restored.b == 2
+    assert restored.c == "ok"
+    assert restored.d == b"z"
+
+
 def test_init_type_mismatch_raises_validation_error() -> None:
     """构造期类型不匹配应抛出 ValidationError."""
 
@@ -127,7 +163,7 @@ def test_init_numeric_constraints_raises_validation_error() -> None:
     """构造期数值约束不满足应抛出 ValidationError."""
 
     class Demo(Struct):
-        a: Annotated[int, Meta(tag=0, gt=0)]
+        a: Annotated[int, Meta(gt=0)]
 
     with pytest.raises(ValidationError, match="must be >"):
         Demo(a=0)
@@ -137,7 +173,7 @@ def test_init_length_constraints_raises_validation_error() -> None:
     """构造期长度约束不满足应抛出 ValidationError."""
 
     class Demo(Struct):
-        name: Annotated[str, Meta(tag=0, min_len=2, max_len=4)]
+        name: Annotated[str, Meta(min_len=2, max_len=4)]
 
     with pytest.raises(ValidationError, match="length must be >="):
         Demo(name="a")
@@ -147,7 +183,7 @@ def test_init_pattern_constraints_raises_validation_error() -> None:
     """构造期 pattern 约束不满足应抛出 ValidationError."""
 
     class Demo(Struct):
-        code: Annotated[str, Meta(tag=0, pattern=r"^[A-Z]{2}\\d{2}$")]
+        code: Annotated[str, Meta(pattern=r"^[A-Z]{2}\\d{2}$")]
 
     with pytest.raises(ValidationError, match="does not match pattern"):
         Demo(code="aa12")
@@ -202,7 +238,7 @@ def test_default_value_validated_in_init_path() -> None:
     """默认值不满足约束时应在构造期抛出 ValidationError."""
 
     class D(Struct):
-        val: Annotated[int, Meta(tag=0, gt=0)] = 0
+        val: Annotated[int, Meta(gt=0)] = 0
 
     with pytest.raises(ValidationError, match="must be >"):
         D()
@@ -225,7 +261,7 @@ def test_default_factory_result_validated_in_init_path() -> None:
     """default_factory 返回非法值时应在构造期抛出 ValidationError."""
 
     class D(Struct):
-        val: Annotated[int, Meta(tag=0, gt=0)] = field(default_factory=lambda: 0)
+        val: Annotated[int, Meta(gt=0)] = field(default_factory=lambda: 0)
 
     with pytest.raises(ValidationError, match="must be >"):
         D()
@@ -266,6 +302,14 @@ def test_field_rejects_non_callable_default_factory() -> None:
     """Field 的 default_factory 不可调用时应抛 TypeError."""
     with pytest.raises(TypeError, match="must be a callable"):
         field(default_factory=123)
+
+
+def test_field_rejects_invalid_tag() -> None:
+    """Field 的 tag 越界或类型非法时应抛 TypeError."""
+    with pytest.raises(TypeError, match="tag"):
+        field(tag=256)
+    with pytest.raises(TypeError, match="tag"):
+        field(tag="x")  # pyright: ignore[reportArgumentType]
 
 
 def test_field_accepts_nodefault_sentinel() -> None:

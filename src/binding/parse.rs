@@ -56,6 +56,7 @@ pub struct FieldInfoIR {
 
 #[derive(Debug)]
 struct DefaultSpecIR {
+    explicit_tag: Option<u8>,
     has_default: bool,
     default_value: Option<Py<PyAny>>,
     default_factory: Option<Py<PyAny>>,
@@ -247,7 +248,7 @@ fn introspect_type_info_ir_with_ctx<'py>(
     if !origin.is_none() && origin.is(&ctx.annotated) {
         let args_any = ctx.typing.call_method1("get_args", (tp,))?;
         let args = args_any.cast::<PyTuple>()?;
-        let (real_type, _tag, constraints) = parse_annotated_args("_", args)?;
+        let (real_type, _tag, constraints) = parse_annotated_args_loose("_", args)?;
         let typevar_map = HashMap::new();
         let (typ, _is_optional) = translate_type_info_ir(py, &real_type, &typevar_map, ctx)?;
         return Ok((typ, constraints));
@@ -433,9 +434,19 @@ fn introspect_tars_struct_fields<'py>(
         return Ok(None);
     }
 
-    let mut fields = Vec::new();
-    let mut tags_seen: Vec<Option<String>> = vec![None; 256];
+    struct PendingField {
+        name: String,
+        explicit_tag: Option<u8>,
+        typ: TypeInfoIR,
+        default_value: Option<Py<PyAny>>,
+        default_factory: Option<Py<PyAny>>,
+        has_default: bool,
+        is_optional: bool,
+        is_required: bool,
+        constraints: Option<ConstraintsIR>,
+    }
 
+    let mut pending: Vec<PendingField> = Vec::new();
     for (name_obj, type_hint) in hints.iter() {
         let name: String = name_obj.extract()?;
         if name.starts_with("__") {
@@ -443,79 +454,122 @@ fn introspect_tars_struct_fields<'py>(
         }
 
         let origin = ctx.typing.call_method1("get_origin", (&type_hint,))?;
-        if origin.is_none() || !origin.is(&ctx.annotated) {
-            continue;
-        }
-
-        let args_any = ctx.typing.call_method1("get_args", (&type_hint,))?;
-        let args = args_any.cast::<PyTuple>()?;
-        let (real_type, tag, constraints) = parse_annotated_args(name.as_str(), args)?;
-
-        if let Some(existing) = tags_seen[tag as usize].as_ref() {
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Duplicate tag {} in '{}' and '{}'",
-                tag, existing, name
-            )));
-        }
-        tags_seen[tag as usize] = Some(name.clone());
-
-        let (typ, is_optional) = translate_type_info_ir(py, &real_type, &typevar_map, ctx)?;
+        let (resolved_type, annotated_tag, constraints) =
+            if !origin.is_none() && origin.is(&ctx.annotated) {
+                let args_any = ctx.typing.call_method1("get_args", (&type_hint,))?;
+                let args = args_any.cast::<PyTuple>()?;
+                parse_annotated_args_loose(name.as_str(), args)?
+            } else {
+                (type_hint.clone(), None, None)
+            };
 
         let default_spec = lookup_default_value(py, cls, name.as_str(), ctx)?;
+        if annotated_tag.is_some() && default_spec.explicit_tag.is_some() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Field '{}' cannot mix Annotated integer tag with field(tag=...)",
+                name
+            )));
+        }
+        let explicit_tag = default_spec.explicit_tag.or(annotated_tag);
+
+        let (typ, is_optional) = translate_type_info_ir(py, &resolved_type, &typevar_map, ctx)?;
         let is_required = !is_optional && !default_spec.has_default;
 
-        fields.push(FieldInfoIR {
+        pending.push(PendingField {
             name,
-            tag,
+            explicit_tag,
             typ,
             default_value: default_spec.default_value,
             default_factory: default_spec.default_factory,
             has_default: default_spec.has_default,
             is_optional,
             is_required,
-            init: true,
             constraints,
         });
     }
 
-    if fields.is_empty() {
+    if pending.is_empty() {
         return Ok(None);
     }
+    if pending.len() > 256 {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "Too many fields to auto-assign tags (max 256)",
+        ));
+    }
+
+    let mut tags_seen: Vec<Option<String>> = vec![None; 256];
+    let mut next_auto_tag: u8 = 0;
+    let mut fields = Vec::with_capacity(pending.len());
+
+    for field in pending {
+        let tag = if let Some(tag) = field.explicit_tag {
+            if let Some(existing) = tags_seen[tag as usize].as_ref() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Duplicate tag {} in '{}' and '{}'",
+                    tag, existing, field.name
+                )));
+            }
+            if tag >= next_auto_tag {
+                next_auto_tag = tag.saturating_add(1);
+            }
+            tag
+        } else {
+            while (next_auto_tag as usize) < tags_seen.len()
+                && tags_seen[next_auto_tag as usize].is_some()
+            {
+                if next_auto_tag == u8::MAX {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Too many fields to auto-assign tags (max 256)",
+                    ));
+                }
+                next_auto_tag = next_auto_tag.saturating_add(1);
+            }
+            if (next_auto_tag as usize) >= tags_seen.len() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Too many fields to auto-assign tags (max 256)",
+                ));
+            }
+            next_auto_tag
+        };
+
+        tags_seen[tag as usize] = Some(field.name.clone());
+        while (next_auto_tag as usize) < tags_seen.len()
+            && tags_seen[next_auto_tag as usize].is_some()
+        {
+            if next_auto_tag == u8::MAX {
+                break;
+            }
+            next_auto_tag = next_auto_tag.saturating_add(1);
+        }
+        fields.push(FieldInfoIR {
+            name: field.name,
+            tag,
+            typ: field.typ,
+            default_value: field.default_value,
+            default_factory: field.default_factory,
+            has_default: field.has_default,
+            is_optional: field.is_optional,
+            is_required: field.is_required,
+            init: true,
+            constraints: field.constraints,
+        });
+    }
+
     fields.sort_by_key(|f| f.tag);
     Ok(Some(fields))
-}
-
-fn parse_annotated_args<'py>(
-    field_name: &str,
-    args: &Bound<'py, PyTuple>,
-) -> PyResult<(Bound<'py, PyAny>, u8, Option<ConstraintsIR>)> {
-    let (real_type, tag, constraints) = parse_annotated_payload(field_name, args, true)?;
-    Ok((
-        real_type,
-        tag.expect("parse_annotated_payload must return tag when required"),
-        constraints,
-    ))
 }
 
 fn parse_annotated_args_loose<'py>(
     field_name: &str,
     args: &Bound<'py, PyTuple>,
 ) -> PyResult<(Bound<'py, PyAny>, Option<u8>, Option<ConstraintsIR>)> {
-    parse_annotated_payload(field_name, args, false)
+    parse_annotated_payload(field_name, args)
 }
 
 fn parse_annotated_payload<'py>(
     field_name: &str,
     args: &Bound<'py, PyTuple>,
-    require_tag: bool,
 ) -> PyResult<(Bound<'py, PyAny>, Option<u8>, Option<ConstraintsIR>)> {
-    if require_tag && args.len() < 2 {
-        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "Missing tag for field '{}'",
-            field_name
-        )));
-    }
-
     let real_type = args.get_item(0)?;
     let mut found_int_tag: Option<u8> = None;
     let mut found_meta: Option<PyRef<'py, Meta>> = None;
@@ -549,20 +603,7 @@ fn parse_annotated_payload<'py>(
         }
     }
 
-    if found_int_tag.is_some() && found_meta.is_some() {
-        return Err(pyo3::exceptions::PyTypeError::new_err(
-            "Do not mix integer tag and Meta object",
-        ));
-    }
-
     if let Some(meta) = found_meta {
-        let Some(tag) = meta.tag else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "Meta object must include 'tag' for field '{}'",
-                field_name
-            )));
-        };
-
         let constraints = ConstraintsIR {
             gt: meta.gt,
             lt: meta.lt,
@@ -572,14 +613,7 @@ fn parse_annotated_payload<'py>(
             max_len: meta.max_len,
             pattern: meta.pattern.clone(),
         };
-        return Ok((real_type, Some(tag), Some(constraints)));
-    }
-
-    if require_tag && found_int_tag.is_none() {
-        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "Missing tag for field '{}'",
-            field_name
-        )));
+        return Ok((real_type, found_int_tag, Some(constraints)));
     }
 
     Ok((real_type, found_int_tag, None))
@@ -1086,6 +1120,7 @@ fn lookup_default_value<'py>(
     }
 
     Ok(DefaultSpecIR {
+        explicit_tag: None,
         has_default: false,
         default_value: None,
         default_factory: None,
@@ -1116,6 +1151,7 @@ fn normalize_default_spec<'py>(
 
         if !spec.has_default {
             return Ok(DefaultSpecIR {
+                explicit_tag: spec.tag,
                 has_default: false,
                 default_value: None,
                 default_factory: None,
@@ -1123,11 +1159,15 @@ fn normalize_default_spec<'py>(
         }
 
         if let Some(default_value) = spec.default_value.as_ref() {
-            return normalize_default_value(py, default_value.bind(py), field_name, ctx);
+            let mut normalized =
+                normalize_default_value(py, default_value.bind(py), field_name, ctx)?;
+            normalized.explicit_tag = spec.tag;
+            return Ok(normalized);
         }
 
         if let Some(default_factory) = spec.default_factory.as_ref() {
             return Ok(DefaultSpecIR {
+                explicit_tag: spec.tag,
                 has_default: true,
                 default_value: None,
                 default_factory: Some(default_factory.clone_ref(py)),
@@ -1137,6 +1177,7 @@ fn normalize_default_spec<'py>(
 
     if is_nodefault(value)? {
         return Ok(DefaultSpecIR {
+            explicit_tag: None,
             has_default: false,
             default_value: None,
             default_factory: None,
@@ -1169,6 +1210,7 @@ fn normalize_default_value<'py>(
                 ctx.builtin_bytearray.clone().unbind()
             };
             return Ok(DefaultSpecIR {
+                explicit_tag: None,
                 has_default: true,
                 default_value: None,
                 default_factory: Some(default_factory),
@@ -1182,6 +1224,7 @@ fn normalize_default_value<'py>(
     }
 
     Ok(DefaultSpecIR {
+        explicit_tag: None,
         has_default: true,
         default_value: Some(default_value.clone().unbind()),
         default_factory: None,

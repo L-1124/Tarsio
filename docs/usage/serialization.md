@@ -10,11 +10,10 @@
 ### 编码 (Encode)
 
 ```python
-from typing import Annotated
-from tarsio import Struct, encode
+from tarsio import Struct, encode, field
 
 class User(Struct):
-    uid: Annotated[int, 0]
+    uid: int = field(tag=0)
 
 user = User(uid=123)
 data = encode(user)
@@ -26,8 +25,8 @@ data = encode(user)
 ```python
 from tarsio import decode
 
-# 将 bytes 还原为 User 对象 (data 在前)
-user = decode(data, User)
+# 将 bytes 还原为 User 对象
+user = decode(User, data)
 print(user.uid)  # 123
 ```
 

@@ -10,7 +10,7 @@
 ## 核心特性
 
 * 🚀 **高性能**: 核心编解码由 Rust 实现，比纯 Python 实现快 10-50 倍。
-* 🛡️ **类型安全**: 使用标准 `typing.Annotated` 定义 JCE Tag，零成本抽象。
+* 🛡️ **类型安全**: 使用标准 Python 类型注解定义 Schema，支持显式/隐式 Tag。
 * ✨ **声明式校验**: 支持 `Meta` 元数据约束，在反序列化时自动校验。
 * 🧩 **灵活模式**: 支持强类型 `Struct` 与无 Schema 的 `dict` (Raw) 模式。
 
@@ -18,14 +18,16 @@
 
 ```python
 from typing import Annotated
-from tarsio import Struct, encode, decode
+from tarsio import Struct, field, Meta, encode, decode
 
 # 1. 定义 Schema
-# 使用 Annotated[Type, Tag] 标注 JCE Tag ID
 class User(Struct):
-    id: Annotated[int, 0]
-    name: Annotated[str, 1]
-    groups: Annotated[list[str], 2] = []
+    # 显式 tag
+    id: int = field(tag=0)
+    # 未显式 tag, 按顺序自动分配
+    name: str
+    # Annotated 用于约束, tag 仍由 field 指定
+    groups: Annotated[list[str], Meta(min_len=1)] = field(tag=2, default_factory=list)
 
 # 2. 创建对象
 alice = User(id=1001, name="Alice", groups=["admin", "dev"])
@@ -40,6 +42,8 @@ print(data.hex())
 user = decode(User, data)
 assert user == alice
 ```
+
+> Tag 规则: `field(tag=...)` 用于显式声明; 未声明时自动分配。两者可混用。
 
 ## 文档
 

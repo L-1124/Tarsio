@@ -497,11 +497,24 @@ def test_inspect_struct_info_fields() -> None:
     assert field_c.optional is True
 
 
+def test_inspect_struct_info_plain_annotations_auto_tag() -> None:
+    """验证全普通注解字段在 struct_info 中自动分配 tag."""
+
+    class Sample(Struct):
+        a: int
+        b: str
+
+    info = inspect.struct_info(Sample)
+    assert info is not None
+    assert [f.tag for f in info.fields] == [0, 1]
+    assert [f.type.kind for f in info.fields] == ["int", "str"]
+
+
 def test_inspect_constraints_from_meta() -> None:
     """验证 Meta 约束进入 constraints."""
 
     class Limited(Struct):
-        v: Annotated[int, Meta(tag=0, gt=1, le=10)]
+        v: Annotated[int, Meta(gt=1, le=10)]
 
     info = inspect.struct_info(Limited)
     assert info is not None
@@ -515,7 +528,7 @@ def test_inspect_direct_constraints_for_str_type() -> None:
     """验证字符串类型可直接访问约束属性."""
 
     class Limited(Struct):
-        name: Annotated[str, Meta(tag=0, min_len=1, max_len=8, pattern=r"^[a-z]+$")]
+        name: Annotated[str, Meta(min_len=1, max_len=8, pattern=r"^[a-z]+$")]
 
     info = inspect.struct_info(Limited)
     assert info is not None
