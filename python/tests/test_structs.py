@@ -498,6 +498,15 @@ def test_struct_kw_only_option() -> None:
     assert k.val == 1
 
 
+def test_struct_simplelist_config_option() -> None:
+    """simplelist=True 应出现在 __struct_config__ 中."""
+
+    class Blob(Struct, simplelist=True):
+        val: Annotated[int, 0]
+
+    assert Blob.__struct_config__.simplelist is True
+
+
 def test_struct_fields_in_tag_order() -> None:
     """__struct_fields__ 应按 tag 排序."""
 
@@ -687,6 +696,30 @@ def test_any_simplelist_auto_utf8_and_passthrough() -> None:
 
     # 修改: auto_simplelist 移除后，应始终返回 bytes
     assert utf8_decoded.val == b"hello"
+
+
+def test_nested_struct_simplelist_wire_and_roundtrip() -> None:
+    """simplelist=True 应作用于当前 Struct 的 Struct 字段."""
+
+    class Inner(Struct):
+        x: Annotated[int, 0]
+        y: Annotated[str, 1]
+
+    class Outer(Struct, simplelist=True):
+        inner: Annotated[Inner, 0]
+
+    obj = Outer(inner=Inner(x=7, y="ok"))
+    data = encode(obj)
+    restored = decode(Outer, data)
+    assert restored.inner.x == 7
+    assert restored.inner.y == "ok"
+
+    raw = decode_raw(data)
+    payload = raw[0]
+    assert isinstance(payload, bytes)
+    inner2 = Inner.decode(payload)
+    assert inner2.x == 7
+    assert inner2.y == "ok"
 
 
 def test_evolution_forward_compatibility_optional_field_defaults_none() -> None:

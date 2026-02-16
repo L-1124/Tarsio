@@ -176,6 +176,7 @@ class StructMeta(type):
         kw_only: bool = ...,
         dict: bool = ...,
         weakref: bool = ...,
+        simplelist: bool = ...,
         **kwargs: Any,
     ) -> _SM:
         """创建 Struct 子类并编译 Schema.
@@ -194,6 +195,7 @@ class StructMeta(type):
             kw_only: 是否只允许关键字参数构造。
             dict: 是否为实例保留 `__dict__`。
             weakref: 是否支持弱引用。
+            simplelist: 是否将当前 Struct 的 Struct 字段编码为 SimpleList(bytes)。
             **kwargs: 预留扩展配置。
 
         Returns:
@@ -216,6 +218,7 @@ class StructConfig:
     omit_defaults: bool
     weakref: bool
     dict: bool
+    simplelist: bool
     rename: Any | None
 
 class Struct(metaclass=StructMeta):
@@ -259,6 +262,7 @@ class Struct(metaclass=StructMeta):
         - forbid_unknown_tags (bool, default False): 解码时是否禁止出现未知 Tag.
         - dict (bool, default False): 是否为实例保留 `__dict__`（允许附加额外属性）。
         - weakref (bool, default False): 是否支持弱引用。
+        - simplelist (bool, default False): 当前 Struct 的 Struct 字段编码时先按 Struct 编码，再封装为 SimpleList(bytes)。
 
     Examples:
         基本用法：
@@ -304,6 +308,7 @@ class Struct(metaclass=StructMeta):
         kw_only: bool = False,
         dict: bool = False,
         weakref: bool = False,
+        simplelist: bool = False,
         **kwargs: Any,
     ) -> None:
         """配置 Struct 子类行为."""

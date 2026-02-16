@@ -43,8 +43,6 @@ user = decode(User, data)
 assert user == alice
 ```
 
-> Tag 规则: `field(tag=...)` 用于显式声明; 未声明时自动分配。两者可混用。
-
 ## 文档
 
 完整文档请访问 [https://L-1124.github.io/Tarsio/](https://L-1124.github.io/Tarsio/)。

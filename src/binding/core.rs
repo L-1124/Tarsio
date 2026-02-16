@@ -189,6 +189,7 @@ pub struct StructDef {
     pub kw_only: bool,
     pub dict: bool,
     pub weakref: bool,
+    pub simplelist: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -202,6 +203,7 @@ pub struct SchemaConfig {
     pub kw_only: bool,
     pub dict: bool,
     pub weakref: bool,
+    pub simplelist: bool,
 }
 
 #[pyclass(module = "tarsio._core")]
@@ -223,6 +225,8 @@ pub struct StructConfig {
     #[pyo3(get)]
     pub dict: bool,
     #[pyo3(get)]
+    pub simplelist: bool,
+    #[pyo3(get)]
     pub rename: Option<Py<PyAny>>,
 }
 
@@ -237,6 +241,7 @@ impl StructConfig {
             omit_defaults: config.omit_defaults,
             weakref: config.weakref,
             dict: config.dict,
+            simplelist: config.simplelist,
             rename: None,
         }
     }

@@ -170,9 +170,9 @@ pub(crate) fn serialize_impl(
             serialize_impl(writer, tag, variant, val, depth + 1)?;
         }
         TypeExpr::Struct(ptr) => {
-            writer.write_tag(tag, TarsType::StructBegin);
             let cls = class_from_ptr(val.py(), *ptr)?;
             let def = ensure_schema_for_class(val.py(), &cls)?;
+            writer.write_tag(tag, TarsType::StructBegin);
             serialize_struct_fields(writer, val, &def, depth + 1, &serialize_impl)?;
             writer.write_tag(0, TarsType::StructEnd);
         }

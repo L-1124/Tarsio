@@ -189,6 +189,7 @@ fn compile_schema_from_fields<'py>(
         kw_only: config.kw_only,
         dict: config.dict,
         weakref: config.weakref,
+        simplelist: config.simplelist,
     };
 
     let def = Arc::new(def);

@@ -4,6 +4,7 @@ use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{
     PyAny, PyBool, PyBytes, PyDict, PyFloat, PyFrozenSet, PyList, PySequence, PySet, PyString,
+    PyType,
 };
 use simdutf8::basic::from_utf8;
 use std::cell::RefCell;
@@ -54,6 +55,25 @@ where
                         continue;
                     }
                 }
+                if def.simplelist
+                    && let TypeExpr::Struct(ptr) = &field.ty
+                {
+                    let nested_cls = struct_class_from_ptr(obj.py(), *ptr)?;
+                    let nested_def = ensure_schema_for_class(obj.py(), &nested_cls)?;
+                    let mut nested = Vec::new();
+                    {
+                        let mut nested_writer = TarsWriter::with_buffer(&mut nested);
+                        serialize_struct_fields(
+                            &mut nested_writer,
+                            &val,
+                            &nested_def,
+                            depth + 1,
+                            &ser::serialize_impl,
+                        )?;
+                    }
+                    writer.write_bytes(field.tag, &nested);
+                    continue;
+                }
                 serialize_typed(writer, field.tag, &field.ty, &val, depth + 1)?;
             }
             None => {
@@ -67,6 +87,17 @@ where
         }
     }
     Ok(())
+}
+
+fn struct_class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> PyResult<Bound<'py, PyType>> {
+    let obj_ptr = ptr as *mut pyo3::ffi::PyObject;
+    if obj_ptr.is_null() {
+        return Err(PyTypeError::new_err("Invalid struct pointer"));
+    }
+    // SAFETY: 指针 ptr 来自 Schema 系统，生命周期受控。
+    let any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
+    let cls = any.cast::<PyType>()?;
+    Ok(cls.clone())
 }
 
 pub(crate) fn write_tarsdict_fields<W, F>(

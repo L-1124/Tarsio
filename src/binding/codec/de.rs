@@ -114,15 +114,40 @@ fn deserialize_struct<'py>(
 
         if let Some(idx) = idx_opt {
             let field = &def.fields_sorted[idx];
-            let value = deserialize_value(
-                py,
-                reader,
-                type_id,
-                &field.ty,
-                field.constraints.as_deref(),
-                depth + 1,
-            )
-            .map_err(|e| e.prepend(PathItem::Field(field.name.clone())))?;
+            let value_result: DeResult<Bound<'py, PyAny>> = if def.simplelist {
+                match &field.ty {
+                    TypeExpr::Struct(ptr) => {
+                        if type_id != TarsType::SimpleList {
+                            return Err(DeError::new(
+                                "Struct field must be encoded as SimpleList".into(),
+                            ));
+                        }
+                        let nested_cls = struct_class_from_ptr(py, *ptr)?;
+                        let payload = reader.read_simplelist_bytes().map_err(|e| {
+                            DeError::new(format!("Failed to read Struct SimpleList payload: {}", e))
+                        })?;
+                        decode_object(py, &nested_cls, payload).map_err(DeError::wrap)
+                    }
+                    _ => deserialize_value(
+                        py,
+                        reader,
+                        type_id,
+                        &field.ty,
+                        field.constraints.as_deref(),
+                        depth + 1,
+                    ),
+                }
+            } else {
+                deserialize_value(
+                    py,
+                    reader,
+                    type_id,
+                    &field.ty,
+                    field.constraints.as_deref(),
+                    depth + 1,
+                )
+            };
+            let value = value_result.map_err(|e| e.prepend(PathItem::Field(field.name.clone())))?;
 
             if let Some(c) = field.constraints.as_deref() {
                 validate_constraints_on_value(&value, c, Some(field.name.as_str()))
@@ -314,14 +339,14 @@ fn deserialize_value<'py>(
             decode_union_value(py, reader, type_id, variants, constraints, depth)
         }
         TypeExpr::Struct(ptr) => {
-            let obj_ptr = *ptr as *mut ffi::PyObject;
-            // SAFETY: ptr 指向 Schema 内部持有的 PyType,生命周期受 Py<PyType> 保障。
-            let nested_any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
-            let nested_cls = nested_any
-                .cast::<PyType>()
-                .map_err(|e| DeError::new(e.to_string()))?;
-            let nested_def = ensure_schema_for_class(py, nested_cls).map_err(DeError::wrap)?;
-            deserialize_struct(py, nested_cls, reader, &nested_def, depth + 1)
+            let nested_cls = struct_class_from_ptr(py, *ptr)?;
+            let nested_def = ensure_schema_for_class(py, &nested_cls).map_err(DeError::wrap)?;
+            if type_id != TarsType::StructBegin {
+                return Err(DeError::new(
+                    "Struct value must be encoded as Struct".into(),
+                ));
+            }
+            deserialize_struct(py, &nested_cls, reader, &nested_def, depth + 1)
         }
         TypeExpr::TarsDict => {
             if type_id != TarsType::StructBegin {
@@ -633,4 +658,14 @@ fn union_variant_matches_type_id(variant: &TypeExpr, type_id: TarsType) -> bool 
         TypeExpr::Map(_, _) => type_id == TarsType::Map,
         TypeExpr::Optional(inner) => union_variant_matches_type_id(inner, type_id),
     }
+}
+
+fn struct_class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> DeResult<Bound<'py, PyType>> {
+    let obj_ptr = ptr as *mut ffi::PyObject;
+    // SAFETY: ptr 来自 Schema 内部持有的 PyType 指针，生命周期受 Python 类型对象管理。
+    let nested_any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
+    nested_any
+        .cast::<PyType>()
+        .cloned()
+        .map_err(|e| DeError::new(e.to_string()))
 }

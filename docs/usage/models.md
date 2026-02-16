@@ -138,6 +138,15 @@ class Config(Struct, frozen=True, forbid_unknown_tags=True):
     ...
 ```
 
+常用配置项：
+
+* `frozen`: 实例不可变。
+* `forbid_unknown_tags`: 解码时遇到未知 Tag 报错。
+* `repr_omit_defaults`: `repr` 省略默认值字段。
+* `kw_only`: 构造函数仅接受关键字参数。
+* `dict`: 允许动态属性。
+* `simplelist`: 将当前 Struct 的 Struct 字段按 `SimpleList(bytes)` 编码。
+
 ### 示例
 
 ```python
@@ -170,3 +179,15 @@ class RuntimeState(Struct, dict=True, kw_only=True):
 obj = RuntimeState(id=1)
 obj._cache = {"k": "v"}  # dict=True 允许动态属性
 ```
+
+```python
+class Payload(Struct):
+    code: int = field(tag=0)
+    msg: str = field(tag=1)
+
+class Envelope(Struct, simplelist=True):
+    id: int = field(tag=0)
+    payload: Payload = field(tag=1)
+```
+
+`simplelist=True` 只影响当前类的 Struct 字段编码形式。顶层 `encode(Envelope(...))` 与其他字段行为不变。

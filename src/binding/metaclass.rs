@@ -23,6 +23,7 @@ pub fn _tarsio_structmeta_new<'py>(
     let mut kw_only = false;
     let mut dict = false;
     let mut weakref = false;
+    let mut simplelist = false;
 
     if let Some(k) = kwargs {
         if let Some(v) = k.get_item("frozen")? {
@@ -60,6 +61,10 @@ pub fn _tarsio_structmeta_new<'py>(
         if let Some(v) = k.get_item("weakref")? {
             weakref = v.extract::<bool>()?;
             k.del_item("weakref")?;
+        }
+        if let Some(v) = k.get_item("simplelist")? {
+            simplelist = v.extract::<bool>()?;
+            k.del_item("simplelist")?;
         }
     }
 
@@ -122,6 +127,7 @@ pub fn _tarsio_structmeta_new<'py>(
             kw_only,
             dict,
             weakref,
+            simplelist,
         },
     )?;
 
