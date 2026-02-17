@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyType};
@@ -63,17 +63,10 @@ pub(crate) fn maybe_shrink_buffer(buffer: &mut Vec<u8>) {
     }
 }
 
-/// 根据 schema 中记录的类指针恢复 Python 类型对象.
+/// 从已持有的 Python 类型句柄获取当前 GIL 作用域下的绑定引用.
 #[inline]
-pub(crate) fn class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> PyResult<Bound<'py, PyType>> {
-    let obj_ptr = ptr as *mut ffi::PyObject;
-    if obj_ptr.is_null() {
-        return Err(PyTypeError::new_err("Invalid struct pointer"));
-    }
-    // SAFETY: 指针 ptr 来自 Schema 系统，生命周期受控。
-    let any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
-    let cls = any.cast::<PyType>()?;
-    Ok(cls.clone())
+pub(crate) fn class_from_type<'py>(py: Python<'py>, cls: &Py<PyType>) -> Bound<'py, PyType> {
+    cls.bind(py).clone()
 }
 
 #[inline]

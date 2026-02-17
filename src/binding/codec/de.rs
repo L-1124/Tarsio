@@ -5,7 +5,7 @@ use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{
     Constraints, StructDef, TarsDict, TypeExpr, WireType, ensure_schema_for_class,
 };
-use crate::binding::utils::{check_depth, class_from_ptr};
+use crate::binding::utils::{check_depth, class_from_type};
 use crate::binding::validation::{
     validate_constraints_on_value, validate_length_constraints_raw,
     validate_numeric_constraints_raw,
@@ -78,6 +78,10 @@ fn deserialize_struct<'py>(
     let field_count = def.fields_sorted.len();
 
     // 预分配 Python 对象
+    // SAFETY:
+    // 1. `cls` 是有效的 Python 类型对象；`PyType_GenericAlloc` 返回新引用。
+    // 2. 若返回空指针则 Python 异常已设置，立即以 `PyErr::fetch` 包装返回。
+    // 3. `Bound::from_owned_ptr` 正确接管该新引用所有权。
     let instance = unsafe {
         let type_ptr = cls.as_ptr() as *mut ffi::PyTypeObject;
         let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
@@ -116,13 +120,13 @@ fn deserialize_struct<'py>(
             let field = &def.fields_sorted[idx];
             let value_result: DeResult<Bound<'py, PyAny>> = if def.simplelist {
                 match &field.ty {
-                    TypeExpr::Struct(ptr) => {
+                    TypeExpr::Struct(cls_obj) => {
                         if type_id != TarsType::SimpleList {
                             return Err(DeError::new(
                                 "Struct field must be encoded as SimpleList".into(),
                             ));
                         }
-                        let nested_cls = class_from_ptr(py, *ptr).map_err(DeError::wrap)?;
+                        let nested_cls = class_from_type(py, cls_obj);
                         let payload = reader.read_simplelist_bytes().map_err(|e| {
                             DeError::new(format!("Failed to read Struct SimpleList payload: {}", e))
                         })?;
@@ -156,6 +160,10 @@ fn deserialize_struct<'py>(
             }
 
             // 直接设置属性
+            // SAFETY:
+            // 1. `instance`、字段名 `name_py`、以及 `value` 均为当前 GIL 下有效对象。
+            // 2. `PyObject_GenericSetAttr` 不窃取 `value` 引用。
+            // 3. 若返回非 0，Python 异常已设置并通过 `PyErr::fetch` 传播。
             unsafe {
                 let name_py = field.name_py.bind(py);
                 let res = ffi::PyObject_GenericSetAttr(
@@ -209,6 +217,9 @@ fn deserialize_struct<'py>(
             };
 
             if let Some(val) = value_opt {
+                // SAFETY:
+                // 1. 与上方字段写入相同，目标对象与属性名/属性值均有效。
+                // 2. C API 失败时异常由 Python 设置，立即抓取返回。
                 unsafe {
                     let name_py = field.name_py.bind(py);
                     let res = ffi::PyObject_GenericSetAttr(
@@ -338,8 +349,8 @@ fn deserialize_value<'py>(
         TypeExpr::Union(variants, _) => {
             decode_union_value(py, reader, type_id, variants, constraints, depth)
         }
-        TypeExpr::Struct(ptr) => {
-            let nested_cls = class_from_ptr(py, *ptr).map_err(DeError::wrap)?;
+        TypeExpr::Struct(cls_obj) => {
+            let nested_cls = class_from_type(py, cls_obj);
             let nested_def = ensure_schema_for_class(py, &nested_cls).map_err(DeError::wrap)?;
             if type_id != TarsType::StructBegin {
                 return Err(DeError::new(

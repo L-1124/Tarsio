@@ -174,17 +174,8 @@ fn parse_value<'py>(
             }
         }
         TarsType::StructBegin => {
-            let nested_def = if let Some(TypeExpr::Struct(ptr)) = type_expr {
-                unsafe {
-                    let obj_ptr = *ptr as *mut pyo3::ffi::PyObject;
-                    let any_obj = Bound::from_borrowed_ptr(py, obj_ptr);
-                    let cls = any_obj.cast::<PyType>().ok();
-                    if let Some(c) = cls {
-                        ensure_schema_for_class(py, c).ok()
-                    } else {
-                        None
-                    }
-                }
+            let nested_def = if let Some(TypeExpr::Struct(cls_obj)) = type_expr {
+                ensure_schema_for_class(py, cls_obj.bind(py)).ok()
             } else {
                 None
             };

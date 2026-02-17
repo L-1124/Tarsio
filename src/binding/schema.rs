@@ -198,6 +198,10 @@ impl Struct {
             pyo3::exceptions::PyTypeError::new_err("Schema not found during copy")
         })?;
 
+        // SAFETY:
+        // 1. `cls` 是有效的 Python 类型对象，来自 `slf.get_type()`。
+        // 2. `PyType_GenericAlloc` 返回新引用；空指针时立即通过 `PyErr::fetch` 返回错误。
+        // 3. `Bound::from_owned_ptr` 正确接管该新引用所有权。
         let instance = unsafe {
             let type_ptr = cls.as_ptr() as *mut ffi::PyTypeObject;
             let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
@@ -228,6 +232,10 @@ impl Struct {
                 }
             };
 
+            // SAFETY:
+            // 1. `instance` 与 `name_py` 均为当前 GIL 下的有效 Python 对象。
+            // 2. `val` 在调用期间保持存活，`PyObject_GenericSetAttr` 仅借用引用。
+            // 3. 返回非 0 表示 Python 异常已设置，立即 `PyErr::fetch` 传播。
             unsafe {
                 let name_py = field.name_py.bind(py);
                 let res =
@@ -405,6 +413,10 @@ impl Struct {
                 cls.name()?
             )));
         }
+        // SAFETY:
+        // 1. `slf`/`name`/`value` 均是有效 Python 对象引用。
+        // 2. `PyObject_GenericSetAttr` 仅在对象上执行属性写入，不转移引用所有权。
+        // 3. 若写入失败，Python 异常已设置并通过 `PyErr::fetch` 传播。
         unsafe {
             let res =
                 pyo3::ffi::PyObject_GenericSetAttr(slf.as_ptr(), name.as_ptr(), value.as_ptr());
@@ -425,6 +437,10 @@ fn set_field_value(
     field: &FieldDef,
     value: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
+    // SAFETY:
+    // 1. `self_obj` 与 `field.name_py` 是同一解释器内的有效对象。
+    // 2. `value` 在调用期间保持存活，C API 不会窃取其引用。
+    // 3. 失败时 Python 异常已设置，立即抓取并返回。
     unsafe {
         let name_py = field.name_py.bind(self_obj.py());
         let res =
@@ -599,4 +615,61 @@ pub fn construct_instance(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::binding::core::{Schema, StructMetaData};
+    use pyo3::types::{PyDict, PyTuple};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn schema_from_class_prefers_attached_schema_attr() {
+        Python::initialize();
+        Python::attach(|py| {
+            let builtins = py.import("builtins").expect("import builtins");
+            let type_fn = builtins.getattr("type").expect("get type()");
+            let cls_any = type_fn
+                .call1(("SchemaAttrCase", PyTuple::empty(py), PyDict::new(py)))
+                .expect("create class");
+            let cls = cls_any.cast::<PyType>().expect("cast class");
+
+            let def = Arc::new(StructDef {
+                class_ptr: cls.as_ptr() as usize,
+                name: "SchemaAttrCase".to_string(),
+                fields_sorted: Vec::new(),
+                tag_lookup_vec: Vec::new(),
+                meta: Arc::new(StructMetaData {
+                    name_to_index: HashMap::new(),
+                    name_ptr_to_index: HashMap::new(),
+                }),
+                frozen: false,
+                order: false,
+                forbid_unknown_tags: false,
+                eq: true,
+                omit_defaults: false,
+                repr_omit_defaults: false,
+                kw_only: false,
+                dict: false,
+                weakref: false,
+                simplelist: false,
+            });
+
+            let schema = Py::new(
+                py,
+                Schema {
+                    def: Arc::clone(&def),
+                },
+            )
+            .expect("create schema");
+            cls.setattr(SCHEMA_ATTR, schema).expect("set schema attr");
+
+            let loaded = schema_from_class(py, cls)
+                .expect("schema lookup")
+                .expect("schema should exist");
+            assert_eq!(loaded.name, "SchemaAttrCase");
+        });
+    }
 }

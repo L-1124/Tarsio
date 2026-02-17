@@ -272,7 +272,7 @@ fn type_info_ir_to_type_expr(py: Python<'_>, typ: &TypeInfoIR) -> PyResult<TypeE
         TypeInfoIR::Optional(inner) => Ok(TypeExpr::Optional(Box::new(type_info_ir_to_type_expr(
             py, inner,
         )?))),
-        TypeInfoIR::Struct(cls) => Ok(TypeExpr::Struct(cls.as_ptr() as usize)),
+        TypeInfoIR::Struct(cls) => Ok(TypeExpr::Struct(cls.clone_ref(py))),
     }
 }
 
@@ -446,7 +446,7 @@ fn parse_type_info(obj: &Bound<'_, PyAny>) -> PyResult<TypeExpr> {
         "struct" => {
             let cls_any = obj.getattr("cls")?;
             let cls = cls_any.cast::<PyType>()?;
-            Ok(TypeExpr::Struct(cls.as_ptr() as usize))
+            Ok(TypeExpr::Struct(cls.clone().unbind()))
         }
         _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "Unsupported Tars type: {}",

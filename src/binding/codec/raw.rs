@@ -14,7 +14,7 @@ use crate::binding::codec::ser;
 use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{Struct, StructDef, TarsDict, TypeExpr, ensure_schema_for_class};
 use crate::binding::utils::{
-    PySequenceFast, check_depth, check_exact_sequence_type, class_from_ptr, dataclass_fields,
+    PySequenceFast, check_depth, check_exact_sequence_type, class_from_type, dataclass_fields,
     maybe_shrink_buffer, with_stdlib_cache,
 };
 use crate::codec::consts::TarsType;
@@ -57,9 +57,9 @@ where
                     }
                 }
                 if def.simplelist
-                    && let TypeExpr::Struct(ptr) = &field.ty
+                    && let TypeExpr::Struct(cls_obj) = &field.ty
                 {
-                    let nested_cls = class_from_ptr(obj.py(), *ptr)?;
+                    let nested_cls = class_from_type(obj.py(), cls_obj);
                     let nested_def = ensure_schema_for_class(obj.py(), &nested_cls)?;
                     let mut nested = Vec::with_capacity(256);
                     {

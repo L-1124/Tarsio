@@ -31,7 +31,7 @@ pub enum WireType {
 #[derive(Debug)]
 pub enum TypeExpr {
     Primitive(WireType),
-    Struct(usize),
+    Struct(Py<PyType>),
     TarsDict,
     NamedTuple(Py<PyType>, Vec<TypeExpr>),
     Dataclass(Py<PyType>),
@@ -55,7 +55,7 @@ impl TypeExpr {
     pub fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
         match self {
             TypeExpr::Primitive(_) => Ok(()),
-            TypeExpr::Struct(_) => Ok(()),
+            TypeExpr::Struct(cls) => visit.call(cls),
             TypeExpr::TarsDict => Ok(()),
             TypeExpr::NamedTuple(cls, items) => {
                 visit.call(cls)?;
@@ -454,5 +454,26 @@ impl Schema {
             field.ty.traverse(&visit)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UnionCache;
+
+    #[test]
+    fn union_cache_stores_and_reads_index() {
+        let cache = UnionCache::default();
+        assert_eq!(cache.get(123), None);
+        cache.insert(123, 7);
+        assert_eq!(cache.get(123), Some(7));
+    }
+
+    #[test]
+    fn union_cache_clone_starts_empty() {
+        let cache = UnionCache::default();
+        cache.insert(42, 1);
+        let cloned = cache.clone();
+        assert_eq!(cloned.get(42), None);
     }
 }

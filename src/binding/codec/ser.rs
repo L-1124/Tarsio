@@ -8,7 +8,7 @@ use bytes::BufMut;
 use crate::binding::codec::raw::{serialize_any, serialize_struct_fields, write_tarsdict_fields};
 use crate::binding::schema::{TarsDict, TypeExpr, UnionCache, WireType, ensure_schema_for_class};
 use crate::binding::utils::{
-    PySequenceFast, check_depth, check_exact_sequence_type, class_from_ptr, dataclass_fields,
+    PySequenceFast, check_depth, check_exact_sequence_type, class_from_type, dataclass_fields,
     maybe_shrink_buffer,
 };
 use crate::binding::validation::value_matches_type;
@@ -158,8 +158,8 @@ pub(crate) fn serialize_impl(
             let variant = select_union_variant(val.py(), variants, cache, val)?;
             serialize_impl(writer, tag, variant, val, depth + 1)?;
         }
-        TypeExpr::Struct(ptr) => {
-            let cls = class_from_ptr(val.py(), *ptr)?;
+        TypeExpr::Struct(cls_obj) => {
+            let cls = class_from_type(val.py(), cls_obj);
             let def = ensure_schema_for_class(val.py(), &cls)?;
             writer.write_tag(tag, TarsType::StructBegin);
             serialize_struct_fields(writer, val, &def, depth + 1, &serialize_impl)?;

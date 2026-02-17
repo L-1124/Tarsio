@@ -1,6 +1,6 @@
 use crate::ValidationError;
 use crate::binding::core::{Constraints, TarsDict, TypeExpr, WireType};
-use crate::binding::utils::{class_from_ptr, dataclass_fields};
+use crate::binding::utils::{class_from_type, dataclass_fields};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyDict, PyFloat, PyFrozenSet, PySequence, PySet, PyString};
 
@@ -163,8 +163,8 @@ pub(crate) fn value_matches_type<'py>(
             _ => Ok(false),
         },
         TypeExpr::Enum(enum_cls, _) => Ok(value.is_instance(enum_cls.bind(py).as_any())?),
-        TypeExpr::Struct(ptr) => {
-            let cls = class_from_ptr(py, *ptr)?;
+        TypeExpr::Struct(cls_obj) => {
+            let cls = class_from_type(py, cls_obj);
             Ok(value.is_instance(cls.as_any())?)
         }
         TypeExpr::TarsDict => Ok(value.is_instance_of::<TarsDict>()),
