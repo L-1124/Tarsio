@@ -2,6 +2,12 @@
 
 `tarsio.Struct` 及其相关定义。
 
+## 使用提示
+
+* [`Struct`][tarsio.Struct] 的构造参数、默认值语义与配置选项说明以其 docstring 为准。
+* [`StructConfig`][tarsio.StructConfig] 用于查看类定义后生效的配置快照（`__struct_config__`）。
+* 涉及约束与校验失败时，异常语义请参考 [`ValidationError`][tarsio.ValidationError]。
+
 ::: tarsio.Struct
     options:
       members:

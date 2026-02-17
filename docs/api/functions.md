@@ -13,3 +13,9 @@
 ::: tarsio.probe_struct
 
 ::: tarsio.decode_trace
+
+::: tarsio.TraceNode
+
+## 异常
+
+::: tarsio.ValidationError

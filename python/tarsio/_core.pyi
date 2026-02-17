@@ -87,6 +87,13 @@ class ValidationError(ValueError):
     """解码阶段的校验错误.
 
     由 `Meta` 约束或 Schema 校验失败触发。
+
+    错误消息包含路径与原因，典型格式：
+    `Error at <root>.<field>.<tag:N>: <reason>`。
+
+    Notes:
+        当前版本不提供结构化字段访问器（如 `field_name`、`tag` 属性）。
+        建议在业务侧解析异常消息中的路径片段。
     """
 
     ...
@@ -208,6 +215,18 @@ class StructConfig:
 
     该对象反映 `Struct` 子类在定义时传入的配置选项，可通过
     `Struct.__struct_config__` 或实例的 `__struct_config__` 访问。
+
+    Attributes:
+        frozen: 是否冻结实例（不可变）。
+        eq: 是否启用值相等比较。
+        order: 是否启用排序比较。
+        kw_only: 构造函数是否仅接受关键字参数。
+        repr_omit_defaults: `repr` 是否省略默认值字段。
+        omit_defaults: 编码时是否省略默认值字段。
+        weakref: 是否支持弱引用。
+        dict: 是否保留 `__dict__`（允许动态属性）。
+        simplelist: 当前 Struct 的 Struct 字段是否使用 `SimpleList(bytes)`。
+        rename: 预留字段（当前默认未启用）。
     """
 
     frozen: bool
@@ -408,7 +427,17 @@ def probe_struct(data: bytes) -> TarsDict | None:
     ...
 
 class TraceNode:
-    """CLI Tree 调试节点."""
+    """`decode_trace` 返回的调试树节点.
+
+    Attributes:
+        tag: 当前节点对应的 Tag。
+        jce_type: JCE 类型名。
+        value: 当前节点值（容器节点通常为 None）。
+        children: 子节点列表。
+        name: 字段名（有 Schema 时可用）。
+        type_name: 类型名（有 Schema 时可用）。
+        path: 从根开始的可读路径。
+    """
 
     tag: int
     jce_type: str
