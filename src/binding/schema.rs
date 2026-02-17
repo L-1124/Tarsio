@@ -40,11 +40,11 @@ pub fn ensure_schema_for_class(
 ) -> PyResult<Arc<StructDef>> {
     let cls_key = cls.as_ptr() as usize;
 
-    // 1. Check cache first
-    let cached =
-        SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).and_then(|weak| weak.upgrade()));
-
-    if let Some(def) = cached {
+    // 1. 统一走 schema_from_class，避免重复缓存查找。
+    if let Some(def) = schema_from_class(py, cls)? {
+        SCHEMA_CACHE.with(|cache| {
+            cache.borrow_mut().insert(cls_key, Arc::downgrade(&def));
+        });
         return Ok(def);
     }
 
@@ -63,15 +63,7 @@ pub fn ensure_schema_for_class(
         )));
     }
 
-    // 3. Try normal schema lookup
-    if let Some(def) = schema_from_class(py, cls)? {
-        SCHEMA_CACHE.with(|cache| {
-            cache.borrow_mut().insert(cls_key, Arc::downgrade(&def));
-        });
-        return Ok(def);
-    }
-
-    // 4. Internal introspection for automated schema building
+    // 3. Internal introspection for automated schema building
     if detect_struct_kind(py, cls)? {
         let default_config = SchemaConfig {
             frozen: false,
@@ -91,7 +83,7 @@ pub fn ensure_schema_for_class(
         }
     }
 
-    // 5. Fallback: not a struct
+    // 4. Fallback: not a struct
     let class_name = cls
         .name()
         .map(|n| n.to_string())

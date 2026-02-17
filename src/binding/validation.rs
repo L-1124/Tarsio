@@ -1,22 +1,8 @@
 use crate::ValidationError;
 use crate::binding::core::{Constraints, TarsDict, TypeExpr, WireType};
-use crate::binding::utils::dataclass_fields;
+use crate::binding::utils::{class_from_ptr, dataclass_fields};
 use pyo3::prelude::*;
-use pyo3::types::{
-    PyAny, PyBytes, PyDict, PyFloat, PyFrozenSet, PySequence, PySet, PyString, PyType,
-};
-
-fn class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> PyResult<Bound<'py, PyType>> {
-    let obj_ptr = ptr as *mut pyo3::ffi::PyObject;
-    if obj_ptr.is_null() {
-        return Err(pyo3::exceptions::PyTypeError::new_err(
-            "Invalid struct pointer",
-        ));
-    }
-    // SAFETY: 指针来自 Schema 系统，生命周期由 Schema 持有者保证。
-    let any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
-    Ok(any.cast::<PyType>()?.clone())
-}
+use pyo3::types::{PyAny, PyBytes, PyDict, PyFloat, PyFrozenSet, PySequence, PySet, PyString};
 
 #[inline]
 fn field_prefix(field_name: Option<&str>) -> String {

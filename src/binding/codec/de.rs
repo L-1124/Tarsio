@@ -5,7 +5,7 @@ use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{
     Constraints, StructDef, TarsDict, TypeExpr, WireType, ensure_schema_for_class,
 };
-use crate::binding::utils::check_depth;
+use crate::binding::utils::{check_depth, class_from_ptr};
 use crate::binding::validation::{
     validate_constraints_on_value, validate_length_constraints_raw,
     validate_numeric_constraints_raw,
@@ -122,7 +122,7 @@ fn deserialize_struct<'py>(
                                 "Struct field must be encoded as SimpleList".into(),
                             ));
                         }
-                        let nested_cls = struct_class_from_ptr(py, *ptr)?;
+                        let nested_cls = class_from_ptr(py, *ptr).map_err(DeError::wrap)?;
                         let payload = reader.read_simplelist_bytes().map_err(|e| {
                             DeError::new(format!("Failed to read Struct SimpleList payload: {}", e))
                         })?;
@@ -339,7 +339,7 @@ fn deserialize_value<'py>(
             decode_union_value(py, reader, type_id, variants, constraints, depth)
         }
         TypeExpr::Struct(ptr) => {
-            let nested_cls = struct_class_from_ptr(py, *ptr)?;
+            let nested_cls = class_from_ptr(py, *ptr).map_err(DeError::wrap)?;
             let nested_def = ensure_schema_for_class(py, &nested_cls).map_err(DeError::wrap)?;
             if type_id != TarsType::StructBegin {
                 return Err(DeError::new(
@@ -658,14 +658,4 @@ fn union_variant_matches_type_id(variant: &TypeExpr, type_id: TarsType) -> bool 
         TypeExpr::Map(_, _) => type_id == TarsType::Map,
         TypeExpr::Optional(inner) => union_variant_matches_type_id(inner, type_id),
     }
-}
-
-fn struct_class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> DeResult<Bound<'py, PyType>> {
-    let obj_ptr = ptr as *mut ffi::PyObject;
-    // SAFETY: ptr 来自 Schema 内部持有的 PyType 指针，生命周期受 Python 类型对象管理。
-    let nested_any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
-    nested_any
-        .cast::<PyType>()
-        .cloned()
-        .map_err(|e| DeError::new(e.to_string()))
 }

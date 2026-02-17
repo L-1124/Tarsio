@@ -4,7 +4,6 @@ use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{
     PyAny, PyBool, PyBytes, PyDict, PyFloat, PyFrozenSet, PyList, PySequence, PySet, PyString,
-    PyType,
 };
 use simdutf8::basic::from_utf8;
 use std::cell::RefCell;
@@ -15,8 +14,8 @@ use crate::binding::codec::ser;
 use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{Struct, StructDef, TarsDict, TypeExpr, ensure_schema_for_class};
 use crate::binding::utils::{
-    BUFFER_DEFAULT_CAPACITY, BUFFER_SHRINK_THRESHOLD, PySequenceFast, check_depth,
-    check_exact_sequence_type, dataclass_fields, with_stdlib_cache,
+    PySequenceFast, check_depth, check_exact_sequence_type, class_from_ptr, dataclass_fields,
+    maybe_shrink_buffer, with_stdlib_cache,
 };
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
@@ -60,7 +59,7 @@ where
                 if def.simplelist
                     && let TypeExpr::Struct(ptr) = &field.ty
                 {
-                    let nested_cls = struct_class_from_ptr(obj.py(), *ptr)?;
+                    let nested_cls = class_from_ptr(obj.py(), *ptr)?;
                     let nested_def = ensure_schema_for_class(obj.py(), &nested_cls)?;
                     let mut nested = Vec::with_capacity(256);
                     {
@@ -89,17 +88,6 @@ where
         }
     }
     Ok(())
-}
-
-fn struct_class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> PyResult<Bound<'py, PyType>> {
-    let obj_ptr = ptr as *mut pyo3::ffi::PyObject;
-    if obj_ptr.is_null() {
-        return Err(PyTypeError::new_err("Invalid struct pointer"));
-    }
-    // SAFETY: 指针 ptr 来自 Schema 系统，生命周期受控。
-    let any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
-    let cls = any.cast::<PyType>()?;
-    Ok(cls.clone())
 }
 
 pub(crate) fn write_tarsdict_fields<W, F>(
@@ -481,15 +469,7 @@ fn encode_raw_value_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResu
 
         let result = PyBytes::new(py, &buffer[..]).unbind();
 
-        let used = buffer.len();
-        if buffer.capacity() > BUFFER_SHRINK_THRESHOLD && used < (BUFFER_SHRINK_THRESHOLD / 4) {
-            let target = if used == 0 {
-                BUFFER_DEFAULT_CAPACITY
-            } else {
-                used.next_power_of_two().max(BUFFER_DEFAULT_CAPACITY)
-            };
-            buffer.shrink_to(target);
-        }
+        maybe_shrink_buffer(&mut buffer);
 
         Ok(result)
     })
@@ -548,18 +528,7 @@ fn encode_raw_dict_to_pybytes(
 
         let result = PyBytes::new(py, &buffer[..]).unbind();
 
-        // Capacity management: 仅当使用量明显变小才缩容，避免频繁抖动。
-        let used = buffer.len();
-        if buffer.capacity() > BUFFER_SHRINK_THRESHOLD
-            && used < (BUFFER_SHRINK_THRESHOLD / 4)
-        {
-            let target = if used == 0 {
-                BUFFER_DEFAULT_CAPACITY
-            } else {
-                used.next_power_of_two().max(BUFFER_DEFAULT_CAPACITY)
-            };
-            buffer.shrink_to(target);
-        }
+        maybe_shrink_buffer(&mut buffer);
 
         Ok(result)
     })

@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict};
+use pyo3::types::{PyAny, PyDict, PyType};
 
 thread_local! {
     static STDLIB_CACHE: RefCell<Option<StdlibCache>> = const { RefCell::new(None) };
@@ -48,6 +48,33 @@ pub const MAX_DEPTH: usize = 100;
 pub const BUFFER_SHRINK_THRESHOLD: usize = 1024 * 1024;
 // Default initial capacity (128 bytes).
 pub const BUFFER_DEFAULT_CAPACITY: usize = 128;
+
+/// 编码后智能缩容:避免单次大包导致内存长期驻留.
+#[inline]
+pub(crate) fn maybe_shrink_buffer(buffer: &mut Vec<u8>) {
+    let used = buffer.len();
+    if buffer.capacity() > BUFFER_SHRINK_THRESHOLD && used < (BUFFER_SHRINK_THRESHOLD / 4) {
+        let target = if used == 0 {
+            BUFFER_DEFAULT_CAPACITY
+        } else {
+            used.next_power_of_two().max(BUFFER_DEFAULT_CAPACITY)
+        };
+        buffer.shrink_to(target);
+    }
+}
+
+/// 根据 schema 中记录的类指针恢复 Python 类型对象.
+#[inline]
+pub(crate) fn class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> PyResult<Bound<'py, PyType>> {
+    let obj_ptr = ptr as *mut ffi::PyObject;
+    if obj_ptr.is_null() {
+        return Err(PyTypeError::new_err("Invalid struct pointer"));
+    }
+    // SAFETY: 指针 ptr 来自 Schema 系统，生命周期受控。
+    let any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
+    let cls = any.cast::<PyType>()?;
+    Ok(cls.clone())
+}
 
 #[inline]
 pub fn check_depth(depth: usize) -> PyResult<()> {

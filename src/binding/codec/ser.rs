@@ -8,8 +8,8 @@ use bytes::BufMut;
 use crate::binding::codec::raw::{serialize_any, serialize_struct_fields, write_tarsdict_fields};
 use crate::binding::schema::{TarsDict, TypeExpr, UnionCache, WireType, ensure_schema_for_class};
 use crate::binding::utils::{
-    BUFFER_DEFAULT_CAPACITY, BUFFER_SHRINK_THRESHOLD, PySequenceFast, check_depth,
-    check_exact_sequence_type, dataclass_fields,
+    PySequenceFast, check_depth, check_exact_sequence_type, class_from_ptr, dataclass_fields,
+    maybe_shrink_buffer,
 };
 use crate::binding::validation::value_matches_type;
 use crate::codec::consts::TarsType;
@@ -91,18 +91,7 @@ pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyRes
 
         let result = PyBytes::new(py, &buffer[..]).unbind();
 
-        // Capacity management: 仅当使用量明显变小才缩容，避免频繁抖动。
-        let used = buffer.len();
-        if buffer.capacity() > BUFFER_SHRINK_THRESHOLD
-            && used < (BUFFER_SHRINK_THRESHOLD / 4)
-        {
-            let target = if used == 0 {
-                BUFFER_DEFAULT_CAPACITY
-            } else {
-                used.next_power_of_two().max(BUFFER_DEFAULT_CAPACITY)
-            };
-            buffer.shrink_to(target);
-        }
+        maybe_shrink_buffer(&mut buffer);
 
         Ok(result)
     })
@@ -298,17 +287,6 @@ pub(crate) fn serialize_impl(
         }
     }
     Ok(())
-}
-
-fn class_from_ptr<'py>(py: Python<'py>, ptr: usize) -> PyResult<Bound<'py, pyo3::types::PyType>> {
-    let obj_ptr = ptr as *mut pyo3::ffi::PyObject;
-    if obj_ptr.is_null() {
-        return Err(PyTypeError::new_err("Invalid struct pointer"));
-    }
-    // SAFETY: 指针 ptr 来自 Schema 系统，生命周期受控。
-    let any = unsafe { Bound::from_borrowed_ptr(py, obj_ptr) };
-    let cls = any.cast::<pyo3::types::PyType>()?;
-    Ok(cls.clone())
 }
 
 /// 从 Union 变体列表中选择与给定值匹配的变体.
