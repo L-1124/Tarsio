@@ -544,6 +544,23 @@ fn missing_required_argument_error(field: &FieldDef) -> PyErr {
     ))
 }
 
+pub(crate) fn run_post_init(self_obj: &Bound<'_, PyAny>) -> PyResult<()> {
+    let py = self_obj.py();
+    match self_obj.getattr("__post_init__") {
+        Ok(post_init) => {
+            post_init.call0()?;
+            Ok(())
+        }
+        Err(err) => {
+            if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
 #[inline]
 fn lookup_keyword_index(def: &StructDef, key: &Bound<'_, PyAny>) -> PyResult<Option<usize>> {
     if let Ok(key_str_obj) = key.cast::<PyString>() {
@@ -601,6 +618,7 @@ pub fn construct_instance(
             }
             set_field_value(self_obj, field, &val)?;
         }
+        run_post_init(self_obj)?;
         return Ok(());
     }
 
@@ -699,6 +717,7 @@ pub fn construct_instance(
         set_field_value(self_obj, field, &val_to_set)?;
     }
 
+    run_post_init(self_obj)?;
     Ok(())
 }
 

@@ -203,3 +203,8 @@ class Envelope(Struct, simplelist=True):
 * `__eq__` / `__ne__`: 当 `eq=True` 时按字段值比较。
 * `__match_args__`: 提供 `match/case` 位置匹配使用的字段顺序（按 tag 升序）。
 * `__rich_repr__`: 为 rich pretty-print 返回字段序列，过滤规则与 `__repr__` 一致。
+
+`__post_init__` 在解码阶段的异常语义：
+
+* 抛出 `TypeError` 或 `ValueError` 时，会转换为 `ValidationError`。
+* 其他异常类型保持原样抛出。

@@ -31,6 +31,7 @@ pub struct DeError {
     pub msg: String,
     pub path: Vec<PathItem>,
     pub cause: Option<PyErr>,
+    pub passthrough: bool,
 }
 
 impl DeError {
@@ -39,6 +40,7 @@ impl DeError {
             msg,
             path: Vec::new(),
             cause: None,
+            passthrough: false,
         }
     }
 
@@ -47,6 +49,16 @@ impl DeError {
             msg: err.to_string(),
             path: Vec::new(),
             cause: Some(err),
+            passthrough: false,
+        }
+    }
+
+    pub fn passthrough(err: PyErr) -> Self {
+        Self {
+            msg: err.to_string(),
+            path: Vec::new(),
+            cause: Some(err),
+            passthrough: true,
         }
     }
 
@@ -56,6 +68,12 @@ impl DeError {
     }
 
     pub fn to_pyerr(mut self, py: Python<'_>) -> PyErr {
+        if self.passthrough
+            && let Some(cause) = &self.cause
+        {
+            return cause.clone_ref(py);
+        }
+
         // 如果根本原因是 ValidationError，直接抛出，不附加路径信息
         if let Some(cause) = &self.cause
             && cause.is_instance_of::<ValidationError>(py)

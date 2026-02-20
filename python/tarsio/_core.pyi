@@ -261,6 +261,7 @@ class Struct(metaclass=StructMeta):
     - `__eq__`：当 `eq=True` 时生成相等比较。
     - `__repr__`：生成可读的 repr；当 `repr_omit_defaults=True` 时省略默认值字段。
     - `__copy__`：生成浅拷贝。
+    - `__post_init__`：若定义则在实例初始化完成后调用（包括解码路径）。
     - `__replace__`：返回替换指定字段后的新实例。
     - `__match_args__`：用于模式匹配的位置参数顺序。
     - `__rich_repr__`：为 rich pretty-print 提供字段迭代项。
@@ -359,6 +360,7 @@ class Struct(metaclass=StructMeta):
         Raises:
             TypeError: 目标类未注册 Schema。
             ValueError: 数据格式不正确或缺少必填字段。
+            ValidationError: 解码后 `__post_init__` 抛出 TypeError/ValueError。
         """
         ...
     def __replace__(self: _StructT, **changes: Any) -> _StructT:

@@ -3,7 +3,7 @@ use crate::binding::codec::raw::{
 };
 use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{
-    Constraints, StructDef, TarsDict, TypeExpr, WireType, ensure_schema_for_class,
+    Constraints, StructDef, TarsDict, TypeExpr, WireType, ensure_schema_for_class, run_post_init,
 };
 use crate::binding::utils::{check_depth, class_from_type};
 use crate::binding::validation::{
@@ -233,6 +233,15 @@ fn deserialize_struct<'py>(
                 }
             }
         }
+    }
+
+    if let Err(err) = run_post_init(instance.as_any()) {
+        if err.is_instance_of::<pyo3::exceptions::PyTypeError>(py)
+            || err.is_instance_of::<pyo3::exceptions::PyValueError>(py)
+        {
+            return Err(DeError::wrap(err));
+        }
+        return Err(DeError::passthrough(err));
     }
 
     Ok(instance)

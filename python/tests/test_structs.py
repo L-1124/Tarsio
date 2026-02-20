@@ -596,6 +596,63 @@ def test_copy_returns_new_instance() -> None:
     assert u is not u2
 
 
+def test_post_init_runs_after_init() -> None:
+    """__post_init__ 应在构造完成后执行."""
+
+    class S(Struct):
+        a: Annotated[int, 0]
+        called: bool = False
+
+        def __post_init__(self) -> None:
+            self.called = True
+
+    s = S(1)
+    assert s.called is True
+
+
+def test_post_init_runs_after_decode() -> None:
+    """__post_init__ 应在解码完成后执行."""
+
+    class S(Struct):
+        a: Annotated[int, 0]
+        b: Annotated[int, 1] = 0
+
+        def __post_init__(self) -> None:
+            self.b = self.a + 1
+
+    encoded = encode_raw(TarsDict({0: 10}))
+    decoded = decode(S, encoded)
+    assert decoded.b == 11
+
+
+def test_post_init_type_error_during_decode_becomes_validation_error() -> None:
+    """解码阶段 __post_init__ 的 TypeError 应转为 ValidationError."""
+
+    class S(Struct):
+        a: Annotated[int, 0]
+
+        def __post_init__(self) -> None:
+            raise TypeError("bad post init")
+
+    encoded = encode_raw(TarsDict({0: 1}))
+    with pytest.raises(ValidationError, match="bad post init"):
+        decode(S, encoded)
+
+
+def test_post_init_runtime_error_during_decode_passthrough() -> None:
+    """解码阶段 __post_init__ 的非 TypeError/ValueError 应原样抛出."""
+
+    class S(Struct):
+        a: Annotated[int, 0]
+
+        def __post_init__(self) -> None:
+            raise RuntimeError("boom")
+
+    encoded = encode_raw(TarsDict({0: 1}))
+    with pytest.raises(RuntimeError, match="boom"):
+        decode(S, encoded)
+
+
 def test_replace_returns_new_instance_with_overrides() -> None:
     """__replace__ 应返回覆盖字段后的新实例."""
     u = User(1, "a")
