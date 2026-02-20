@@ -87,7 +87,7 @@ jobs:
       - name: set up python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
           architecture: ${{ matrix.python-architecture || 'x64' }}
 
       - name: install tools
@@ -100,7 +100,7 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           # 显式覆盖支持的 Python 版本
           args: --release --out dist --interpreter ${{ matrix.interpreter || '3.10 3.11 3.12 3.13' }}
-          sccache: 'true'
+          sccache: "true"
 
       - name: check artifacts
         shell: bash
@@ -136,33 +136,43 @@ jobs:
         with:
           path: ./site
 
-  deploy-docs:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: [build-docs, build-wheels]
-    steps:
-      - name: deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
-
   # 4. 汇总发布
+  publish-pypi:
+    name: publish to pypi
+    runs-on: ubuntu-latest
+    needs: [build-wheels, build-sdist]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify tag matches package version
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PYPROJECT_VERSION="$(grep -m1 '^version = ' pyproject.toml | cut -d '"' -f2)"
+          if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match pyproject version ($PYPROJECT_VERSION)"
+            exit 1
+          fi
+      - name: download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: files*
+          path: dist
+          merge-multiple: true
+      - name: publish to pypi
+        uses: pypa/gh-action-pypi-publish@release/v1
+
   release:
     name: release
     runs-on: ubuntu-latest
-    needs: [build-wheels, build-sdist]
+    needs: [build-wheels, build-sdist, publish-pypi]
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
 
       - name: generate changelog
         uses: orhun/git-cliff-action@v4
@@ -174,6 +184,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.git-cliff.outputs.content }}
-          files: dist/*
           make_latest: true
           generate_release_notes: false
+
+  # 5. 部署文档
+  deploy-docs:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: [build-docs, build-wheels, build-sdist, publish-pypi, release]
+    steps:
+      - name: deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
