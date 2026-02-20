@@ -46,8 +46,8 @@ def parse_hex_string(hex_str: str) -> bytes:
     Returns:
         解析后的字节数据.
     """
-    # 移除空格和换行
-    cleaned = "".join(hex_str.split())
+    # 移除首尾空白
+    cleaned = hex_str.strip()
     # 移除可能的 0x 前缀
     if cleaned.lower().startswith("0x"):
         cleaned = cleaned[2:]
@@ -63,8 +63,10 @@ def is_hex_file(content: bytes) -> bool:
     Returns:
         是否为有效的 hex 文本.
     """
+    # 仅检测前 4KB 数据以避免大文件内存爆破
+    preview = content[:4096]
     try:
-        text = content.decode("ascii")
+        text = preview.decode("ascii")
         cleaned = "".join(text.split())
         if cleaned.lower().startswith("0x"):
             cleaned = cleaned[2:]
@@ -130,11 +132,11 @@ def build_trace_tree(node: TraceNode, parent: TreeType | None = None) -> TreeTyp
         if isinstance(node.value, str):
             val_str = repr(node.value)
         elif isinstance(node.value, bytes):
-            hex_val = node.value.hex().upper()
-            if len(hex_val) > 20:
-                val_str = f"<{len(node.value)} bytes> {hex_val[:20]}..."
+            preview = node.value[:16].hex().upper()
+            if len(node.value) > 16:
+                val_str = f"<{len(node.value)} bytes> {preview}..."
             else:
-                val_str = f"<{len(node.value)} bytes> {hex_val}"
+                val_str = f"<{len(node.value)} bytes> {preview}"
 
         label.append(": ", style="white")
         label.append(val_str, style=style_value)
@@ -186,6 +188,18 @@ class BytesEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+def _prepare_dict_data(data: Any) -> Any:
+    """内部通用方法: 将解码结果转为纯 dict 结构以供输出(应对 JSON 和 pretty 模式)."""
+    output_data = data
+    if hasattr(data, "to_dict"):
+        output_data = data.to_dict()
+
+    if isinstance(output_data, dict):
+        output_data = deep_probe(output_data)
+
+    return output_data
+
+
 def format_output(data: Any, fmt: str) -> None:
     """格式化输出数据.
 
@@ -198,14 +212,7 @@ def format_output(data: Any, fmt: str) -> None:
     console = Console()
 
     if fmt == "json":
-        # 如果是 TraceNode，先转 dict
-        output_data = data
-        if hasattr(data, "to_dict"):
-            output_data = data.to_dict()
-
-        # 深度探测 Raw 数据中的 Struct (仅针对 Raw dict 模式)
-        if isinstance(output_data, dict):
-            output_data = deep_probe(output_data)
+        output_data = _prepare_dict_data(data)
 
         json_str = json.dumps(
             output_data, cls=BytesEncoder, indent=2, ensure_ascii=False
@@ -225,19 +232,7 @@ def format_output(data: Any, fmt: str) -> None:
         console.print(tree)
 
     else:  # pretty
-        # 如果是 TraceNode，转为 dict 再打印，或者打印 repr？
-        # 用户选 pretty 通常是想看 Python 对象结构
-        output_data = data
-        if isinstance(data, TraceNode):
-            # TraceNode 的 repr 不太好看，转为 dict 结构展示 value
-            # 但为了 pretty，我们可能更想要 deep_probe 后的 raw dict
-            # 这里有点歧义。如果用户选 pretty，通常意味着 decode_raw 的结果。
-            # 所以在 main 里如果不选 tree，我们还是调 decode_raw。
-            pass
-
-        if isinstance(output_data, dict):
-            output_data = deep_probe(output_data)
-
+        output_data = _prepare_dict_data(data)
         console.print(output_data)
 
 
@@ -324,12 +319,12 @@ def _create_cli() -> Any:
         # Verbose 输出
         if verbose:
             console.print(f"[dim][INFO] 输入大小: {len(data)} bytes[/]")
-            hex_str = data.hex()
+            preview_hex = data[:50].hex()
             formatted_hex = " ".join(
-                hex_str[i : i + 2] for i in range(0, len(hex_str), 2)
+                preview_hex[i : i + 2] for i in range(0, len(preview_hex), 2)
             )
-            if len(formatted_hex) > 100:
-                formatted_hex = formatted_hex[:100] + "..."
+            if len(data) > 50:
+                formatted_hex += " ..."
             console.print(f"[dim][DEBUG] Hex: {formatted_hex}[/]")
 
         # 解码
@@ -347,13 +342,7 @@ def _create_cli() -> Any:
 
         # 输出
         if output is not None:
-            save_data = decoded
-            to_dict_method = getattr(decoded, "to_dict", None)
-            if to_dict_method:
-                save_data = to_dict_method()
-
-            if isinstance(save_data, dict):
-                save_data = deep_probe(save_data)
+            save_data = _prepare_dict_data(decoded)
 
             with open(output, "w", encoding="utf-8") as f:
                 json.dump(
