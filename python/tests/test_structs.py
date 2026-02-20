@@ -470,7 +470,7 @@ def test_struct_recursion_limit_exceeded() -> None:
         curr.next = new_node
         curr = new_node
 
-    with pytest.raises(ValueError, match="Recursion limit"):
+    with pytest.raises(ValueError, match="Recursion depth exceeded"):
         encode(head)
 
 
@@ -478,7 +478,7 @@ def test_struct_decode_recursion_limit_exceeded() -> None:
     """验证解码结构体时的深层嵌套字典导致递归超限."""
     # Node's next field is tag 1 (StructBegin is 1A), its val is tag 0 (Int1 val 0 is 00 00)
     data = bytes.fromhex("00001A" * 105 + "0B" * 105)
-    with pytest.raises(ValueError, match="Recursion limit"):
+    with pytest.raises(ValueError, match="Recursion depth exceeded"):
         decode(Node, data)
 
 
@@ -1034,7 +1034,7 @@ def test_reentrant_encode_error_message_mentions_common_triggers() -> None:
     td = TarsDict({})
     td[0] = td
 
-    with pytest.raises(ValueError, match="Recursion limit"):
+    with pytest.raises(ValueError, match="Recursion depth exceeded"):
         encode_raw(td)
 
 

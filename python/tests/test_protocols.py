@@ -5,7 +5,14 @@
 """
 
 import pytest
-from tarsio._core import TarsDict, decode, decode_raw, encode_raw, probe_struct
+from tarsio._core import (
+    TarsDict,
+    decode,
+    decode_raw,
+    decode_trace,
+    encode_raw,
+    probe_struct,
+)
 
 
 @pytest.mark.parametrize(
@@ -243,7 +250,7 @@ def test_encode_raw_list_complex() -> None:
 def test_decode_raw_max_depth_exceeded() -> None:
     """测试 Raw 解码深度限制."""
     data = bytes.fromhex("0A" * 101 + "0B" * 101)
-    with pytest.raises(ValueError, match="Recursion limit"):
+    with pytest.raises(ValueError, match="Recursion depth exceeded"):
         decode_raw(data)
 
 
@@ -333,8 +340,15 @@ def test_raw_recursion_limit() -> None:
     for _ in range(101):
         curr[0] = TarsDict({})
         curr = curr[0]
-    with pytest.raises(ValueError, match="Recursion limit"):
+    with pytest.raises(ValueError, match="Recursion depth exceeded"):
         encode_raw(d)
+
+
+def test_decode_trace_depth_exceeded() -> None:
+    """decode_trace 深度超过阈值应抛 ValueError."""
+    data = bytes.fromhex("0A" * 101 + "0B" * 101)
+    with pytest.raises(ValueError, match="Trace recursion depth exceeded"):
+        decode_trace(data)
 
 
 def test_probe_struct_valid() -> None:

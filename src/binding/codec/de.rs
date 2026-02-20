@@ -141,11 +141,37 @@ fn deserialize_struct<'py>(
                         match &field.ty {
                             TypeExpr::Struct(cls_obj) => {
                                 let nested_cls = class_from_type(py, cls_obj);
-                                decode_object(py, &nested_cls, payload).map_err(DeError::wrap)
+                                let nested_def = ensure_schema_for_class(py, &nested_cls)
+                                    .map_err(DeError::wrap)?;
+                                let mut inner_reader = TarsReader::new(payload);
+                                let res = deserialize_struct(
+                                    py,
+                                    &nested_cls,
+                                    &mut inner_reader,
+                                    &nested_def,
+                                    depth + 1,
+                                )?;
+                                if !inner_reader.is_end() {
+                                    return Err(DeError::new(
+                                        "Trailing bytes after SimpleList decode".into(),
+                                    ));
+                                }
+                                Ok(res)
                             }
                             TypeExpr::TarsDict => {
-                                let dict =
-                                    decode_raw_from_bytes(py, payload).map_err(DeError::wrap)?;
+                                let mut inner_reader = TarsReader::new(payload);
+                                let dict = crate::binding::codec::raw::decode_struct_fields(
+                                    py,
+                                    &mut inner_reader,
+                                    true,
+                                    depth + 1,
+                                )
+                                .map_err(DeError::wrap)?;
+                                if !inner_reader.is_end() {
+                                    return Err(DeError::new(
+                                        "Trailing bytes after SimpleList TarsDict decode".into(),
+                                    ));
+                                }
                                 let tarsdict_type = py.get_type::<TarsDict>();
                                 let instance =
                                     tarsdict_type.call1((dict,)).map_err(DeError::wrap)?;

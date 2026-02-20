@@ -108,9 +108,10 @@ pub(crate) fn class_from_type<'py>(py: Python<'py>, cls: &Py<PyType>) -> Bound<'
 #[inline]
 pub fn check_depth(depth: usize) -> PyResult<()> {
     if depth >= MAX_DEPTH {
-        return Err(PyValueError::new_err(
-            "Recursion limit exceeded or circular reference detected",
-        ));
+        return Err(PyValueError::new_err(format!(
+            "Recursion depth exceeded (max={}, observed={})",
+            MAX_DEPTH, depth
+        )));
     }
     Ok(())
 }

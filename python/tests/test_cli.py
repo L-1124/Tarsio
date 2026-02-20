@@ -295,6 +295,17 @@ def test_cli_invalid_hex_returns_error(cli_runner: CliRunner, cli) -> None:
     assert result.exit_code != 0
 
 
+def test_cli_tree_trace_depth_exceeded_returns_error(
+    cli_runner: CliRunner, cli
+) -> None:
+    """CLI tree 模式在 trace 深度超限时返回错误."""
+    nested_hex = "0A" * 101 + "0B" * 101
+    result = cli_runner.invoke(cli, [nested_hex, "--format", "tree"])
+    assert result.exit_code != 0
+    assert "解码失败" in result.output
+    assert "Trace recursion depth exceeded" in result.output
+
+
 def test_cli_both_inputs_returns_error(
     cli_runner: CliRunner, cli, tmp_path: Path
 ) -> None:

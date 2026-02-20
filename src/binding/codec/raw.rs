@@ -563,11 +563,10 @@ fn encode_value(
     value: &Bound<'_, PyAny>,
     depth: usize,
 ) -> PyResult<()> {
-    check_depth(depth)?;
     serialize_any(writer, tag, value, depth, &ser::serialize_impl_standard)
 }
 
-fn decode_struct_fields<'py>(
+pub(crate) fn decode_struct_fields<'py>(
     py: Python<'py>,
     reader: &mut TarsReader,
     allow_end: bool,
@@ -612,7 +611,6 @@ fn decode_value<'py>(
     type_id: TarsType,
     depth: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
-    check_depth(depth)?;
     if type_id == TarsType::StructBegin {
         return decode_struct_fields(py, reader, true, depth + 1).map(|d| d.into_any());
     }
