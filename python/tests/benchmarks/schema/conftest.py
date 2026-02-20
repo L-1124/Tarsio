@@ -201,10 +201,10 @@ def malformed_bytes():
 
 @pytest.fixture
 def deep_nest_obj():
-    """生成深度嵌套对象 (Depth 30)."""
+    """生成深度嵌套对象 (Depth 15)."""
     root = DeepNest(val=0)
     curr = root
-    for i in range(1, 30):
+    for i in range(1, 15):
         new_node = DeepNest(val=i)
         curr.next = new_node
         curr = new_node

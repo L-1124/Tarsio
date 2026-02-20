@@ -79,7 +79,7 @@ pub(crate) fn dataclass_fields<'py>(
     }
 }
 
-pub const MAX_DEPTH: usize = 100;
+pub const MAX_DEPTH: usize = 48;
 // Capacity threshold (1MB). If buffer exceeds this, we shrink it back.
 pub const BUFFER_SHRINK_THRESHOLD: usize = 1024 * 1024;
 // Default initial capacity (128 bytes).

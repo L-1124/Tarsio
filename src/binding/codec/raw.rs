@@ -563,7 +563,7 @@ fn encode_value(
     value: &Bound<'_, PyAny>,
     depth: usize,
 ) -> PyResult<()> {
-    serialize_any(writer, tag, value, depth, &ser::serialize_impl_standard)
+    serialize_any(writer, tag, value, depth + 1, &ser::serialize_impl_standard)
 }
 
 pub(crate) fn decode_struct_fields<'py>(
