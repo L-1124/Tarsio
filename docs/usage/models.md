@@ -191,3 +191,15 @@ class Envelope(Struct, simplelist=True):
 ```
 
 `simplelist=True` 只影响当前类的 Struct 字段编码形式。顶层 `encode(Envelope(...))` 与其他字段行为不变。
+
+## 自动生成方法
+
+`Struct` 会根据字段注解自动提供常用方法与元信息：
+
+* `__init__`: 支持按 tag 顺序的位置参数与字段名关键字参数。
+* `__repr__`: 返回可读字符串；`repr_omit_defaults=True` 时省略默认值字段。
+* `__copy__`: 返回浅拷贝新实例。
+* `__replace__(**changes)`: 返回替换部分字段后的新实例，未知字段会抛出 `TypeError`。
+* `__eq__` / `__ne__`: 当 `eq=True` 时按字段值比较。
+* `__match_args__`: 提供 `match/case` 位置匹配使用的字段顺序（按 tag 升序）。
+* `__rich_repr__`: 为 rich pretty-print 返回字段序列，过滤规则与 `__repr__` 一致。

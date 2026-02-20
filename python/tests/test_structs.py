@@ -596,6 +596,93 @@ def test_copy_returns_new_instance() -> None:
     assert u is not u2
 
 
+def test_replace_returns_new_instance_with_overrides() -> None:
+    """__replace__ 应返回覆盖字段后的新实例."""
+    u = User(1, "a")
+    u2 = u.__replace__(name="b")
+    assert u.uid == 1
+    assert u.name == "a"
+    assert u2.uid == 1
+    assert u2.name == "b"
+    assert u is not u2
+
+
+def test_replace_unknown_field_raises_type_error() -> None:
+    """__replace__ 传入未知字段应抛 TypeError."""
+    u = User(1, "a")
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        u.__replace__(unknown=1)  # pyright: ignore[reportCallIssue]
+
+
+def test_replace_applies_validation() -> None:
+    """__replace__ 应复用构造校验逻辑."""
+
+    class Limited(Struct):
+        v: Annotated[int, Meta(gt=0)]
+
+    obj = Limited(1)
+    with pytest.raises(ValidationError, match="must be >"):
+        obj.__replace__(v=0)
+
+
+def test_replace_works_for_frozen_struct() -> None:
+    """frozen=True 时 __replace__ 仍可返回新实例."""
+
+    class FrozenUser(Struct, frozen=True):
+        id: Annotated[int, 0]
+        name: Annotated[str, 1]
+
+    u = FrozenUser(1, "a")
+    u2 = u.__replace__(name="b")
+    assert u.name == "a"
+    assert u2.name == "b"
+    assert u is not u2
+
+
+def test_match_args_contains_all_fields_in_tag_order() -> None:
+    """__match_args__ 应包含全部字段并按 tag 排序."""
+
+    class S(Struct):
+        b: Annotated[int, 2]
+        a: Annotated[int, 1]
+
+    assert S.__match_args__ == ("a", "b")
+
+
+def test_pattern_matching_uses_match_args() -> None:
+    """模式匹配应使用 __match_args__ 的字段顺序."""
+
+    class S(Struct):
+        b: Annotated[int, 2]
+        a: Annotated[int, 1]
+
+    obj = S(a=1, b=2)
+    matched = False
+    match obj:
+        case S(1, 2):
+            matched = True
+        case _:
+            matched = False
+    assert matched is True
+
+
+def test_rich_repr_returns_field_pairs() -> None:
+    """__rich_repr__ 应返回字段名和值的有序对."""
+    u = User(1, "a")
+    assert u.__rich_repr__() == [("uid", 1), ("name", "a")]
+
+
+def test_rich_repr_omit_defaults_follows_repr_config() -> None:
+    """repr_omit_defaults=True 时 __rich_repr__ 省略默认值字段."""
+
+    class C(Struct, repr_omit_defaults=True):
+        a: Annotated[int, 0] = 1
+        b: Annotated[int, 1] = 2
+
+    c = C(b=3)
+    assert c.__rich_repr__() == [("b", 3)]
+
+
 # ==========================================
 # 不变量测试 (Invariants)
 # ==========================================

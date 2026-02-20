@@ -249,6 +249,65 @@ impl Struct {
         Ok(instance.unbind())
     }
 
+    #[pyo3(signature = (**changes))]
+    fn __replace__(
+        slf: &Bound<'_, Struct>,
+        changes: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        let cls = slf.get_type();
+        let def = schema_from_class(py, &cls)?.ok_or_else(|| {
+            pyo3::exceptions::PyTypeError::new_err("Schema not found during replace")
+        })?;
+
+        // SAFETY:
+        // 1. `cls` 是有效的 Python 类型对象，来自 `slf.get_type()`。
+        // 2. `PyType_GenericAlloc` 返回新引用；空指针时立即通过 `PyErr::fetch` 返回错误。
+        // 3. `Bound::from_owned_ptr` 正确接管该新引用所有权。
+        let instance = unsafe {
+            let type_ptr = cls.as_ptr() as *mut ffi::PyTypeObject;
+            let obj_ptr = ffi::PyType_GenericAlloc(type_ptr, 0);
+            if obj_ptr.is_null() {
+                return Err(PyErr::fetch(py));
+            }
+            Bound::from_owned_ptr(py, obj_ptr)
+        };
+
+        let kwargs = PyDict::new(py);
+        for field in &def.fields_sorted {
+            let val = match slf.getattr(field.name_py.bind(py)) {
+                Ok(v) => v,
+                Err(_) => {
+                    if let Some(default_value) = field.default_value.as_ref() {
+                        default_value.bind(py).clone()
+                    } else if let Some(factory) = field.default_factory.as_ref() {
+                        factory.bind(py).call0()?
+                    } else if field.is_optional {
+                        py.None().into_bound(py)
+                    } else if field.is_required {
+                        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                            "Missing required field '{}' during replace",
+                            field.name
+                        )));
+                    } else {
+                        continue;
+                    }
+                }
+            };
+            kwargs.set_item(field.name_py.bind(py), val)?;
+        }
+
+        if let Some(items) = changes {
+            for (key, value) in items.iter() {
+                kwargs.set_item(key, value)?;
+            }
+        }
+
+        let empty_args = PyTuple::empty(py);
+        construct_instance(&def, instance.as_any(), &empty_args, Some(&kwargs))?;
+        Ok(instance.unbind())
+    }
+
     fn __repr__(slf: &Bound<'_, Struct>) -> PyResult<String> {
         let py = slf.py();
         let cls = slf.get_type();
@@ -273,7 +332,7 @@ impl Struct {
             // 使用 Python 的 repr() 获取值的字符串表示
             if def.repr_omit_defaults
                 && let Some(default_val) = &field.default_value
-                && val.eq(default_val)?
+                && val.eq(default_val.bind(py))?
             {
                 continue;
             }
@@ -291,6 +350,32 @@ impl Struct {
         result.push(')');
 
         Ok(result)
+    }
+
+    fn __rich_repr__(slf: &Bound<'_, Struct>) -> PyResult<Vec<(String, Py<PyAny>)>> {
+        let py = slf.py();
+        let cls = slf.get_type();
+        let def = match schema_from_class(py, &cls)? {
+            Some(d) => d,
+            None => return Ok(Vec::new()),
+        };
+
+        let mut items = Vec::with_capacity(def.fields_sorted.len());
+        for field in &def.fields_sorted {
+            let val = match slf.getattr(field.name_py.bind(py)) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            if def.repr_omit_defaults
+                && let Some(default_val) = &field.default_value
+                && val.eq(default_val.bind(py))?
+            {
+                continue;
+            }
+            items.push((field.name.clone(), val.unbind()));
+        }
+        Ok(items)
     }
 
     fn __richcmp__(

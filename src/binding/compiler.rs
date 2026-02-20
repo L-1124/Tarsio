@@ -206,7 +206,8 @@ fn compile_schema_from_fields<'py>(
         field_names.push(field.name_py.bind(py).to_owned().into_any().unbind());
     }
     let fields_tuple = PyTuple::new(py, field_names)?;
-    cls.setattr("__struct_fields__", fields_tuple)?;
+    cls.setattr("__struct_fields__", &fields_tuple)?;
+    cls.setattr("__match_args__", &fields_tuple)?;
 
     let struct_config = Py::new(py, StructConfig::from_schema_config(&config))?;
     cls.setattr("__struct_config__", struct_config)?;

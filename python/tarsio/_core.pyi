@@ -261,8 +261,11 @@ class Struct(metaclass=StructMeta):
     - `__eq__`：当 `eq=True` 时生成相等比较。
     - `__repr__`：生成可读的 repr；当 `repr_omit_defaults=True` 时省略默认值字段。
     - `__copy__`：生成浅拷贝。
+    - `__replace__`：返回替换指定字段后的新实例。
+    - `__match_args__`：用于模式匹配的位置参数顺序。
+    - `__rich_repr__`：为 rich pretty-print 提供字段迭代项。
     - 排序比较：当 `order=True` 时生成 `__lt__/__le__/__gt__/__ge__`。
-    - Hash：当 `frozen=True` 时提供 `__hash__`（使实例可哈希）。
+    - Hash: 当 `frozen=True` 时提供 `__hash__`（使实例可哈希）。
 
     运行时元信息：
 
@@ -314,6 +317,7 @@ class Struct(metaclass=StructMeta):
 
     __struct_fields__: ClassVar[tuple[str, ...]]
     __struct_config__: ClassVar[StructConfig]
+    __match_args__: ClassVar[tuple[str, ...]]
 
     def __init_subclass__(
         cls,
@@ -355,6 +359,27 @@ class Struct(metaclass=StructMeta):
         Raises:
             TypeError: 目标类未注册 Schema。
             ValueError: 数据格式不正确或缺少必填字段。
+        """
+        ...
+    def __replace__(self: _StructT, **changes: Any) -> _StructT:
+        """返回替换部分字段后的新实例.
+
+        Args:
+            **changes: 需要替换的字段名和值。
+
+        Returns:
+            新实例，未替换字段沿用原实例值。
+
+        Raises:
+            TypeError: 包含未知字段名时抛出。
+            ValidationError: 替换值不满足类型或约束时抛出。
+        """
+        ...
+    def __rich_repr__(self) -> list[tuple[str, Any]]:
+        """返回 rich pretty-print 使用的字段序列.
+
+        Returns:
+            形如 ``[(field_name, value), ...]`` 的字段序列，顺序按 tag。
         """
         ...
 
