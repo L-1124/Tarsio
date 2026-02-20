@@ -44,24 +44,14 @@ def field(
     tag: int | None = None,
     default: Any,
     wrap_simplelist: bool = ...,
-    default_factory: object = ...,
 ) -> Any: ...
 @overload
 def field(
     *,
     tag: int | None = None,
-    default: object = ...,
     wrap_simplelist: bool = ...,
     default_factory: Callable[[], _FieldDefaultT],
 ) -> _FieldDefaultT: ...
-@overload
-def field(
-    *,
-    tag: int | None = None,
-    default: object = ...,
-    wrap_simplelist: bool = ...,
-    default_factory: object = ...,
-) -> Any: ...
 def field(
     *,
     tag: int | None = None,
