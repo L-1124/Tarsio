@@ -121,14 +121,79 @@ def test_cli_read_binary_file(cli_runner: CliRunner, cli, tmp_path: Path) -> Non
     assert "100" in result.output
 
 
+def test_cli_read_binary_file_with_tree_format(
+    cli_runner: CliRunner, cli, tmp_path: Path
+) -> None:
+    """CLI -f 读取二进制文件并在 tree 模式下成功解码."""
+    test_file = tmp_path / "test_tree.bin"
+    test_file.write_bytes(bytes.fromhex("0064"))
+
+    result = cli_runner.invoke(
+        cli,
+        ["-f", str(test_file), "--file-format", "bin", "--format", "tree"],
+    )
+    assert result.exit_code == 0
+    assert "(ROOT)" in result.output
+
+
 def test_cli_read_hex_text_file(cli_runner: CliRunner, cli, tmp_path: Path) -> None:
     """CLI -f 正确读取 hex 文本文件."""
     test_file = tmp_path / "test.hex"
     test_file.write_text("00 64")
 
-    result = cli_runner.invoke(cli, ["-f", str(test_file)])
+    result = cli_runner.invoke(cli, ["-f", str(test_file), "--file-format", "hex"])
     assert result.exit_code == 0
     assert "100" in result.output
+
+
+def test_cli_read_hex_text_file_with_invalid_utf8_returns_error(
+    cli_runner: CliRunner, cli, tmp_path: Path
+) -> None:
+    """CLI 读取非 UTF-8 hex 文本文件时返回错误."""
+    test_file = tmp_path / "invalid_utf8.hex"
+    test_file.write_bytes(b"\xff\xfe00")
+
+    result = cli_runner.invoke(cli, ["-f", str(test_file), "--file-format", "hex"])
+    assert result.exit_code != 0
+    assert "输入读取失败" in result.output
+
+
+def test_cli_read_hex_text_file_with_invalid_char_returns_error(
+    cli_runner: CliRunner, cli, tmp_path: Path
+) -> None:
+    """CLI 读取包含非法字符的 hex 文本文件时返回错误."""
+    test_file = tmp_path / "invalid_char.hex"
+    test_file.write_text("00 zz")
+
+    result = cli_runner.invoke(cli, ["-f", str(test_file), "--file-format", "hex"])
+    assert result.exit_code != 0
+    assert "非法 hex 字符" in result.output
+
+
+def test_cli_read_hex_text_file_with_odd_length_returns_error(
+    cli_runner: CliRunner, cli, tmp_path: Path
+) -> None:
+    """CLI 读取奇数长度 hex 文本文件时返回错误."""
+    test_file = tmp_path / "odd_length.hex"
+    test_file.write_text("0")
+
+    result = cli_runner.invoke(cli, ["-f", str(test_file), "--file-format", "hex"])
+    assert result.exit_code != 0
+    assert "长度必须为偶数" in result.output
+
+
+def test_cli_binary_file_handle_released_after_decode(
+    cli_runner: CliRunner, cli, tmp_path: Path
+) -> None:
+    """CLI 读取二进制文件后应释放句柄."""
+    test_file = tmp_path / "handle.bin"
+    test_file.write_bytes(bytes.fromhex("0064"))
+
+    result = cli_runner.invoke(cli, ["-f", str(test_file), "--file-format", "bin"])
+    assert result.exit_code == 0
+
+    test_file.unlink()
+    assert not test_file.exists()
 
 
 # ==========================================
@@ -149,6 +214,68 @@ def test_cli_output_to_file_saves_json(
 
     data = json.loads(output_file.read_text())
     assert data["0"] == 100
+
+
+def test_cli_output_to_directory_returns_error(
+    cli_runner: CliRunner, cli, tmp_path: Path
+) -> None:
+    """CLI 输出路径为目录时返回错误."""
+    output_dir = tmp_path / "out_dir"
+    output_dir.mkdir()
+
+    result = cli_runner.invoke(cli, ["00 64", "-o", str(output_dir)])
+    assert result.exit_code != 0
+    assert "输出失败" in result.output
+
+
+# ==========================================
+# Probe 策略
+# ==========================================
+
+
+def test_cli_probe_off_does_not_expand_nested_structure(
+    cli_runner: CliRunner, cli
+) -> None:
+    """CLI probe=off 时不展开嵌套结构."""
+    nested_simplelist_hex = "0800010c1d0000020001"
+    result = cli_runner.invoke(
+        cli,
+        [nested_simplelist_hex, "--format", "tree", "--probe", "off"],
+    )
+    assert result.exit_code == 0
+    assert ">>> Probed Structure >>>" not in result.output
+
+
+def test_cli_probe_on_expands_nested_structure(cli_runner: CliRunner, cli) -> None:
+    """CLI probe=on 时展开嵌套结构."""
+    nested_simplelist_hex = "0800010c1d0000020001"
+    result = cli_runner.invoke(
+        cli,
+        [nested_simplelist_hex, "--format", "tree", "--probe", "on"],
+    )
+    assert result.exit_code == 0
+    assert ">>> Probed Structure >>>" in result.output
+
+
+def test_cli_probe_auto_skips_when_bytes_exceed_threshold(
+    cli_runner: CliRunner, cli
+) -> None:
+    """CLI probe=auto 在超过阈值时跳过探测."""
+    nested_simplelist_hex = "0800010c1d0000020001"
+    result = cli_runner.invoke(
+        cli,
+        [
+            nested_simplelist_hex,
+            "--format",
+            "tree",
+            "--probe",
+            "auto",
+            "--probe-max-bytes",
+            "1",
+        ],
+    )
+    assert result.exit_code == 0
+    assert ">>> Probed Structure >>>" not in result.output
 
 
 # ==========================================
@@ -189,5 +316,10 @@ def test_cli_help_shows_options(cli_runner: CliRunner, cli) -> None:
     result = cli_runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "--file" in result.output
+    assert "--file-format" in result.output
+    assert "--probe" in result.output
+    assert "--probe-max-bytes" in result.output
+    assert "--probe-max-depth" in result.output
+    assert "--probe-max-nodes" in result.output
     assert "--format" in result.output
     assert "--verbose" in result.output
