@@ -8,12 +8,22 @@ pub enum Error {
     Custom { offset: usize, msg: String },
 
     /// 缓冲区数据不足 (尝试读取超出范围的数据).
-    #[error("Unexpected end of buffer at offset {offset}")]
-    BufferOverflow { offset: usize },
+    #[error(
+        "Unexpected end of buffer at offset {offset} (required {required}, available {available})"
+    )]
+    BufferOverflow {
+        offset: usize,
+        required: usize,
+        available: usize,
+    },
 
     /// 遇到了未知的或非法的 JCE 类型 ID.
-    #[error("Invalid type {type_id} at offset {offset}")]
-    InvalidType { offset: usize, type_id: u8 },
+    #[error("Invalid type id {type_id} at offset {offset} (expected {expected_types})")]
+    InvalidType {
+        offset: usize,
+        type_id: u8,
+        expected_types: &'static str,
+    },
 }
 
 impl Error {
@@ -22,6 +32,24 @@ impl Error {
         Self::Custom {
             offset,
             msg: msg.into(),
+        }
+    }
+
+    /// 创建一个缓冲区溢出错误.
+    pub fn buffer_overflow(offset: usize, required: usize, available: usize) -> Self {
+        Self::BufferOverflow {
+            offset,
+            required,
+            available,
+        }
+    }
+
+    /// 创建一个非法类型错误.
+    pub fn invalid_type(offset: usize, type_id: u8, expected_types: &'static str) -> Self {
+        Self::InvalidType {
+            offset,
+            type_id,
+            expected_types,
         }
     }
 }

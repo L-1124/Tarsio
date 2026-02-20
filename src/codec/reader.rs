@@ -61,7 +61,7 @@ impl<'a> TarsReader<'a> {
     pub fn read_head(&mut self) -> Result<(u8, TarsType)> {
         let start_pos = self.pos;
         if self.pos >= self.data.len() {
-            return Err(Error::BufferOverflow { offset: start_pos });
+            return Err(Error::buffer_overflow(start_pos, 1, 0));
         }
         let b = self.data[self.pos];
         self.pos += 1;
@@ -72,7 +72,7 @@ impl<'a> TarsReader<'a> {
         if tag == 15 {
             if self.pos >= self.data.len() {
                 self.pos = start_pos;
-                return Err(Error::BufferOverflow { offset: self.pos });
+                return Err(Error::buffer_overflow(start_pos, 2, 1));
             }
             tag = self.data[self.pos];
             self.pos += 1;
@@ -80,10 +80,7 @@ impl<'a> TarsReader<'a> {
 
         let tars_type = TarsType::try_from(type_id).map_err(|id| {
             self.pos = start_pos;
-            Error::InvalidType {
-                offset: start_pos,
-                type_id: id,
-            }
+            Error::invalid_type(start_pos, id, "0..=13")
         })?;
 
         Ok((tag, tars_type))
@@ -107,7 +104,7 @@ impl<'a> TarsReader<'a> {
             TarsType::ZeroTag => Ok(0),
             TarsType::Int1 => {
                 if self.pos >= self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(start_pos, 1, 0));
                 }
                 let v = self.data[self.pos] as i8;
                 self.pos += 1;
@@ -115,33 +112,45 @@ impl<'a> TarsReader<'a> {
             }
             TarsType::Int2 => {
                 if self.pos + 2 > self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(
+                        start_pos,
+                        2,
+                        self.data.len() - self.pos,
+                    ));
                 }
-                let bytes = self.data[self.pos..self.pos + 2]
-                    .try_into()
-                    .map_err(|_| Error::BufferOverflow { offset: start_pos })?;
+                let bytes = self.data[self.pos..self.pos + 2].try_into().map_err(|_| {
+                    Error::buffer_overflow(start_pos, 2, self.data.len() - self.pos)
+                })?;
                 let v = i16::from_be_bytes(bytes);
                 self.pos += 2;
                 Ok(v as i64)
             }
             TarsType::Int4 => {
                 if self.pos + 4 > self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(
+                        start_pos,
+                        4,
+                        self.data.len() - self.pos,
+                    ));
                 }
-                let bytes = self.data[self.pos..self.pos + 4]
-                    .try_into()
-                    .map_err(|_| Error::BufferOverflow { offset: start_pos })?;
+                let bytes = self.data[self.pos..self.pos + 4].try_into().map_err(|_| {
+                    Error::buffer_overflow(start_pos, 4, self.data.len() - self.pos)
+                })?;
                 let v = i32::from_be_bytes(bytes);
                 self.pos += 4;
                 Ok(v as i64)
             }
             TarsType::Int8 => {
                 if self.pos + 8 > self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(
+                        start_pos,
+                        8,
+                        self.data.len() - self.pos,
+                    ));
                 }
-                let bytes = self.data[self.pos..self.pos + 8]
-                    .try_into()
-                    .map_err(|_| Error::BufferOverflow { offset: start_pos })?;
+                let bytes = self.data[self.pos..self.pos + 8].try_into().map_err(|_| {
+                    Error::buffer_overflow(start_pos, 8, self.data.len() - self.pos)
+                })?;
                 let v = i64::from_be_bytes(bytes);
                 self.pos += 8;
                 Ok(v)
@@ -161,7 +170,7 @@ impl<'a> TarsReader<'a> {
             TarsType::ZeroTag => Ok(0),
             TarsType::Int1 => {
                 if self.pos >= self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(start_pos, 1, 0));
                 }
                 let v = self.data[self.pos];
                 self.pos += 1;
@@ -169,33 +178,45 @@ impl<'a> TarsReader<'a> {
             }
             TarsType::Int2 => {
                 if self.pos + 2 > self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(
+                        start_pos,
+                        2,
+                        self.data.len() - self.pos,
+                    ));
                 }
-                let bytes = self.data[self.pos..self.pos + 2]
-                    .try_into()
-                    .map_err(|_| Error::BufferOverflow { offset: start_pos })?;
+                let bytes = self.data[self.pos..self.pos + 2].try_into().map_err(|_| {
+                    Error::buffer_overflow(start_pos, 2, self.data.len() - self.pos)
+                })?;
                 let v = u16::from_be_bytes(bytes);
                 self.pos += 2;
                 Ok(v as u64)
             }
             TarsType::Int4 => {
                 if self.pos + 4 > self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(
+                        start_pos,
+                        4,
+                        self.data.len() - self.pos,
+                    ));
                 }
-                let bytes = self.data[self.pos..self.pos + 4]
-                    .try_into()
-                    .map_err(|_| Error::BufferOverflow { offset: start_pos })?;
+                let bytes = self.data[self.pos..self.pos + 4].try_into().map_err(|_| {
+                    Error::buffer_overflow(start_pos, 4, self.data.len() - self.pos)
+                })?;
                 let v = u32::from_be_bytes(bytes);
                 self.pos += 4;
                 Ok(v as u64)
             }
             TarsType::Int8 => {
                 if self.pos + 8 > self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(
+                        start_pos,
+                        8,
+                        self.data.len() - self.pos,
+                    ));
                 }
-                let bytes = self.data[self.pos..self.pos + 8]
-                    .try_into()
-                    .map_err(|_| Error::BufferOverflow { offset: start_pos })?;
+                let bytes = self.data[self.pos..self.pos + 8].try_into().map_err(|_| {
+                    Error::buffer_overflow(start_pos, 8, self.data.len() - self.pos)
+                })?;
                 let v = u64::from_be_bytes(bytes);
                 self.pos += 8;
                 Ok(v)
@@ -222,11 +243,15 @@ impl<'a> TarsReader<'a> {
             }
             TarsType::String4 => {
                 if self.pos + 4 > self.data.len() {
-                    return Err(Error::BufferOverflow { offset: self.pos });
+                    return Err(Error::buffer_overflow(
+                        self.pos,
+                        4,
+                        self.data.len() - self.pos,
+                    ));
                 }
                 let bytes: [u8; 4] = self.data[self.pos..self.pos + 4]
                     .try_into()
-                    .map_err(|_| Error::BufferOverflow { offset: self.pos })?;
+                    .map_err(|_| Error::buffer_overflow(self.pos, 4, self.data.len() - self.pos))?;
                 let len = u32::from_be_bytes(bytes) as usize;
                 self.pos += 4;
                 self.skip(len)
@@ -285,7 +310,11 @@ impl<'a> TarsReader<'a> {
     fn skip(&mut self, len: usize) -> Result<()> {
         let new_pos = self.pos + len;
         if new_pos > self.data.len() {
-            return Err(Error::BufferOverflow { offset: self.pos });
+            return Err(Error::buffer_overflow(
+                self.pos,
+                len,
+                self.data.len() - self.pos,
+            ));
         }
         self.pos = new_pos;
         Ok(())
@@ -299,11 +328,15 @@ impl<'a> TarsReader<'a> {
             TarsType::Float => {
                 let start_pos = self.pos;
                 if self.pos + 4 > self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(
+                        start_pos,
+                        4,
+                        self.data.len() - self.pos,
+                    ));
                 }
-                let bytes = self.data[self.pos..self.pos + 4]
-                    .try_into()
-                    .map_err(|_| Error::BufferOverflow { offset: start_pos })?;
+                let bytes = self.data[self.pos..self.pos + 4].try_into().map_err(|_| {
+                    Error::buffer_overflow(start_pos, 4, self.data.len() - self.pos)
+                })?;
                 let v = f32::from_be_bytes(bytes);
                 self.pos += 4;
                 Ok(v)
@@ -324,11 +357,15 @@ impl<'a> TarsReader<'a> {
             TarsType::Double => {
                 let start_pos = self.pos;
                 if self.pos + 8 > self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(
+                        start_pos,
+                        8,
+                        self.data.len() - self.pos,
+                    ));
                 }
-                let bytes = self.data[self.pos..self.pos + 8]
-                    .try_into()
-                    .map_err(|_| Error::BufferOverflow { offset: start_pos })?;
+                let bytes = self.data[self.pos..self.pos + 8].try_into().map_err(|_| {
+                    Error::buffer_overflow(start_pos, 8, self.data.len() - self.pos)
+                })?;
                 let v = f64::from_be_bytes(bytes);
                 self.pos += 8;
                 Ok(v)
@@ -350,7 +387,7 @@ impl<'a> TarsReader<'a> {
         let len = match type_id {
             TarsType::String1 => {
                 if self.pos >= self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(start_pos, 1, 0));
                 }
                 let l = self.data[self.pos] as usize;
                 self.pos += 1;
@@ -358,11 +395,15 @@ impl<'a> TarsReader<'a> {
             }
             TarsType::String4 => {
                 if self.pos + 4 > self.data.len() {
-                    return Err(Error::BufferOverflow { offset: start_pos });
+                    return Err(Error::buffer_overflow(
+                        start_pos,
+                        4,
+                        self.data.len() - self.pos,
+                    ));
                 }
-                let bytes = self.data[self.pos..self.pos + 4]
-                    .try_into()
-                    .map_err(|_| Error::BufferOverflow { offset: start_pos })?;
+                let bytes = self.data[self.pos..self.pos + 4].try_into().map_err(|_| {
+                    Error::buffer_overflow(start_pos, 4, self.data.len() - self.pos)
+                })?;
                 let l = u32::from_be_bytes(bytes) as usize;
                 self.pos += 4;
                 l
@@ -376,7 +417,11 @@ impl<'a> TarsReader<'a> {
         };
 
         if self.pos + len > self.data.len() {
-            return Err(Error::BufferOverflow { offset: self.pos });
+            return Err(Error::buffer_overflow(
+                self.pos,
+                len,
+                self.data.len() - self.pos,
+            ));
         }
 
         let slice = &self.data[self.pos..self.pos + len];
@@ -415,7 +460,11 @@ impl<'a> TarsReader<'a> {
 
         let len = len as usize;
         if self.pos + len > self.data.len() {
-            return Err(Error::BufferOverflow { offset: self.pos });
+            return Err(Error::buffer_overflow(
+                self.pos,
+                len,
+                self.data.len() - self.pos,
+            ));
         }
         let slice = &self.data[self.pos..self.pos + len];
         self.pos += len;
@@ -426,7 +475,11 @@ impl<'a> TarsReader<'a> {
     #[inline]
     pub fn read_bytes(&mut self, len: usize) -> Result<&'a [u8]> {
         if self.pos + len > self.data.len() {
-            return Err(Error::BufferOverflow { offset: self.pos });
+            return Err(Error::buffer_overflow(
+                self.pos,
+                len,
+                self.data.len() - self.pos,
+            ));
         }
         let slice = &self.data[self.pos..self.pos + len];
         self.pos += len;
@@ -437,7 +490,7 @@ impl<'a> TarsReader<'a> {
     #[inline]
     pub fn read_u8(&mut self) -> Result<u8> {
         if self.pos >= self.data.len() {
-            return Err(Error::BufferOverflow { offset: self.pos });
+            return Err(Error::buffer_overflow(self.pos, 1, 0));
         }
         let v = self.data[self.pos];
         self.pos += 1;
@@ -488,7 +541,11 @@ mod tests {
         let mut reader = TarsReader::new(&data);
         assert!(matches!(
             reader.read_head(),
-            Err(Error::BufferOverflow { .. })
+            Err(Error::BufferOverflow {
+                offset: 0,
+                required: 2,
+                available: 1
+            })
         ));
     }
 
@@ -532,11 +589,11 @@ mod tests {
         let mut reader = TarsReader::new(&data);
         assert!(matches!(
             reader.read_int(TarsType::Int2),
-            Err(Error::BufferOverflow { .. })
+            Err(Error::BufferOverflow { required: 2, .. })
         ));
         assert!(matches!(
             reader.read_int(TarsType::Int8),
-            Err(Error::BufferOverflow { .. })
+            Err(Error::BufferOverflow { required: 8, .. })
         ));
     }
 
@@ -547,7 +604,7 @@ mod tests {
 
         assert!(matches!(
             reader.read_int(TarsType::Int4),
-            Err(Error::BufferOverflow { .. })
+            Err(Error::BufferOverflow { required: 4, .. })
         ));
     }
 
@@ -643,7 +700,7 @@ mod tests {
         let mut reader = TarsReader::new(data);
         assert!(matches!(
             reader.read_string(TarsType::String1),
-            Err(Error::BufferOverflow { .. })
+            Err(Error::BufferOverflow { required: 5, .. })
         ));
     }
 
@@ -658,7 +715,7 @@ mod tests {
         );
 
         let err = reader.read_string(TarsType::String1).unwrap_err();
-        assert!(matches!(err, Error::BufferOverflow { .. }));
+        assert!(matches!(err, Error::BufferOverflow { required: 1, .. }));
     }
 
     #[test]
@@ -678,7 +735,7 @@ mod tests {
         assert_eq!(reader.read_bytes(2).unwrap(), &[0x02, 0x03]);
         assert!(matches!(
             reader.read_bytes(1),
-            Err(Error::BufferOverflow { .. })
+            Err(Error::BufferOverflow { required: 1, .. })
         ));
     }
 
@@ -819,7 +876,11 @@ mod tests {
         let mut reader = TarsReader::new(&data);
         assert!(matches!(
             reader.read_head(),
-            Err(Error::BufferOverflow { offset: 0 })
+            Err(Error::BufferOverflow {
+                offset: 0,
+                required: 2,
+                available: 1
+            })
         ));
         // Verify pos is reverted to 0
         assert_eq!(reader.position(), 0);
@@ -831,7 +892,11 @@ mod tests {
         let mut reader2 = TarsReader::new(&data_invalid_type);
         assert!(matches!(
             reader2.read_head(),
-            Err(Error::InvalidType { offset: 0, .. })
+            Err(Error::InvalidType {
+                offset: 0,
+                type_id: 14,
+                expected_types: "0..=13"
+            })
         ));
         assert_eq!(reader2.position(), 0);
     }
