@@ -155,37 +155,7 @@ pub(crate) fn serialize_impl(
     check_depth(depth)?;
 
     match type_expr {
-        TypeExpr::Primitive(wire_type) => match wire_type {
-            WireType::Int => {
-                let v: i64 = val.extract()?;
-                writer.write_int(tag, v);
-            }
-            WireType::Bool => {
-                let v: bool = val.extract()?;
-                writer.write_int(tag, i64::from(v));
-            }
-            WireType::Long => {
-                let v: i64 = val.extract()?;
-                writer.write_int(tag, v);
-            }
-            WireType::Float => {
-                let v: f32 = val.extract()?;
-                writer.write_float(tag, v);
-            }
-            WireType::Double => {
-                let v: f64 = val.extract()?;
-                writer.write_double(tag, v);
-            }
-            WireType::String => {
-                let v: &str = val.extract()?;
-                writer.write_string(tag, v);
-            }
-            _ => {
-                return Err(PyTypeError::new_err(
-                    "Unsupported primitive wire type in serialization",
-                ));
-            }
-        },
+        TypeExpr::Primitive(_) => serialize_primitive(writer, tag, type_expr, val, depth)?,
         TypeExpr::Any => {
             serialize_any(writer, tag, val, depth + 1, &serialize_impl_standard)?;
         }
@@ -194,18 +164,108 @@ pub(crate) fn serialize_impl(
                 "NoneType must be encoded via Optional or Union",
             ));
         }
-        TypeExpr::Enum(enum_cls, inner) => {
-            let enum_type = enum_cls.bind(val.py());
-            if !val.is_instance(enum_type.as_any())? {
-                return Err(PyTypeError::new_err("Enum value type mismatch"));
-            }
-            let value = val.getattr("value")?;
-            serialize_impl(writer, tag, inner, &value, depth + 1)?;
+        TypeExpr::Enum(_, _) => serialize_enum(writer, tag, type_expr, val, depth)?,
+        TypeExpr::Union(_, _) => serialize_union(writer, tag, type_expr, val, depth)?,
+        TypeExpr::Struct(_)
+        | TypeExpr::TarsDict
+        | TypeExpr::NamedTuple(_, _)
+        | TypeExpr::Dataclass(_) => {
+            serialize_struct_like(writer, tag, type_expr, val, depth)?;
         }
-        TypeExpr::Union(variants, cache) => {
-            let variant = select_union_variant(val.py(), variants, cache, val)?;
-            serialize_impl(writer, tag, variant, val, depth + 1)?;
+        TypeExpr::List(_) | TypeExpr::VarTuple(_) | TypeExpr::Tuple(_) | TypeExpr::Set(_) => {
+            serialize_list_like(writer, tag, type_expr, val, depth)?;
         }
+        TypeExpr::Map(_, _) => serialize_map_like(writer, tag, type_expr, val, depth)?,
+        TypeExpr::Optional(_) => serialize_optional(writer, tag, type_expr, val, depth)?,
+    }
+    Ok(())
+}
+
+pub(crate) fn serialize_primitive(
+    writer: &mut TarsWriter<impl BufMut>,
+    tag: u8,
+    type_expr: &TypeExpr,
+    val: &Bound<'_, PyAny>,
+    _depth: usize,
+) -> PyResult<()> {
+    let wire_type = match type_expr {
+        TypeExpr::Primitive(w) => w,
+        _ => return Err(PyTypeError::new_err("Expected Primitive")),
+    };
+    match wire_type {
+        WireType::Int => {
+            let v: i64 = val.extract()?;
+            writer.write_int(tag, v);
+        }
+        WireType::Bool => {
+            let v: bool = val.extract()?;
+            writer.write_int(tag, i64::from(v));
+        }
+        WireType::Long => {
+            let v: i64 = val.extract()?;
+            writer.write_int(tag, v);
+        }
+        WireType::Float => {
+            let v: f32 = val.extract()?;
+            writer.write_float(tag, v);
+        }
+        WireType::Double => {
+            let v: f64 = val.extract()?;
+            writer.write_double(tag, v);
+        }
+        WireType::String => {
+            let v: &str = val.extract()?;
+            writer.write_string(tag, v);
+        }
+        _ => {
+            return Err(PyTypeError::new_err(
+                "Unsupported primitive wire type in serialization",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn serialize_enum(
+    writer: &mut TarsWriter<impl BufMut>,
+    tag: u8,
+    type_expr: &TypeExpr,
+    val: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<()> {
+    if let TypeExpr::Enum(enum_cls, inner) = type_expr {
+        let enum_type = enum_cls.bind(val.py());
+        if !val.is_instance(enum_type.as_any())? {
+            return Err(PyTypeError::new_err("Enum value type mismatch"));
+        }
+        let value = val.getattr("value")?;
+        serialize_impl(writer, tag, inner, &value, depth + 1)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn serialize_union(
+    writer: &mut TarsWriter<impl BufMut>,
+    tag: u8,
+    type_expr: &TypeExpr,
+    val: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<()> {
+    if let TypeExpr::Union(variants, cache) = type_expr {
+        let variant = select_union_variant(val.py(), variants, cache, val)?;
+        serialize_impl(writer, tag, variant, val, depth + 1)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn serialize_struct_like(
+    writer: &mut TarsWriter<impl BufMut>,
+    tag: u8,
+    type_expr: &TypeExpr,
+    val: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<()> {
+    match type_expr {
         TypeExpr::Struct(cls_obj) => {
             let cls = class_from_type(val.py(), cls_obj);
             let def = ensure_schema_for_class(val.py(), &cls)?;
@@ -250,6 +310,19 @@ pub(crate) fn serialize_impl(
                 serialize_impl(writer, 1, &TypeExpr::Any, &value, depth + 1)?;
             }
         }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub(crate) fn serialize_list_like(
+    writer: &mut TarsWriter<impl BufMut>,
+    tag: u8,
+    type_expr: &TypeExpr,
+    val: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<()> {
+    match type_expr {
         TypeExpr::List(inner) | TypeExpr::VarTuple(inner) => {
             if matches!(**inner, TypeExpr::Primitive(WireType::Int))
                 && let Some(bytes) = try_coerce_buffer_to_bytes(val)?
@@ -302,36 +375,57 @@ pub(crate) fn serialize_impl(
             }
             return Err(PyTypeError::new_err("Set value must be set or frozenset"));
         }
-        TypeExpr::Map(k_type, v_type) => {
-            writer.write_tag(tag, TarsType::Map);
-            if let Ok(dict) = val.extract::<Bound<'_, PyDict>>() {
-                let len = dict.len();
-                writer.write_int(0, len as i64);
+        _ => {}
+    }
+    Ok(())
+}
 
-                for (k, v) in dict {
-                    serialize_impl(writer, 0, k_type, &k, depth + 1)?;
-                    serialize_impl(writer, 1, v_type, &v, depth + 1)?;
-                }
-            } else if let Some(fields) = dataclass_fields(val)? {
-                let len = fields.len();
-                writer.write_int(0, len as i64);
-                for (name_any, _field) in fields {
-                    let value = val.getattr(name_any.cast::<PyString>()?)?;
-                    serialize_impl(writer, 0, k_type, &name_any, depth + 1)?;
-                    serialize_impl(writer, 1, v_type, &value, depth + 1)?;
-                }
-            } else {
-                return Err(PyTypeError::new_err(
-                    "Map value must be dict or dataclass instance",
-                ));
+pub(crate) fn serialize_map_like(
+    writer: &mut TarsWriter<impl BufMut>,
+    tag: u8,
+    type_expr: &TypeExpr,
+    val: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<()> {
+    if let TypeExpr::Map(k_type, v_type) = type_expr {
+        writer.write_tag(tag, TarsType::Map);
+        if let Ok(dict) = val.extract::<Bound<'_, PyDict>>() {
+            let len = dict.len();
+            writer.write_int(0, len as i64);
+
+            for (k, v) in dict {
+                serialize_impl(writer, 0, k_type, &k, depth + 1)?;
+                serialize_impl(writer, 1, v_type, &v, depth + 1)?;
             }
-        }
-        TypeExpr::Optional(inner) => {
-            if val.is_none() {
-                return Ok(());
+        } else if let Some(fields) = dataclass_fields(val)? {
+            let len = fields.len();
+            writer.write_int(0, len as i64);
+            for (name_any, _field) in fields {
+                let value = val.getattr(name_any.cast::<PyString>()?)?;
+                serialize_impl(writer, 0, k_type, &name_any, depth + 1)?;
+                serialize_impl(writer, 1, v_type, &value, depth + 1)?;
             }
-            serialize_impl(writer, tag, inner, val, depth + 1)?;
+        } else {
+            return Err(PyTypeError::new_err(
+                "Map value must be dict or dataclass instance",
+            ));
         }
+    }
+    Ok(())
+}
+
+pub(crate) fn serialize_optional(
+    writer: &mut TarsWriter<impl BufMut>,
+    tag: u8,
+    type_expr: &TypeExpr,
+    val: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<()> {
+    if let TypeExpr::Optional(inner) = type_expr {
+        if val.is_none() {
+            return Ok(());
+        }
+        serialize_impl(writer, tag, inner, val, depth + 1)?;
     }
     Ok(())
 }

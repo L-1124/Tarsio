@@ -302,126 +302,20 @@ fn deserialize_value<'py>(
     check_depth(depth).map_err(DeError::wrap)?;
 
     match type_expr {
-        TypeExpr::Primitive(wire_type) => match wire_type {
-            WireType::Int | WireType::Long => {
-                let v = reader
-                    .read_int(type_id)
-                    .map_err(|e| DeError::new(format!("Failed to read int: {}", e)))?;
-
-                if let Some(c) = constraints {
-                    validate_numeric_constraints_raw(v as f64, c, None).map_err(DeError::wrap)?;
-                }
-
-                Ok(v.into_pyobject(py)
-                    .map_err(|e| DeError::new(e.to_string()))?
-                    .into_any())
-            }
-            WireType::Bool => {
-                let v = reader
-                    .read_int(type_id)
-                    .map_err(|e| DeError::new(format!("Failed to read int: {}", e)))?;
-                let b = v != 0;
-                let obj = b
-                    .into_pyobject(py)
-                    .map_err(|e| DeError::new(e.to_string()))?
-                    .to_owned();
-                Ok(obj.into_any())
-            }
-            WireType::Float => {
-                let v = reader
-                    .read_float(type_id)
-                    .map_err(|e| DeError::new(format!("Failed to read float: {}", e)))?;
-
-                if let Some(c) = constraints {
-                    validate_numeric_constraints_raw(v as f64, c, None).map_err(DeError::wrap)?;
-                }
-
-                Ok(v.into_pyobject(py)
-                    .map_err(|e| DeError::new(e.to_string()))?
-                    .into_any())
-            }
-            WireType::Double => {
-                let v = reader
-                    .read_double(type_id)
-                    .map_err(|e| DeError::new(format!("Failed to read double: {}", e)))?;
-
-                if let Some(c) = constraints {
-                    validate_numeric_constraints_raw(v, c, None).map_err(DeError::wrap)?;
-                }
-
-                Ok(v.into_pyobject(py)
-                    .map_err(|e| DeError::new(e.to_string()))?
-                    .into_any())
-            }
-            WireType::String => {
-                let bytes = reader
-                    .read_string(type_id)
-                    .map_err(|e| DeError::new(format!("Failed to read string bytes: {}", e)))?;
-
-                if let Some(c) = constraints {
-                    validate_length_constraints_raw(bytes.len(), c, None).map_err(DeError::wrap)?;
-                }
-
-                let s =
-                    from_utf8(bytes).map_err(|_| DeError::new("Invalid UTF-8 string".into()))?;
-                Ok(s.into_pyobject(py)
-                    .map_err(|e| DeError::new(e.to_string()))?
-                    .into_any())
-            }
-            _ => Err(DeError::new("Unexpected wire type for primitive".into())),
-        },
+        TypeExpr::Primitive(wire_type) => {
+            deserialize_primitive(py, reader, type_id, wire_type, constraints)
+        }
         TypeExpr::Any => decode_any_value(py, reader, type_id, depth),
         TypeExpr::NoneType => Ok(py.None().into_bound(py)),
         TypeExpr::Enum(enum_cls, inner) => {
-            let value = deserialize_value(py, reader, type_id, inner, None, depth + 1)?;
-            let cls = enum_cls.bind(py);
-            let enum_value = cls.call1((value,)).map_err(DeError::wrap)?;
-            Ok(enum_value)
+            deserialize_enum(py, reader, type_id, enum_cls, inner, depth)
         }
-        TypeExpr::Set(inner) => {
-            if type_id != TarsType::List {
-                return Err(DeError::new("Set value must be encoded as List".into()));
-            }
-            let len = read_size_non_negative(reader, "list")?;
-
-            if let Some(c) = constraints {
-                validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
-            }
-
-            let set = PySet::empty(py).map_err(DeError::wrap)?;
-            for _ in 0..len {
-                let (_, item_type) = reader
-                    .read_head()
-                    .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
-                let item = deserialize_value(py, reader, item_type, inner, None, depth + 1)?;
-                set.add(item).map_err(DeError::wrap)?;
-            }
-            Ok(set.into_any())
-        }
+        TypeExpr::Set(inner) => deserialize_set(py, reader, type_id, inner, constraints, depth),
         TypeExpr::Union(variants, _) => {
             decode_union_value(py, reader, type_id, variants, constraints, depth)
         }
-        TypeExpr::Struct(cls_obj) => {
-            let nested_cls = class_from_type(py, cls_obj);
-            let nested_def = ensure_schema_for_class(py, &nested_cls).map_err(DeError::wrap)?;
-            if type_id != TarsType::StructBegin {
-                return Err(DeError::new(
-                    "Struct value must be encoded as Struct".into(),
-                ));
-            }
-            deserialize_struct(py, &nested_cls, reader, &nested_def, depth + 1)
-        }
-        TypeExpr::TarsDict => {
-            if type_id != TarsType::StructBegin {
-                return Err(DeError::new(
-                    "TarsDict value must be encoded as Struct".into(),
-                ));
-            }
-            let dict = decode_any_struct_fields(py, reader, depth + 1)?;
-            let tarsdict_type = py.get_type::<TarsDict>();
-            let instance = tarsdict_type.call1((dict,)).map_err(DeError::wrap)?;
-            Ok(instance.into_any())
-        }
+        TypeExpr::Struct(cls_obj) => deserialize_struct_value(py, reader, type_id, cls_obj, depth),
+        TypeExpr::TarsDict => deserialize_tarsdict_value(py, reader, type_id, depth),
         TypeExpr::NamedTuple(cls, items) => {
             if type_id != TarsType::List {
                 return Err(DeError::new(
@@ -475,55 +369,7 @@ fn deserialize_value<'py>(
             Ok(instance.into_any())
         }
         TypeExpr::List(inner) => {
-            if type_id == TarsType::SimpleList {
-                let sub_type = reader.read_u8().map_err(|e| {
-                    DeError::new(format!("Failed to read SimpleList subtype: {}", e))
-                })?;
-                if sub_type != 0 {
-                    return Err(DeError::new("SimpleList must contain Byte (0)".into()));
-                }
-                let len = read_size_non_negative(reader, "SimpleList")?;
-
-                if let Some(c) = constraints {
-                    validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
-                }
-
-                let bytes = reader
-                    .read_bytes(len)
-                    .map_err(|e| DeError::new(format!("Failed to read SimpleList bytes: {}", e)))?;
-                return Ok(PyBytes::new(py, bytes).into_any());
-            }
-
-            let len = read_size_non_negative(reader, "list")?;
-
-            if let Some(c) = constraints {
-                validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
-            }
-
-            let list_any = unsafe {
-                // SAFETY: PyList_New 返回新引用并预留 len 个槽位。若返回空指针则抛错。
-                let ptr = ffi::PyList_New(len as isize);
-                if ptr.is_null() {
-                    return Err(DeError::wrap(PyErr::fetch(py)));
-                }
-                Bound::from_owned_ptr(py, ptr)
-            };
-            for idx in 0..len {
-                let (_, item_type) = reader
-                    .read_head()
-                    .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
-                let item = deserialize_value(py, reader, item_type, inner, None, depth + 1)
-                    .map_err(|e| e.prepend(PathItem::Index(idx)))?;
-                let set_res = unsafe {
-                    // SAFETY: PyList_SetItem 会“偷”引用, item.into_ptr 转移所有权。
-                    // 每个索引只写入一次,与 PyList_New 的预分配长度一致。
-                    ffi::PyList_SetItem(list_any.as_ptr(), idx as isize, item.into_ptr())
-                };
-                if set_res != 0 {
-                    return Err(DeError::wrap(PyErr::fetch(py)));
-                }
-            }
-            Ok(list_any)
+            deserialize_list_value(py, reader, type_id, inner, constraints, depth)
         }
         TypeExpr::VarTuple(inner) => {
             if type_id != TarsType::List {
@@ -537,51 +383,296 @@ fn deserialize_value<'py>(
             Ok(tuple.into_any())
         }
         TypeExpr::Tuple(items) => {
-            if type_id != TarsType::List {
-                return Err(DeError::new("Tuple value must be encoded as List".into()));
-            }
-            let len = read_size_non_negative(reader, "list")?;
-            if let Some(c) = constraints {
-                validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
-            }
-            if len != items.len() {
-                return Err(DeError::new(
-                    "Tuple length does not match annotation".into(),
-                ));
-            }
-            let tuple = build_fixed_tuple(py, reader, items, depth)?;
-            Ok(tuple.into_any())
+            deserialize_tuple_value(py, reader, type_id, items, constraints, depth)
         }
         TypeExpr::Map(k_type, v_type) => {
-            let len = read_size_non_negative(reader, "map")?;
-
-            if let Some(c) = constraints {
-                validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
-            }
-
-            let dict = PyDict::new(py);
-            for _ in 0..len {
-                let (_, kt) = reader
-                    .read_head()
-                    .map_err(|e| DeError::new(format!("Failed to read map key head: {}", e)))?;
-                let key = deserialize_value(py, reader, kt, k_type, None, depth + 1)
-                    .map_err(|e| e.prepend(PathItem::Key("<key>".into())))?;
-
-                let (_, vt) = reader
-                    .read_head()
-                    .map_err(|e| DeError::new(format!("Failed to read map value head: {}", e)))?;
-
-                let val = deserialize_value(py, reader, vt, v_type, None, depth + 1)
-                    .map_err(|e| e.prepend(PathItem::Key(key.to_string())))?;
-
-                dict.set_item(key, val).map_err(DeError::wrap)?;
-            }
-            Ok(dict.into_any())
+            deserialize_map_value(py, reader, type_id, k_type, v_type, constraints, depth)
         }
         TypeExpr::Optional(inner) => {
-            deserialize_value(py, reader, type_id, inner, constraints, depth + 1)
+            deserialize_optional(py, reader, type_id, inner, constraints, depth)
         }
     }
+}
+
+fn deserialize_primitive<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    type_id: TarsType,
+    wire_type: &WireType,
+    constraints: Option<&Constraints>,
+) -> DeResult<Bound<'py, PyAny>> {
+    match wire_type {
+        WireType::Int | WireType::Long => {
+            let v = reader
+                .read_int(type_id)
+                .map_err(|e| DeError::new(format!("Failed to read int: {}", e)))?;
+
+            if let Some(c) = constraints {
+                validate_numeric_constraints_raw(v as f64, c, None).map_err(DeError::wrap)?;
+            }
+
+            Ok(v.into_pyobject(py)
+                .map_err(|e| DeError::new(e.to_string()))?
+                .into_any())
+        }
+        WireType::Bool => {
+            let v = reader
+                .read_int(type_id)
+                .map_err(|e| DeError::new(format!("Failed to read int: {}", e)))?;
+            let b = v != 0;
+            let obj = b
+                .into_pyobject(py)
+                .map_err(|e| DeError::new(e.to_string()))?
+                .to_owned();
+            Ok(obj.into_any())
+        }
+        WireType::Float => {
+            let v = reader
+                .read_float(type_id)
+                .map_err(|e| DeError::new(format!("Failed to read float: {}", e)))?;
+
+            if let Some(c) = constraints {
+                validate_numeric_constraints_raw(v as f64, c, None).map_err(DeError::wrap)?;
+            }
+
+            Ok(v.into_pyobject(py)
+                .map_err(|e| DeError::new(e.to_string()))?
+                .into_any())
+        }
+        WireType::Double => {
+            let v = reader
+                .read_double(type_id)
+                .map_err(|e| DeError::new(format!("Failed to read double: {}", e)))?;
+
+            if let Some(c) = constraints {
+                validate_numeric_constraints_raw(v, c, None).map_err(DeError::wrap)?;
+            }
+
+            Ok(v.into_pyobject(py)
+                .map_err(|e| DeError::new(e.to_string()))?
+                .into_any())
+        }
+        WireType::String => {
+            let bytes = reader
+                .read_string(type_id)
+                .map_err(|e| DeError::new(format!("Failed to read string bytes: {}", e)))?;
+
+            if let Some(c) = constraints {
+                validate_length_constraints_raw(bytes.len(), c, None).map_err(DeError::wrap)?;
+            }
+
+            let s = from_utf8(bytes).map_err(|_| DeError::new("Invalid UTF-8 string".into()))?;
+            Ok(s.into_pyobject(py)
+                .map_err(|e| DeError::new(e.to_string()))?
+                .into_any())
+        }
+        _ => Err(DeError::new("Unexpected wire type for primitive".into())),
+    }
+}
+
+fn deserialize_enum<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    type_id: TarsType,
+    enum_cls: &pyo3::Py<PyType>,
+    inner: &TypeExpr,
+    depth: usize,
+) -> DeResult<Bound<'py, PyAny>> {
+    let value = deserialize_value(py, reader, type_id, inner, None, depth + 1)?;
+    let cls = enum_cls.bind(py);
+    let enum_value = cls.call1((value,)).map_err(DeError::wrap)?;
+    Ok(enum_value)
+}
+
+fn deserialize_set<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    type_id: TarsType,
+    inner: &TypeExpr,
+    constraints: Option<&Constraints>,
+    depth: usize,
+) -> DeResult<Bound<'py, PyAny>> {
+    if type_id != TarsType::List {
+        return Err(DeError::new("Set value must be encoded as List".into()));
+    }
+    let len = read_size_non_negative(reader, "list")?;
+
+    if let Some(c) = constraints {
+        validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+    }
+
+    let set = PySet::empty(py).map_err(DeError::wrap)?;
+    for _ in 0..len {
+        let (_, item_type) = reader
+            .read_head()
+            .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
+        let item = deserialize_value(py, reader, item_type, inner, None, depth + 1)?;
+        set.add(item).map_err(DeError::wrap)?;
+    }
+    Ok(set.into_any())
+}
+
+fn deserialize_struct_value<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    type_id: TarsType,
+    cls_obj: &pyo3::Py<PyType>,
+    depth: usize,
+) -> DeResult<Bound<'py, PyAny>> {
+    let nested_cls = class_from_type(py, cls_obj);
+    let nested_def = ensure_schema_for_class(py, &nested_cls).map_err(DeError::wrap)?;
+    if type_id != TarsType::StructBegin {
+        return Err(DeError::new(
+            "Struct value must be encoded as Struct".into(),
+        ));
+    }
+    deserialize_struct(py, &nested_cls, reader, &nested_def, depth + 1)
+}
+
+fn deserialize_tarsdict_value<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    type_id: TarsType,
+    depth: usize,
+) -> DeResult<Bound<'py, PyAny>> {
+    if type_id != TarsType::StructBegin {
+        return Err(DeError::new(
+            "TarsDict value must be encoded as Struct".into(),
+        ));
+    }
+    let dict = decode_any_struct_fields(py, reader, depth + 1)?;
+    let tarsdict_type = py.get_type::<TarsDict>();
+    let instance = tarsdict_type.call1((dict,)).map_err(DeError::wrap)?;
+    Ok(instance.into_any())
+}
+
+fn deserialize_list_value<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    type_id: TarsType,
+    inner: &TypeExpr,
+    constraints: Option<&Constraints>,
+    depth: usize,
+) -> DeResult<Bound<'py, PyAny>> {
+    if type_id == TarsType::SimpleList {
+        let sub_type = reader
+            .read_u8()
+            .map_err(|e| DeError::new(format!("Failed to read SimpleList subtype: {}", e)))?;
+        if sub_type != 0 {
+            return Err(DeError::new("SimpleList must contain Byte (0)".into()));
+        }
+        let len = read_size_non_negative(reader, "SimpleList")?;
+
+        if let Some(c) = constraints {
+            validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+        }
+
+        let bytes = reader
+            .read_bytes(len)
+            .map_err(|e| DeError::new(format!("Failed to read SimpleList bytes: {}", e)))?;
+        return Ok(PyBytes::new(py, bytes).into_any());
+    }
+
+    let len = read_size_non_negative(reader, "list")?;
+
+    if let Some(c) = constraints {
+        validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+    }
+
+    let list_any = unsafe {
+        // SAFETY: PyList_New 返回新引用并预留 len 个槽位。若返回空指针则抛错。
+        let ptr = ffi::PyList_New(len as isize);
+        if ptr.is_null() {
+            return Err(DeError::wrap(PyErr::fetch(py)));
+        }
+        Bound::from_owned_ptr(py, ptr)
+    };
+    for idx in 0..len {
+        let (_, item_type) = reader
+            .read_head()
+            .map_err(|e| DeError::new(format!("Failed to read list item head: {}", e)))?;
+        let item = deserialize_value(py, reader, item_type, inner, None, depth + 1)
+            .map_err(|e| e.prepend(PathItem::Index(idx)))?;
+        let set_res = unsafe {
+            // SAFETY: PyList_SetItem 会“偷”引用, item.into_ptr 转移所有权。
+            // 每个索引只写入一次,与 PyList_New 的预分配长度一致。
+            ffi::PyList_SetItem(list_any.as_ptr(), idx as isize, item.into_ptr())
+        };
+        if set_res != 0 {
+            return Err(DeError::wrap(PyErr::fetch(py)));
+        }
+    }
+    Ok(list_any)
+}
+
+fn deserialize_tuple_value<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    type_id: TarsType,
+    items: &[TypeExpr],
+    constraints: Option<&Constraints>,
+    depth: usize,
+) -> DeResult<Bound<'py, PyAny>> {
+    if type_id != TarsType::List {
+        return Err(DeError::new("Tuple value must be encoded as List".into()));
+    }
+    let len = read_size_non_negative(reader, "list")?;
+    if let Some(c) = constraints {
+        validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+    }
+    if len != items.len() {
+        return Err(DeError::new(
+            "Tuple length does not match annotation".into(),
+        ));
+    }
+    let tuple = build_fixed_tuple(py, reader, items, depth)?;
+    Ok(tuple.into_any())
+}
+
+fn deserialize_map_value<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    _type_id: TarsType,
+    k_type: &TypeExpr,
+    v_type: &TypeExpr,
+    constraints: Option<&Constraints>,
+    depth: usize,
+) -> DeResult<Bound<'py, PyAny>> {
+    let len = read_size_non_negative(reader, "map")?;
+
+    if let Some(c) = constraints {
+        validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+    }
+
+    let dict = PyDict::new(py);
+    for _ in 0..len {
+        let (_, kt) = reader
+            .read_head()
+            .map_err(|e| DeError::new(format!("Failed to read map key head: {}", e)))?;
+        let key = deserialize_value(py, reader, kt, k_type, None, depth + 1)
+            .map_err(|e| e.prepend(PathItem::Key("<key>".into())))?;
+
+        let (_, vt) = reader
+            .read_head()
+            .map_err(|e| DeError::new(format!("Failed to read map value head: {}", e)))?;
+
+        let val = deserialize_value(py, reader, vt, v_type, None, depth + 1)
+            .map_err(|e| e.prepend(PathItem::Key(key.to_string())))?;
+
+        dict.set_item(key, val).map_err(DeError::wrap)?;
+    }
+    Ok(dict.into_any())
+}
+
+fn deserialize_optional<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    type_id: TarsType,
+    inner: &TypeExpr,
+    constraints: Option<&Constraints>,
+    depth: usize,
+) -> DeResult<Bound<'py, PyAny>> {
+    deserialize_value(py, reader, type_id, inner, constraints, depth + 1)
 }
 
 fn build_fixed_tuple<'py>(
