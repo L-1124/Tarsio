@@ -4,8 +4,9 @@
 `StructMeta`、配置对象 `StructConfig` 以及编码/解码函数。
 """
 
+from collections.abc import Callable
 from inspect import Signature
-from typing import Any, ClassVar, Final, TypeVar
+from typing import Any, ClassVar, Final, TypeVar, overload
 
 from typing_extensions import dataclass_transform
 
@@ -13,6 +14,7 @@ from . import inspect
 
 _StructT = TypeVar("_StructT")
 _SM = TypeVar("_SM", bound="StructMeta")
+_FieldDefaultT = TypeVar("_FieldDefaultT")
 
 __all__ = [
     "NODEFAULT",
@@ -35,6 +37,27 @@ __all__ = [
 
 NODEFAULT: Final[object]
 
+@overload
+def field(
+    *,
+    tag: int | None = None,
+    default: Any,
+    default_factory: object = ...,
+) -> Any: ...
+@overload
+def field(
+    *,
+    tag: int | None = None,
+    default: object = ...,
+    default_factory: Callable[[], _FieldDefaultT],
+) -> _FieldDefaultT: ...
+@overload
+def field(
+    *,
+    tag: int | None = None,
+    default: object = ...,
+    default_factory: object = ...,
+) -> Any: ...
 def field(
     *,
     tag: int | None = None,
