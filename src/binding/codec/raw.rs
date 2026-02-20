@@ -12,7 +12,7 @@ use smallvec::SmallVec;
 
 use crate::binding::codec::ser;
 use crate::binding::error::{DeError, DeResult, PathItem};
-use crate::binding::schema::{Struct, StructDef, TarsDict, TypeExpr, ensure_schema_for_class};
+use crate::binding::schema::{StructDef, TarsDict, TypeExpr, ensure_schema_for_class};
 use crate::binding::utils::{
     PySequenceFast, check_depth, check_exact_sequence_type, class_from_type, dataclass_fields,
     maybe_shrink_buffer, try_coerce_buffer_to_bytes, with_stdlib_cache,
@@ -325,7 +325,8 @@ pub(crate) fn decode_any_value<'py>(
                 .into_any())
         }
         TarsType::StructBegin => {
-            decode_any_struct_fields(py, reader, depth + 1).map(|d| d.into_any())
+            let dict = decode_struct_fields(py, reader, true, depth + 1).map_err(DeError::wrap)?;
+            Ok(dict.into_any())
         }
         TarsType::List => decode_any_list(py, reader, depth + 1),
         TarsType::SimpleList => decode_any_simple_list(py, reader),
@@ -563,10 +564,6 @@ fn encode_value(
     depth: usize,
 ) -> PyResult<()> {
     check_depth(depth)?;
-    if value.is_instance_of::<Struct>() {
-        return Err(PyTypeError::new_err("Unsupported raw value type"));
-    }
-
     serialize_any(writer, tag, value, depth, &ser::serialize_impl)
 }
 
@@ -635,19 +632,17 @@ pub fn probe_struct<'py>(py: Python<'py>, data: &[u8]) -> Option<Bound<'py, PyDi
         return None;
     }
 
-    // Level 1: Fail Fast
     let type_id = data[0] & 0x0F;
     if type_id > 13 {
         return None;
     }
 
-    // Level 2: Speculative Decoding
     let mut reader = TarsReader::new(data);
-    if let Ok(dict) = decode_struct_fields(py, &mut reader, true, 0) {
-        // Level 3: Final Validation
-        if reader.is_end() && !dict.is_empty() {
-            return Some(dict);
-        }
+    if let Ok(dict) = decode_struct_fields(py, &mut reader, true, 0)
+        && reader.is_end()
+        && !dict.is_empty()
+    {
+        return Some(dict);
     }
 
     None

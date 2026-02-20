@@ -119,9 +119,6 @@ pub fn compile_schema_from_class<'py>(
         } else {
             None
         };
-        // if default_value.is_none() && field.is_optional {
-        //     default_value = Some(py.None());
-        // }
 
         fields_def.push(FieldDef {
             name,

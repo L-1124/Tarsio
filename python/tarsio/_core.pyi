@@ -443,6 +443,7 @@ def encode_raw(obj: Any) -> bytes:
     """将对象编码为 Tars 二进制格式 (原始模式).
 
     如果输入是 `TarsDict`，则按结构体编码；否则按其自然类型（Map, List, Int 等）编码。
+    Raw 模式下，`Struct` 实例在任意嵌套位置都允许编码为 Struct。
 
     Args:
         obj: 要编码的对象。
@@ -460,6 +461,7 @@ def decode_raw(data: _BytesLike) -> TarsDict:
 
     Returns:
         解码后的 TarsDict。
+        Raw 模式下，任意嵌套层级的 StructBegin 都会还原为 TarsDict。
     """
     ...
 

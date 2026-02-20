@@ -369,7 +369,7 @@ fn deserialize_value<'py>(
                     "Struct value must be encoded as Struct".into(),
                 ));
             }
-            deserialize_struct(py, &nested_cls, reader, &nested_def, depth + 1)
+            deserialize_struct(py, &nested_cls, reader, &nested_def, depth + 2)
         }
         TypeExpr::TarsDict => {
             if type_id != TarsType::StructBegin {

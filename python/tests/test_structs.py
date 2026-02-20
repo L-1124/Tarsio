@@ -918,6 +918,31 @@ def test_any_simplelist_auto_utf8_and_passthrough() -> None:
         assert isinstance(decoded.val, bytes)
 
 
+def test_tarsdict_field_keeps_tarsdict_in_nested_struct() -> None:
+    """TarsDict 字段在嵌套 StructBegin 场景下应保持 TarsDict 语义."""
+
+    class Box(Struct):
+        payload: Annotated[TarsDict, 0]
+
+    data = encode_raw(TarsDict({0: TarsDict({1: TarsDict({2: 9})})}))
+    decoded = decode(Box, data)
+    assert isinstance(decoded.payload, TarsDict)
+    assert isinstance(decoded.payload[1], TarsDict)
+    assert decoded.payload[1][2] == 9
+
+
+def test_any_field_decodes_nested_struct_by_behavior_not_exact_type() -> None:
+    """Any 字段对嵌套 StructBegin 只断言可观察内容，不固定具体映射类型."""
+
+    class AnyBox(Struct):
+        val: Annotated[Any, 0]
+
+    payload = encode_raw(TarsDict({0: TarsDict({1: 5})}))
+    decoded = decode(AnyBox, payload)
+    assert decoded.val[1] == 5
+    assert isinstance(decoded.val, dict)
+
+
 def test_nested_struct_simplelist_wire_and_roundtrip() -> None:
     """simplelist=True 应作用于当前 Struct 的 Struct 字段."""
 

@@ -22,6 +22,7 @@ class User(Struct, frozen=True, omit_defaults=True):
 * `Meta` 描述解码约束，失败时抛 `ValidationError`。
 * `StructConfig` 记录类定义时启用的配置快照。
 * `TarsDict` 是 Raw Struct 语义容器，不等同于普通 `dict`。
+* Raw 路径下，`Struct` 可在任意嵌套位置编码，且 `StructBegin` 在任意嵌套层级统一还原为 `TarsDict`。
 
 ## 注意事项
 

@@ -7,10 +7,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
-// ==========================================
-// [L2] 线级中间表示:物理层(面向编解码)
-// ==========================================
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum WireType {
     Int,
@@ -23,10 +19,6 @@ pub enum WireType {
     List(Box<WireType>),
     Map(Box<WireType>, Box<WireType>),
 }
-
-// ==========================================
-// [L1] 语义中间表示:语义层(面向结构定义)
-// ==========================================
 
 #[derive(Debug)]
 pub enum TypeExpr {
@@ -135,10 +127,6 @@ impl UnionCache {
         self.map.write().insert(type_ptr, idx);
     }
 }
-
-// ==========================================
-// 结构定义
-// ==========================================
 
 #[derive(Debug)]
 pub struct Constraints {
@@ -405,8 +393,6 @@ pub fn field(py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<
     )
 }
 
-// 基础类定义
-
 #[pyclass(subclass, weakref, module = "tarsio._core", name = "_StructBase")]
 pub struct Struct;
 
@@ -417,10 +403,6 @@ pub struct Struct;
     name = "TarsDict"
 )]
 pub struct TarsDict;
-
-// ==========================================
-// Schema (Moved from schema.rs)
-// ==========================================
 
 pub const SCHEMA_ATTR: &str = "__tarsio_schema__";
 

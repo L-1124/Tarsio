@@ -140,6 +140,51 @@ def test_decode_nested_struct() -> None:
     assert res[0][1] == 100
 
 
+def test_encode_raw_allows_direct_struct_value() -> None:
+    """Raw 模式应允许 TarsDict 直接字段值为 Struct."""
+    from typing import Annotated
+
+    from tarsio import Struct
+
+    class Inner(Struct):
+        val: Annotated[int, 0]
+
+    data = encode_raw(TarsDict({0: Inner(7)}))
+    decoded = decode_raw(data)
+    assert isinstance(decoded[0], TarsDict)
+    assert decoded[0][0] == 7
+
+
+def test_decode_raw_map_struct_value_returns_tarsdict() -> None:
+    """Raw 解码时 map 内 StructBegin 应返回 TarsDict."""
+    from typing import Annotated
+
+    from tarsio import Struct
+
+    class Inner(Struct):
+        val: Annotated[int, 0]
+
+    data = encode_raw(TarsDict({0: {"k": Inner(7)}}))
+    decoded = decode_raw(data)
+    assert isinstance(decoded[0]["k"], TarsDict)
+    assert decoded[0]["k"][0] == 7
+
+
+def test_decode_raw_deep_nested_struct_returns_tarsdict() -> None:
+    """Raw 解码时深层容器中的 StructBegin 应统一返回 TarsDict."""
+    from typing import Annotated
+
+    from tarsio import Struct
+
+    class Inner(Struct):
+        val: Annotated[int, 0]
+
+    data = encode_raw(TarsDict({0: {"items": [Inner(3)]}}))
+    decoded = decode_raw(data)
+    assert isinstance(decoded[0]["items"][0], TarsDict)
+    assert decoded[0]["items"][0][0] == 3
+
+
 def test_decode_skips_unknown_tag() -> None:
     """测试跳过未知 Tag (Schema 模式)."""
     from typing import Annotated

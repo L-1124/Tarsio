@@ -15,14 +15,12 @@ pub(crate) fn schema_from_class(
     py: Python<'_>,
     cls: &Bound<'_, PyType>,
 ) -> PyResult<Option<Arc<StructDef>>> {
-    // 1. Check attribute directly
     if let Ok(schema_attr) = cls.getattr(SCHEMA_ATTR)
         && let Ok(schema) = schema_attr.extract::<Py<Schema>>()
     {
         return Ok(Some(schema.borrow(py).def.clone()));
     }
 
-    // 2. Check weak cache
     let cls_key = cls.as_ptr() as usize;
     let cached =
         SCHEMA_CACHE.with(|cache| cache.borrow().get(&cls_key).and_then(|weak| weak.upgrade()));
@@ -40,7 +38,6 @@ pub fn ensure_schema_for_class(
 ) -> PyResult<Arc<StructDef>> {
     let cls_key = cls.as_ptr() as usize;
 
-    // 1. 统一走 schema_from_class，避免重复缓存查找。
     if let Some(def) = schema_from_class(py, cls)? {
         SCHEMA_CACHE.with(|cache| {
             cache.borrow_mut().insert(cls_key, Arc::downgrade(&def));
@@ -48,7 +45,6 @@ pub fn ensure_schema_for_class(
         return Ok(def);
     }
 
-    // 2. Parameters check for generic classes
     if let Ok(params) = cls.getattr("__parameters__")
         && let Ok(tuple) = params.cast::<PyTuple>()
         && !tuple.is_empty()
@@ -63,7 +59,6 @@ pub fn ensure_schema_for_class(
         )));
     }
 
-    // 3. Internal introspection for automated schema building
     if detect_struct_kind(py, cls)? {
         let default_config = SchemaConfig {
             frozen: false,
@@ -83,7 +78,6 @@ pub fn ensure_schema_for_class(
         }
     }
 
-    // 4. Fallback: not a struct
     let class_name = cls
         .name()
         .map(|n| n.to_string())
@@ -313,7 +307,6 @@ impl Struct {
         let cls = slf.get_type();
         let class_name = cls.name()?.extract::<String>()?;
 
-        // 尝试获取 Schema
         let def = match schema_from_class(py, &cls)? {
             Some(d) => d,
             None => return Ok(format!("{}()", class_name)),
@@ -329,7 +322,6 @@ impl Struct {
                 Err(_) => continue, // Skip missing fields
             };
 
-            // 使用 Python 的 repr() 获取值的字符串表示
             if def.repr_omit_defaults
                 && let Some(default_val) = &field.default_value
                 && val.eq(default_val.bind(py))?
@@ -513,10 +505,6 @@ impl Struct {
     }
 }
 
-// ==========================================
-// 构造器逻辑
-// ==========================================
-
 fn set_field_value(
     self_obj: &Bound<'_, PyAny>,
     field: &FieldDef,
@@ -582,7 +570,6 @@ pub fn construct_instance(
     kwargs: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<()> {
     let py = self_obj.py();
-    // 位置参数按字段顺序映射到 args
     let num_positional = args.len();
     let num_fields = def.fields_sorted.len();
 
@@ -602,7 +589,6 @@ pub fn construct_instance(
         )));
     }
 
-    // Fast Path: 全位置参数，无 kwargs，无需中间缓冲区
     let no_kwargs = kwargs.is_none_or(|k| k.is_empty());
     if no_kwargs && num_positional == num_fields {
         for (idx, field) in def.fields_sorted.iter().enumerate() {
