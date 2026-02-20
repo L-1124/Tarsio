@@ -268,6 +268,27 @@ def test_bytes_simplelist() -> None:
     assert data.hex().upper() == "0D0000020102"
 
 
+def test_schema_wrap_simplelist_field_writes_simplelist_wire() -> None:
+    """Schema 字段 wrap_simplelist=True 应写出 SimpleList 线协议."""
+    from typing import Annotated
+
+    from tarsio import Struct, field
+
+    class Inner(Struct):
+        val: Annotated[int, 0]
+
+    class Outer(Struct):
+        inner: Annotated[Inner, 0] = field(wrap_simplelist=True)
+
+    wire = Outer(inner=Inner(9)).encode()
+    assert wire[0] == 0x0D
+
+    payload_len = wire[3]
+    payload = wire[4 : 4 + payload_len]
+    restored = Inner.decode(payload)
+    assert restored.val == 9
+
+
 def test_raw_accepts_bytearray_and_memoryview_as_simplelist() -> None:
     """Raw 编码应将 bytearray/memoryview 统一按 SimpleList(bytes) 编码."""
     for value in (bytearray(b"\x01\x02"), memoryview(b"\x01\x02")):

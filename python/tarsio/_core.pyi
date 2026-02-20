@@ -43,6 +43,7 @@ def field(
     *,
     tag: int | None = None,
     default: Any,
+    wrap_simplelist: bool = ...,
     default_factory: object = ...,
 ) -> Any: ...
 @overload
@@ -50,6 +51,7 @@ def field(
     *,
     tag: int | None = None,
     default: object = ...,
+    wrap_simplelist: bool = ...,
     default_factory: Callable[[], _FieldDefaultT],
 ) -> _FieldDefaultT: ...
 @overload
@@ -57,12 +59,14 @@ def field(
     *,
     tag: int | None = None,
     default: object = ...,
+    wrap_simplelist: bool = ...,
     default_factory: object = ...,
 ) -> Any: ...
 def field(
     *,
     tag: int | None = None,
     default: Any = NODEFAULT,
+    wrap_simplelist: bool = False,
     default_factory: Any = NODEFAULT,
 ) -> Any:
     """声明字段默认值或默认值工厂.
@@ -70,13 +74,16 @@ def field(
     Args:
         tag: 字段 Tag, 范围 0-255。省略时自动分配。
         default: 字段默认值。
+        wrap_simplelist: 是否将 Struct/TarsDict 字段包装为 SimpleList(bytes)。
+            仅在字段注解为 Struct 或 TarsDict 时有效。
         default_factory: 字段默认值工厂（可调用对象）。
 
     Returns:
         内部字段规格对象。
 
     Raises:
-        TypeError: 同时提供 default 与 default_factory，或 default_factory 不可调用时抛出。
+        TypeError: 同时提供 default 与 default_factory，default_factory 不可调用，
+            或 wrap_simplelist 非 bool 时抛出。
     """
     ...
 
@@ -207,7 +214,6 @@ class StructMeta(type):
         kw_only: bool = ...,
         dict: bool = ...,
         weakref: bool = ...,
-        simplelist: bool = ...,
         **kwargs: Any,
     ) -> _SM:
         """创建 Struct 子类并编译 Schema.
@@ -226,7 +232,6 @@ class StructMeta(type):
             kw_only: 是否只允许关键字参数构造。
             dict: 是否为实例保留 `__dict__`。
             weakref: 是否支持弱引用。
-            simplelist: 是否将当前 Struct 的 Struct 字段编码为 SimpleList(bytes)。
             **kwargs: 预留扩展配置。
 
         Returns:
@@ -249,7 +254,6 @@ class StructConfig:
         omit_defaults: 编码时是否省略默认值字段。
         weakref: 是否支持弱引用。
         dict: 是否保留 `__dict__`（允许动态属性）。
-        simplelist: 当前 Struct 的 Struct 字段是否使用 `SimpleList(bytes)`。
         rename: 预留字段（当前默认未启用）。
     """
 
@@ -261,7 +265,6 @@ class StructConfig:
     omit_defaults: bool
     weakref: bool
     dict: bool
-    simplelist: bool
     rename: Any | None
 
 class Struct(metaclass=StructMeta):
@@ -309,7 +312,6 @@ class Struct(metaclass=StructMeta):
         - forbid_unknown_tags (bool, default False): 解码时是否禁止出现未知 Tag.
         - dict (bool, default False): 是否为实例保留 `__dict__`（允许附加额外属性）。
         - weakref (bool, default False): 是否支持弱引用。
-        - simplelist (bool, default False): 当前 Struct 的 Struct 字段编码时先按 Struct 编码，再封装为 SimpleList(bytes)。
 
     Examples:
         基本用法：
@@ -356,7 +358,6 @@ class Struct(metaclass=StructMeta):
         kw_only: bool = False,
         dict: bool = False,
         weakref: bool = False,
-        simplelist: bool = False,
         **kwargs: Any,
     ) -> None:
         """配置 Struct 子类行为."""

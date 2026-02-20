@@ -121,28 +121,42 @@ fn deserialize_struct<'py>(
 
         if let Some(idx) = idx_opt {
             let field = &def.fields_sorted[idx];
-            let value_result: DeResult<Bound<'py, PyAny>> = if def.simplelist {
-                match &field.ty {
-                    TypeExpr::Struct(cls_obj) => {
-                        if type_id != TarsType::SimpleList {
-                            return Err(DeError::new(
-                                "Struct field must be encoded as SimpleList".into(),
-                            ));
-                        }
-                        let nested_cls = class_from_type(py, cls_obj);
-                        let payload = reader.read_simplelist_bytes().map_err(|e| {
-                            DeError::new(format!("Failed to read Struct SimpleList payload: {}", e))
+            let value_result: DeResult<Bound<'py, PyAny>> = if field.wrap_simplelist {
+                if type_id != TarsType::SimpleList {
+                    Err(DeError::new(format!(
+                        "Field '{}' expects SimpleList(bytes) payload",
+                        field.name
+                    )))
+                } else {
+                    let subtype = reader.read_u8().map_err(|e| {
+                        DeError::new(format!("Failed to read SimpleList subtype: {e}"))
+                    })?;
+                    if subtype != 0 {
+                        Err(DeError::new("SimpleList must contain Byte (0)".into()))
+                    } else {
+                        let len = read_size_non_negative(reader, "SimpleList")?;
+                        let payload = reader.read_bytes(len).map_err(|e| {
+                            DeError::new(format!("Failed to read SimpleList bytes: {e}"))
                         })?;
-                        decode_object(py, &nested_cls, payload).map_err(DeError::wrap)
+                        match &field.ty {
+                            TypeExpr::Struct(cls_obj) => {
+                                let nested_cls = class_from_type(py, cls_obj);
+                                decode_object(py, &nested_cls, payload).map_err(DeError::wrap)
+                            }
+                            TypeExpr::TarsDict => {
+                                let dict =
+                                    decode_raw_from_bytes(py, payload).map_err(DeError::wrap)?;
+                                let tarsdict_type = py.get_type::<TarsDict>();
+                                let instance =
+                                    tarsdict_type.call1((dict,)).map_err(DeError::wrap)?;
+                                Ok(instance.into_any())
+                            }
+                            _ => Err(DeError::new(format!(
+                                "Field '{}' with wrap_simplelist=True must be Struct or TarsDict",
+                                field.name
+                            ))),
+                        }
                     }
-                    _ => deserialize_value(
-                        py,
-                        reader,
-                        type_id,
-                        &field.ty,
-                        field.constraints.as_deref(),
-                        depth + 1,
-                    ),
                 }
             } else {
                 deserialize_value(

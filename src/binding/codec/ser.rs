@@ -86,7 +86,14 @@ pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyRes
 
         {
             let mut writer = TarsWriter::with_buffer(&mut *buffer);
-            serialize_struct_fields(&mut writer, obj, &def, 0, &serialize_impl)?;
+            serialize_struct_fields(
+                &mut writer,
+                obj,
+                &def,
+                0,
+                true,
+                &serialize_impl_standard,
+            )?;
         }
 
         let result = PyBytes::new(py, &buffer[..]).unbind();
@@ -95,6 +102,47 @@ pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyRes
 
         Ok(result)
     })
+}
+
+pub(crate) fn encode_struct_payload_to_vec(
+    obj: &Bound<'_, PyAny>,
+    def: &crate::binding::schema::StructDef,
+    depth: usize,
+) -> PyResult<Vec<u8>> {
+    let mut payload = Vec::with_capacity(64);
+    {
+        let mut nested_writer = TarsWriter::with_buffer(&mut payload);
+        serialize_struct_fields(
+            &mut nested_writer,
+            obj,
+            def,
+            depth + 1,
+            true,
+            &serialize_impl_standard,
+        )?;
+    }
+    Ok(payload)
+}
+
+pub(crate) fn encode_tarsdict_payload_to_vec(
+    val: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<Vec<u8>> {
+    if !val.is_instance_of::<TarsDict>() {
+        return Err(PyTypeError::new_err("TarsDict value type mismatch"));
+    }
+    let dict = val.cast::<PyDict>()?;
+    let mut payload = Vec::with_capacity(64);
+    {
+        let mut nested_writer = TarsWriter::with_buffer(&mut payload);
+        write_tarsdict_fields(
+            &mut nested_writer,
+            dict,
+            depth + 1,
+            &serialize_impl_standard,
+        )?;
+    }
+    Ok(payload)
 }
 
 pub(crate) fn serialize_impl(
@@ -139,7 +187,7 @@ pub(crate) fn serialize_impl(
             }
         },
         TypeExpr::Any => {
-            serialize_any(writer, tag, val, depth + 1, &serialize_impl)?;
+            serialize_any(writer, tag, val, depth + 1, &serialize_impl_standard)?;
         }
         TypeExpr::NoneType => {
             return Err(PyTypeError::new_err(
@@ -162,16 +210,16 @@ pub(crate) fn serialize_impl(
             let cls = class_from_type(val.py(), cls_obj);
             let def = ensure_schema_for_class(val.py(), &cls)?;
             writer.write_tag(tag, TarsType::StructBegin);
-            serialize_struct_fields(writer, val, &def, depth + 1, &serialize_impl)?;
+            serialize_struct_fields(writer, val, &def, depth + 1, true, &serialize_impl_standard)?;
             writer.write_tag(0, TarsType::StructEnd);
         }
         TypeExpr::TarsDict => {
             if !val.is_instance_of::<TarsDict>() {
                 return Err(PyTypeError::new_err("TarsDict value type mismatch"));
             }
-            writer.write_tag(tag, TarsType::StructBegin);
             let dict = val.cast::<PyDict>()?;
-            write_tarsdict_fields(writer, dict, depth + 1, &serialize_impl)?;
+            writer.write_tag(tag, TarsType::StructBegin);
+            write_tarsdict_fields(writer, dict, depth + 1, &serialize_impl_standard)?;
             writer.write_tag(0, TarsType::StructEnd);
         }
         TypeExpr::NamedTuple(cls, items) => {
@@ -286,6 +334,16 @@ pub(crate) fn serialize_impl(
         }
     }
     Ok(())
+}
+
+pub(crate) fn serialize_impl_standard(
+    writer: &mut TarsWriter<impl BufMut>,
+    tag: u8,
+    type_expr: &TypeExpr,
+    val: &Bound<'_, PyAny>,
+    depth: usize,
+) -> PyResult<()> {
+    serialize_impl(writer, tag, type_expr, val, depth)
 }
 
 /// 从 Union 变体列表中选择与给定值匹配的变体.

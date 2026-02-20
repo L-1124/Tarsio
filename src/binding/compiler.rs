@@ -49,6 +49,11 @@ pub fn compile_schema_from_info<'py>(
 
         let type_any = field_any.getattr("type")?;
         let type_expr = parse_type_info(&type_any)?;
+        let wrap_simplelist = field_any
+            .getattr("wrap_simplelist")
+            .ok()
+            .and_then(|v| v.extract::<bool>().ok())
+            .unwrap_or(false);
 
         let is_optional: bool = field_any.getattr("optional")?.extract()?;
         let has_default: bool = field_any.getattr("has_default")?.extract()?;
@@ -90,6 +95,7 @@ pub fn compile_schema_from_info<'py>(
             is_optional,
             is_required,
             init: true,
+            wrap_simplelist,
             constraints,
         });
     }
@@ -130,6 +136,7 @@ pub fn compile_schema_from_class<'py>(
             is_optional: field.is_optional,
             is_required: field.is_required,
             init: field.init,
+            wrap_simplelist: field.wrap_simplelist,
             constraints,
         });
     }
@@ -145,6 +152,15 @@ fn compile_schema_from_fields<'py>(
 ) -> PyResult<Option<Arc<StructDef>>> {
     if fields_def.is_empty() {
         return Ok(None);
+    }
+
+    for field in &fields_def {
+        if field.wrap_simplelist && !matches!(field.ty, TypeExpr::Struct(_) | TypeExpr::TarsDict) {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Field '{}' with wrap_simplelist=True must be annotated as Struct or TarsDict",
+                field.name
+            )));
+        }
     }
 
     fields_def.sort_by_key(|f| f.tag);
@@ -186,7 +202,6 @@ fn compile_schema_from_fields<'py>(
         kw_only: config.kw_only,
         dict: config.dict,
         weakref: config.weakref,
-        simplelist: config.simplelist,
     };
 
     let def = Arc::new(def);

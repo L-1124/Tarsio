@@ -322,6 +322,64 @@ def test_field_accepts_nodefault_sentinel() -> None:
         D()  # pyright: ignore[reportCallIssue]
 
 
+def test_wrap_simplelist_struct_field_roundtrip() -> None:
+    """Struct 字段启用 wrap_simplelist 后应按 SimpleList 互通."""
+
+    class Inner(Struct):
+        val: Annotated[int, 0]
+
+    class Outer(Struct):
+        inner: Annotated[Inner, 0] = field(wrap_simplelist=True)
+
+    obj = Outer(inner=Inner(7))
+    data = encode(obj)
+    assert data[0] == 0x0D
+
+    restored = decode(Outer, data)
+    assert restored.inner.val == 7
+
+
+def test_wrap_simplelist_tarsdict_field_roundtrip() -> None:
+    """TarsDict 字段启用 wrap_simplelist 后应按 SimpleList 互通."""
+
+    class Outer(Struct):
+        payload: Annotated[TarsDict, 0] = field(wrap_simplelist=True)
+
+    obj = Outer(payload=TarsDict({0: 1, 1: "x"}))
+    data = encode(obj)
+    assert data[0] == 0x0D
+
+    restored = decode(Outer, data)
+    assert isinstance(restored.payload, TarsDict)
+    assert restored.payload[0] == 1
+    assert restored.payload[1] == "x"
+
+
+def test_wrap_simplelist_requires_simplelist_wire() -> None:
+    """wrap_simplelist 字段解码时应严格要求 SimpleList wire."""
+
+    class Inner(Struct):
+        val: Annotated[int, 0]
+
+    class PlainOuter(Struct):
+        inner: Annotated[Inner, 0]
+
+    class WrappedOuter(Struct):
+        inner: Annotated[Inner, 0] = field(wrap_simplelist=True)
+
+    data = encode(PlainOuter(inner=Inner(3)))
+    with pytest.raises(ValueError, match="expects SimpleList"):
+        decode(WrappedOuter, data)
+
+
+def test_wrap_simplelist_rejects_non_struct_and_non_tarsdict_field() -> None:
+    """非 Struct/TarsDict 字段设置 wrap_simplelist 应在定义期失败."""
+    with pytest.raises(TypeError, match="must be annotated as Struct or TarsDict"):
+
+        class Bad(Struct):
+            val: Annotated[int, 0] = field(wrap_simplelist=True)
+
+
 def test_empty_struct_behavior() -> None:
     """空结构体应编码为空字节，也可从空字节解码."""
 
@@ -541,13 +599,13 @@ def test_struct_kw_only_option() -> None:
     assert k.val == 1
 
 
-def test_struct_simplelist_config_option() -> None:
-    """simplelist=True 应出现在 __struct_config__ 中."""
+def test_struct_config_no_simplelist_option() -> None:
+    """__struct_config__ 不应再暴露 simplelist 选项."""
 
-    class Blob(Struct, simplelist=True):
+    class Blob(Struct):
         val: Annotated[int, 0]
 
-    assert Blob.__struct_config__.simplelist is True
+    assert not hasattr(Blob.__struct_config__, "simplelist")
 
 
 def test_struct_fields_in_tag_order() -> None:
@@ -941,30 +999,6 @@ def test_any_field_decodes_nested_struct_by_behavior_not_exact_type() -> None:
     decoded = decode(AnyBox, payload)
     assert decoded.val[1] == 5
     assert isinstance(decoded.val, dict)
-
-
-def test_nested_struct_simplelist_wire_and_roundtrip() -> None:
-    """simplelist=True 应作用于当前 Struct 的 Struct 字段."""
-
-    class Inner(Struct):
-        x: Annotated[int, 0]
-        y: Annotated[str, 1]
-
-    class Outer(Struct, simplelist=True):
-        inner: Annotated[Inner, 0]
-
-    obj = Outer(inner=Inner(x=7, y="ok"))
-    data = encode(obj)
-    restored = decode(Outer, data)
-    assert restored.inner.x == 7
-    assert restored.inner.y == "ok"
-
-    raw = decode_raw(data)
-    payload = raw[0]
-    assert isinstance(payload, bytes)
-    inner2 = Inner.decode(payload)
-    assert inner2.x == 7
-    assert inner2.y == "ok"
 
 
 def test_evolution_forward_compatibility_optional_field_defaults_none() -> None:

@@ -14,8 +14,8 @@ use crate::binding::codec::ser;
 use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{StructDef, TarsDict, TypeExpr, ensure_schema_for_class};
 use crate::binding::utils::{
-    PySequenceFast, check_depth, check_exact_sequence_type, class_from_type, dataclass_fields,
-    maybe_shrink_buffer, try_coerce_buffer_to_bytes, with_stdlib_cache,
+    PySequenceFast, check_depth, check_exact_sequence_type, dataclass_fields, maybe_shrink_buffer,
+    try_coerce_buffer_to_bytes, with_stdlib_cache,
 };
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
@@ -30,6 +30,7 @@ pub(crate) fn serialize_struct_fields<W, F>(
     obj: &Bound<'_, PyAny>,
     def: &StructDef,
     depth: usize,
+    enable_wrap_simplelist: bool,
     serialize_typed: &F,
 ) -> PyResult<()>
 where
@@ -56,23 +57,22 @@ where
                         continue;
                     }
                 }
-                if def.simplelist
-                    && let TypeExpr::Struct(cls_obj) = &field.ty
-                {
-                    let nested_cls = class_from_type(obj.py(), cls_obj);
-                    let nested_def = ensure_schema_for_class(obj.py(), &nested_cls)?;
-                    let mut nested = Vec::with_capacity(256);
-                    {
-                        let mut nested_writer = TarsWriter::with_buffer(&mut nested);
-                        serialize_struct_fields(
-                            &mut nested_writer,
-                            &val,
-                            &nested_def,
-                            depth + 1,
-                            &ser::serialize_impl,
-                        )?;
-                    }
-                    writer.write_bytes(field.tag, &nested);
+                if enable_wrap_simplelist && field.wrap_simplelist {
+                    let payload = match &field.ty {
+                        TypeExpr::Struct(cls_obj) => {
+                            let cls = crate::binding::utils::class_from_type(obj.py(), cls_obj);
+                            let nested_def = ensure_schema_for_class(obj.py(), &cls)?;
+                            ser::encode_struct_payload_to_vec(&val, &nested_def, depth + 1)?
+                        }
+                        TypeExpr::TarsDict => ser::encode_tarsdict_payload_to_vec(&val, depth + 1)?,
+                        _ => {
+                            return Err(PyTypeError::new_err(format!(
+                                "Field '{}' with wrap_simplelist=True must be Struct or TarsDict",
+                                field.name
+                            )));
+                        }
+                    };
+                    writer.write_bytes(field.tag, &payload);
                     continue;
                 }
                 serialize_typed(writer, field.tag, &field.ty, &val, depth + 1)?;
@@ -184,7 +184,7 @@ where
     let cls = value.get_type();
     if let Ok(def) = ensure_schema_for_class(value.py(), &cls) {
         writer.write_tag(tag, TarsType::StructBegin);
-        serialize_struct_fields(writer, value, &def, depth + 1, serialize_typed)?;
+        serialize_struct_fields(writer, value, &def, depth + 1, false, serialize_typed)?;
         writer.write_tag(0, TarsType::StructEnd);
         return Ok(());
     }
@@ -564,7 +564,7 @@ fn encode_value(
     depth: usize,
 ) -> PyResult<()> {
     check_depth(depth)?;
-    serialize_any(writer, tag, value, depth, &ser::serialize_impl)
+    serialize_any(writer, tag, value, depth, &ser::serialize_impl_standard)
 }
 
 fn decode_struct_fields<'py>(

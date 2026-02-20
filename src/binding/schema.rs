@@ -70,7 +70,6 @@ pub fn ensure_schema_for_class(
             kw_only: false,
             dict: false,
             weakref: false,
-            simplelist: false,
         };
 
         if let Some(def) = compile_schema_from_class(py, cls, default_config)? {

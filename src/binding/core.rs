@@ -152,6 +152,7 @@ pub struct FieldDef {
     pub is_optional: bool,
     pub is_required: bool,
     pub init: bool,
+    pub wrap_simplelist: bool,
     pub constraints: Option<Box<Constraints>>,
 }
 
@@ -177,7 +178,6 @@ pub struct StructDef {
     pub kw_only: bool,
     pub dict: bool,
     pub weakref: bool,
-    pub simplelist: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -191,7 +191,6 @@ pub struct SchemaConfig {
     pub kw_only: bool,
     pub dict: bool,
     pub weakref: bool,
-    pub simplelist: bool,
 }
 
 #[pyclass(module = "tarsio._core")]
@@ -213,8 +212,6 @@ pub struct StructConfig {
     #[pyo3(get)]
     pub dict: bool,
     #[pyo3(get)]
-    pub simplelist: bool,
-    #[pyo3(get)]
     pub rename: Option<Py<PyAny>>,
 }
 
@@ -229,7 +226,6 @@ impl StructConfig {
             omit_defaults: config.omit_defaults,
             weakref: config.weakref,
             dict: config.dict,
-            simplelist: config.simplelist,
             rename: None,
         }
     }
@@ -298,6 +294,7 @@ pub struct FieldSpec {
     pub has_default: bool,
     pub default_value: Option<Py<PyAny>>,
     pub default_factory: Option<Py<PyAny>>,
+    pub wrap_simplelist: bool,
 }
 
 /// 获取 `NODEFAULT` 单例.
@@ -327,6 +324,7 @@ pub fn field(py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<
     let mut tag: Option<u8> = None;
     let mut default_value: Option<Py<PyAny>> = None;
     let mut default_factory: Option<Py<PyAny>> = None;
+    let mut wrap_simplelist = false;
 
     if let Some(k) = kwargs {
         for (key, value) in k.iter() {
@@ -356,6 +354,13 @@ pub fn field(py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<
                     if !value.is(nodefault_ref) {
                         default_factory = Some(value.unbind());
                     }
+                }
+                "wrap_simplelist" => {
+                    wrap_simplelist = value.extract::<bool>().map_err(|_| {
+                        pyo3::exceptions::PyTypeError::new_err(
+                            "field() 'wrap_simplelist' must be a boolean",
+                        )
+                    })?;
                 }
                 _ => {
                     return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -389,6 +394,7 @@ pub fn field(py: Python<'_>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<
             has_default,
             default_value,
             default_factory,
+            wrap_simplelist,
         },
     )
 }

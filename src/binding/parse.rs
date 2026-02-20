@@ -51,6 +51,7 @@ pub struct FieldInfoIR {
     pub is_optional: bool,
     pub is_required: bool,
     pub init: bool,
+    pub wrap_simplelist: bool,
     pub constraints: Option<ConstraintsIR>,
 }
 
@@ -60,6 +61,7 @@ struct DefaultSpecIR {
     has_default: bool,
     default_value: Option<Py<PyAny>>,
     default_factory: Option<Py<PyAny>>,
+    wrap_simplelist: bool,
 }
 
 struct IntrospectionContext<'py> {
@@ -443,6 +445,7 @@ fn introspect_tars_struct_fields<'py>(
         has_default: bool,
         is_optional: bool,
         is_required: bool,
+        wrap_simplelist: bool,
         constraints: Option<ConstraintsIR>,
     }
 
@@ -484,6 +487,7 @@ fn introspect_tars_struct_fields<'py>(
             has_default: default_spec.has_default,
             is_optional,
             is_required,
+            wrap_simplelist: default_spec.wrap_simplelist,
             constraints,
         });
     }
@@ -551,6 +555,7 @@ fn introspect_tars_struct_fields<'py>(
             is_optional: field.is_optional,
             is_required: field.is_required,
             init: true,
+            wrap_simplelist: field.wrap_simplelist,
             constraints: field.constraints,
         });
     }
@@ -1124,6 +1129,7 @@ fn lookup_default_value<'py>(
         has_default: false,
         default_value: None,
         default_factory: None,
+        wrap_simplelist: false,
     })
 }
 
@@ -1155,6 +1161,7 @@ fn normalize_default_spec<'py>(
                 has_default: false,
                 default_value: None,
                 default_factory: None,
+                wrap_simplelist: spec.wrap_simplelist,
             });
         }
 
@@ -1162,6 +1169,7 @@ fn normalize_default_spec<'py>(
             let mut normalized =
                 normalize_default_value(py, default_value.bind(py), field_name, ctx)?;
             normalized.explicit_tag = spec.tag;
+            normalized.wrap_simplelist = spec.wrap_simplelist;
             return Ok(normalized);
         }
 
@@ -1171,6 +1179,7 @@ fn normalize_default_spec<'py>(
                 has_default: true,
                 default_value: None,
                 default_factory: Some(default_factory.clone_ref(py)),
+                wrap_simplelist: spec.wrap_simplelist,
             });
         }
     }
@@ -1181,6 +1190,7 @@ fn normalize_default_spec<'py>(
             has_default: false,
             default_value: None,
             default_factory: None,
+            wrap_simplelist: false,
         });
     }
 
@@ -1214,6 +1224,7 @@ fn normalize_default_value<'py>(
                 has_default: true,
                 default_value: None,
                 default_factory: Some(default_factory),
+                wrap_simplelist: false,
             });
         }
 
@@ -1228,5 +1239,6 @@ fn normalize_default_value<'py>(
         has_default: true,
         default_value: Some(default_value.clone().unbind()),
         default_factory: None,
+        wrap_simplelist: false,
     })
 }
