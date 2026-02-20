@@ -3,7 +3,6 @@ pub mod compiler;
 pub mod core;
 pub mod error;
 pub mod inspect;
-pub mod meta;
 pub mod metaclass;
 pub mod parse;
 pub mod schema;

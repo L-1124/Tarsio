@@ -28,6 +28,7 @@ theme:
     - navigation.top
     - navigation.tracking
     - navigation.indexes
+    - navigation.footer
     - search.suggest
     - toc.follow
   palette:
@@ -47,18 +48,22 @@ theme:
         name: Switch to light mode
 
 nav:
-  - 简介: index.md
-  - 协议规范: protocol.md
-  - 使用指南:
-    - 定义模型: usage/models.md
+  - 首页: index.md
+  - 用户指南:
+    - 使用总览: usage/serialization.md
     - 支持类型: usage/types.md
+    - 结构体建模: usage/structs.md
+    - 字段约束: usage/constraints.md
+    - Schema 演进: usage/schema_evolution.md
     - 类型内省: usage/inspect.md
-    - 序列化: usage/serialization.md
-    - CLI 工具: usage/cli.md
+  - CLI 工具: usage/cli.md
   - API 参考:
     - Struct API: api/struct.md
     - Inspect API: api/inspect.md
-    - Functional API: api/functions.md
+    - Functions and Exceptions: api/functions.md
+  - 协议与排错:
+    - Tars 协议概览: protocol.md
+    - 已知问题: known_issues.md
 
 markdown_extensions:
   - pymdownx.highlight:

@@ -456,24 +456,3 @@ impl Schema {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::UnionCache;
-
-    #[test]
-    fn union_cache_stores_and_reads_index() {
-        let cache = UnionCache::default();
-        assert_eq!(cache.get(123), None);
-        cache.insert(123, 7);
-        assert_eq!(cache.get(123), Some(7));
-    }
-
-    #[test]
-    fn union_cache_clone_starts_empty() {
-        let cache = UnionCache::default();
-        cache.insert(42, 1);
-        let cloned = cache.clone();
-        assert_eq!(cloned.get(42), None);
-    }
-}

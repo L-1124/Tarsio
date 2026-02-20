@@ -1,87 +1,57 @@
 # CLI 工具
 
-`tarsio` 是一个命令行工具，用于查看、调试与转换 Tars 二进制数据。
-支持 Hex 字符串与二进制文件输入，提供多种可视化输出格式。
+`tarsio` CLI 用于解析和查看 Tars 二进制数据。
+它支持 hex 字符串、文件输入，以及 `pretty/json/tree` 三种输出格式。
 
-## 基础用法
-
-### 解码 Hex 字符串
+## 示例代码
 
 ```bash
-# 解码 Tag 0 (Int) = 100
-$ tarsio "00 64"
-{0: 100}
+# 直接解析 hex
+tarsio "00 64"
+
+# 从文件读取并输出 JSON
+tarsio -f payload.bin --format json
+
+# 树形追踪视图
+tarsio -f payload.bin --format tree
 ```
 
-### 读取文件
+## 核心概念
 
-使用 `-f` 参数读取文件（自动检测纯二进制或 Hex 文本）：
+### 安装
+
+CLI 依赖 `click` 与 `rich`，建议安装扩展依赖:
 
 ```bash
-tarsio -f payload.bin
+pip install "tarsio[cli]"
 ```
 
-### 输出到文件
+### 输入来源
 
-使用 `-o/--output` 保存输出结果：
+* 位置参数 `ENCODED`: hex 字符串，可包含空格或 `0x` 前缀。
+* `-f/--file`: 文件输入。若文件是纯 hex 文本会自动识别，否则按原始二进制读取。
 
-```bash
-tarsio "00 64" --format json -o out.json
-```
+### 输出格式
 
-### 详细模式
+* `pretty` (默认): 适合快速查看解码结果。
+* `json`: 适合存档或与其他工具联动。
+* `tree`: 基于 `decode_trace` 显示结构、tag 与类型信息。
 
-使用 `-v/--verbose` 输出输入大小与 Hex 摘要：
+### 常用选项
 
-```bash
-tarsio "00 64" --verbose
-```
+| 选项 | 作用 |
+| --- | --- |
+| `--format {pretty,json,tree}` | 选择输出格式。 |
+| `-o, --output PATH` | 将结果写入 JSON 文件。 |
+| `-v, --verbose` | 输出输入大小和 hex 摘要。 |
 
-## 输出格式
+### 智能探测
 
-通过 `--format` 参数控制输出。
+CLI 会尝试探测 `SimpleList(bytes)` 内是否嵌套了可解析的 Struct。
+在 `tree` 或 `json` 输出中，探测成功的节点会展开显示。
 
-### 1. Pretty (默认)
+## 注意事项
 
-打印 Python 字典风格的字符串。
-
-```text
-{0: 100, 1: 'hello'}
-```
-
-### 2. JSON
-
-输出标准 JSON。无法映射的类型（如 bytes）会转换为 Hex 字符串。
-
-```bash
-tarsio "..." --format json
-```
-
-### 3. Tree (推荐)
-
-以树状图展示结构、类型与长度信息。适合分析复杂包结构。
-
-```bash
-tarsio "..." --format tree
-```
-
-输出示例：
-
-```text
-Struct Root
-└── Struct
-    ├── [0] int: 1001
-    ├── [1] String(len=5): 'Alice'
-    └── [2] SimpleList(len=12): ...
-```
-
-## 智能探测 (Smart Probing)
-
-CLI 会自动尝试解析 `SimpleList` (vector<byte>) 内部的数据。
-如果字节数组内部包含完整的 Tars 结构，Tree 视图会自动展开它，无需手动二次解码。
-
-## 帮助信息
-
-```bash
-tarsio --help
-```
+* `ENCODED` 与 `--file` 不能同时使用。
+* 输入不是合法 hex 或二进制格式时，CLI 会以非零状态码退出。
+* `tree` 视图用于诊断，不代表业务层字段约束都已通过。

@@ -1,13 +1,35 @@
-# Struct API
+# Struct 与字段 API
 
-`tarsio.Struct` 及其相关定义。
+本页汇总 `Struct` 建模相关的公共 API。
+行为细节以类型注解、默认值和配置项的可观察结果为准。
 
-## 使用提示
+## 示例代码
 
-* [`Struct`][tarsio.Struct] 的构造参数、默认值语义与配置选项说明以其 docstring 为准。
-* [`StructConfig`][tarsio.StructConfig] 用于查看类定义后生效的配置快照（`__struct_config__`）。
-* 涉及约束与校验失败时，异常语义请参考 [`ValidationError`][tarsio.ValidationError]。
-* `Struct` 自动生成 `__replace__`、`__match_args__` 与 `__rich_repr__`，并支持 `__post_init__` 后处理钩子。
+```python
+from typing import Annotated
+from tarsio import Meta, Struct, field
+
+class User(Struct, frozen=True, omit_defaults=True):
+    id: int = field(tag=0)
+    name: str = field(tag=1)
+    score: Annotated[int, Meta(ge=0)] = field(tag=2, default=0)
+```
+
+## 核心概念
+
+* `Struct` 是 schema 入口，自动生成构造、比较与编码行为。
+* `field` 用于声明 Tag、默认值与 `default_factory`。
+* `Meta` 描述解码约束，失败时抛 `ValidationError`。
+* `StructConfig` 记录类定义时启用的配置快照。
+* `TarsDict` 是 Raw Struct 语义容器，不等同于普通 `dict`。
+
+## 注意事项
+
+* `Struct` 配置会影响构造行为与编码结果，建议在模型层统一约定。
+* `__post_init__` 中抛 `TypeError`/`ValueError` 会被视为校验失败路径。
+* 协议演进中如需严格拒绝未知字段，可使用 `forbid_unknown_tags=True`。
+
+## API 参考
 
 ::: tarsio.Struct
     options:
