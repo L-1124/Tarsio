@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyType};
+use pyo3::types::{PyAny, PyBytes, PyDict, PyType};
 
 thread_local! {
     static STDLIB_CACHE: RefCell<Option<StdlibCache>> = const { RefCell::new(None) };
@@ -11,6 +11,7 @@ thread_local! {
 
 pub(crate) struct StdlibCache {
     pub(crate) enum_type: Py<PyAny>,
+    pub(crate) builtin_bytes: Py<PyAny>,
 }
 
 pub(crate) fn with_stdlib_cache<F, R>(py: Python<'_>, f: F) -> PyResult<R>
@@ -22,10 +23,45 @@ where
         if cache_opt.is_none() {
             let enum_mod = py.import("enum")?;
             let enum_type = enum_mod.getattr("Enum")?.unbind();
+            let builtins = py.import("builtins")?;
+            let builtin_bytes = builtins.getattr("bytes")?.unbind();
 
-            *cache_opt = Some(StdlibCache { enum_type });
+            *cache_opt = Some(StdlibCache {
+                enum_type,
+                builtin_bytes,
+            });
         }
         f(cache_opt.as_ref().unwrap())
+    })
+}
+
+#[inline]
+pub(crate) fn is_buffer_like(value: &Bound<'_, PyAny>) -> bool {
+    if value.is_instance_of::<PyBytes>() {
+        return true;
+    }
+
+    // SAFETY:
+    // PyObject_CheckBuffer performs a read-only capability check on a valid PyObject pointer.
+    unsafe { ffi::PyObject_CheckBuffer(value.as_ptr()) != 0 }
+}
+
+pub(crate) fn try_coerce_buffer_to_bytes<'py>(
+    value: &Bound<'py, PyAny>,
+) -> PyResult<Option<Bound<'py, PyBytes>>> {
+    if let Ok(bytes) = value.cast::<PyBytes>() {
+        return Ok(Some(bytes.clone()));
+    }
+    if !is_buffer_like(value) {
+        return Ok(None);
+    }
+
+    with_stdlib_cache(value.py(), |cache| {
+        let bytes_obj = cache.builtin_bytes.bind(value.py()).call1((value,))?;
+        let bytes = bytes_obj
+            .cast_into::<PyBytes>()
+            .map_err(|_| PyTypeError::new_err("buffer object must be coercible to bytes"))?;
+        Ok(Some(bytes))
     })
 }
 

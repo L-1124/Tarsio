@@ -205,6 +205,22 @@ def test_bytes_simplelist() -> None:
     assert data.hex().upper() == "0D0000020102"
 
 
+def test_raw_accepts_bytearray_and_memoryview_as_simplelist() -> None:
+    """Raw 编码应将 bytearray/memoryview 统一按 SimpleList(bytes) 编码."""
+    for value in (bytearray(b"\x01\x02"), memoryview(b"\x01\x02")):
+        data = encode_raw(TarsDict({0: value}))
+        assert data.hex().upper() == "0D0000020102"
+
+
+def test_raw_accepts_non_contiguous_memoryview_as_simplelist() -> None:
+    """Raw 编码应支持非连续 memoryview 并自动拷贝."""
+    view = memoryview(bytearray(b"abcdef"))[::2]
+    data = encode_raw(TarsDict({0: view}))
+    decoded = decode_raw(data)
+    assert decoded[0] == b"ace"
+    assert isinstance(decoded[0], bytes)
+
+
 def test_simplelist_always_returns_bytes() -> None:
     """验证 SimpleList 始终返回 bytes."""
     # Construct manually: 0D 00 00 02 11 01
@@ -213,6 +229,17 @@ def test_simplelist_always_returns_bytes() -> None:
     decoded = decode_raw(data)
     assert isinstance(decoded[0], bytes)
     assert decoded[0] == b"\x11\x01"
+
+
+def test_decode_raw_accepts_buffer_protocol_input() -> None:
+    """decode_raw 应接受 bytearray 和 memoryview 输入."""
+    payload = bytes.fromhex("0D0000021101")
+
+    decoded_ba = decode_raw(bytearray(payload))
+    decoded_mv = decode_raw(memoryview(payload))
+
+    assert decoded_ba[0] == b"\x11\x01"
+    assert decoded_mv[0] == b"\x11\x01"
 
 
 def test_raw_recursion_limit() -> None:
@@ -236,3 +263,18 @@ def test_probe_struct_valid() -> None:
     assert probe_struct(bytes.fromhex("0F")) is None
     # Truncated
     assert probe_struct(bytes.fromhex("0A11")) is None
+
+
+def test_decode_schema_accepts_buffer_protocol_input() -> None:
+    """Schema decode 应接受 bytearray 和 memoryview 输入."""
+    from tarsio import Struct
+
+    class User(Struct):
+        uid: int
+
+    data = encode_raw(TarsDict({0: 7}))
+    u1 = decode(User, bytearray(data))
+    u2 = decode(User, memoryview(data))
+
+    assert u1.uid == 7
+    assert u2.uid == 7

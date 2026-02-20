@@ -43,6 +43,7 @@ class Interval(Struct):
 
 * 构造对象时不会做完整强校验。
 * 解码到 `Struct` 时会按类型注解和 `Meta` 约束校验。
+* `bytes` 类型字段支持 `bytearray` 与 `memoryview` 输入，按 bytes 语义统一处理。
 
 ## 模式匹配
 

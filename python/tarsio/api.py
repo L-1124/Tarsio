@@ -21,6 +21,7 @@ from ._core import (
 )
 
 _StructT = TypeVar("_StructT")
+_BytesLike = bytes | bytearray | memoryview
 
 __all__ = [
     "decode",
@@ -64,20 +65,20 @@ def encode(obj: Any) -> bytes:
 
 @overload
 def decode(
-    data: bytes,
+    data: _BytesLike,
     cls: type[TarsDict],
 ) -> TarsDict: ...
 
 
 @overload
 def decode(
-    data: bytes,
+    data: _BytesLike,
     cls: type[_StructT],
 ) -> _StructT: ...
 
 
 def decode(
-    data: bytes,
+    data: _BytesLike,
     cls: type = TarsDict,
 ) -> Any:
     """从 Tars 二进制数据反序列化.

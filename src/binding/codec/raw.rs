@@ -15,7 +15,7 @@ use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{Struct, StructDef, TarsDict, TypeExpr, ensure_schema_for_class};
 use crate::binding::utils::{
     PySequenceFast, check_depth, check_exact_sequence_type, class_from_type, dataclass_fields,
-    maybe_shrink_buffer, with_stdlib_cache,
+    maybe_shrink_buffer, try_coerce_buffer_to_bytes, with_stdlib_cache,
 };
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
@@ -150,9 +150,8 @@ where
         writer.write_string(tag, v);
         return Ok(());
     }
-    if value.is_instance_of::<PyBytes>() {
-        let v: &[u8] = value.extract()?;
-        writer.write_bytes(tag, v);
+    if let Some(bytes) = try_coerce_buffer_to_bytes(value)? {
+        writer.write_bytes(tag, bytes.as_bytes());
         return Ok(());
     }
     if let Ok(v) = value.extract::<i64>() {
@@ -486,7 +485,13 @@ fn encode_raw_value_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResu
 /// Raises:
 ///     ValueError: 数据格式不正确、存在 trailing bytes、或递归深度超过 MAX_DEPTH.
 #[pyfunction]
-pub fn decode_raw<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyDict>> {
+pub fn decode_raw<'py>(py: Python<'py>, data: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
+    let bytes = try_coerce_buffer_to_bytes(data)?
+        .ok_or_else(|| PyTypeError::new_err("argument 'data': expected a bytes-like object"))?;
+    decode_raw_from_bytes(py, bytes.as_bytes())
+}
+
+pub fn decode_raw_from_bytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyDict>> {
     let mut reader = TarsReader::new(data);
     let dict = decode_struct_fields(py, &mut reader, true, 0)?;
 

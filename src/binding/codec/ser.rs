@@ -9,7 +9,7 @@ use crate::binding::codec::raw::{serialize_any, serialize_struct_fields, write_t
 use crate::binding::schema::{TarsDict, TypeExpr, UnionCache, WireType, ensure_schema_for_class};
 use crate::binding::utils::{
     PySequenceFast, check_depth, check_exact_sequence_type, class_from_type, dataclass_fields,
-    maybe_shrink_buffer,
+    maybe_shrink_buffer, try_coerce_buffer_to_bytes,
 };
 use crate::binding::validation::value_matches_type;
 use crate::codec::consts::TarsType;
@@ -204,10 +204,9 @@ pub(crate) fn serialize_impl(
         }
         TypeExpr::List(inner) | TypeExpr::VarTuple(inner) => {
             if matches!(**inner, TypeExpr::Primitive(WireType::Int))
-                && val.is_instance_of::<PyBytes>()
-                && let Ok(bytes) = val.extract::<&[u8]>()
+                && let Some(bytes) = try_coerce_buffer_to_bytes(val)?
             {
-                writer.write_bytes(tag, bytes);
+                writer.write_bytes(tag, bytes.as_bytes());
                 return Ok(());
             }
 

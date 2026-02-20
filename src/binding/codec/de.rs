@@ -1,11 +1,11 @@
 use crate::binding::codec::raw::{
-    decode_any_struct_fields, decode_any_value, decode_raw, read_size_non_negative,
+    decode_any_struct_fields, decode_any_value, decode_raw_from_bytes, read_size_non_negative,
 };
 use crate::binding::error::{DeError, DeResult, PathItem};
 use crate::binding::schema::{
     Constraints, StructDef, TarsDict, TypeExpr, WireType, ensure_schema_for_class, run_post_init,
 };
-use crate::binding::utils::{check_depth, class_from_type};
+use crate::binding::utils::{check_depth, class_from_type, try_coerce_buffer_to_bytes};
 use crate::binding::validation::{
     validate_constraints_on_value, validate_length_constraints_raw,
     validate_numeric_constraints_raw,
@@ -14,7 +14,7 @@ use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PySet, PyTuple, PyType};
+use pyo3::types::{PyAny, PyBytes, PyDict, PySet, PyTuple, PyType};
 use simdutf8::basic::from_utf8;
 
 /// 将 Tars 二进制数据解码为 Struct 实例(Schema API).
@@ -33,9 +33,12 @@ use simdutf8::basic::from_utf8;
 pub fn decode<'py>(
     py: Python<'py>,
     cls: &Bound<'py, PyType>,
-    data: &[u8],
+    data: &Bound<'py, PyAny>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    decode_object(py, cls, data)
+    let bytes = try_coerce_buffer_to_bytes(data)?.ok_or_else(|| {
+        pyo3::exceptions::PyTypeError::new_err("argument 'data': expected a bytes-like object")
+    })?;
+    decode_object(py, cls, bytes.as_bytes())
 }
 
 /// 内部:将字节解码为 Tars Struct 实例.
@@ -45,7 +48,7 @@ pub fn decode_object<'py>(
     data: &[u8],
 ) -> PyResult<Bound<'py, PyAny>> {
     if cls.is_subclass_of::<TarsDict>()? {
-        let dict = decode_raw(py, data)?;
+        let dict = decode_raw_from_bytes(py, data)?;
         if cls.is(dict.get_type().as_any()) {
             return Ok(dict.into_any());
         }

@@ -1,6 +1,6 @@
 use crate::ValidationError;
 use crate::binding::core::{Constraints, TarsDict, TypeExpr, WireType};
-use crate::binding::utils::{class_from_type, dataclass_fields};
+use crate::binding::utils::{class_from_type, dataclass_fields, is_buffer_like};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyDict, PyFloat, PyFrozenSet, PySequence, PySet, PyString};
 
@@ -171,9 +171,7 @@ pub(crate) fn value_matches_type<'py>(
         TypeExpr::NamedTuple(cls, _) => Ok(value.is_instance(cls.bind(py).as_any())?),
         TypeExpr::Dataclass(cls) => Ok(value.is_instance(cls.bind(py).as_any())?),
         TypeExpr::List(inner) => {
-            if matches!(**inner, TypeExpr::Primitive(WireType::Int))
-                && value.is_instance_of::<PyBytes>()
-            {
+            if matches!(**inner, TypeExpr::Primitive(WireType::Int)) && is_buffer_like(value) {
                 return Ok(true);
             }
             Ok(value.is_instance_of::<PySequence>()

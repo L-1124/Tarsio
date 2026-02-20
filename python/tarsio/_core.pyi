@@ -15,6 +15,7 @@ from . import inspect
 _StructT = TypeVar("_StructT")
 _SM = TypeVar("_SM", bound="StructMeta")
 _FieldDefaultT = TypeVar("_FieldDefaultT")
+_BytesLike = bytes | bytearray | memoryview
 
 __all__ = [
     "NODEFAULT",
@@ -371,7 +372,7 @@ class Struct(metaclass=StructMeta):
         """
         ...
     @classmethod
-    def decode(cls: type[_StructT], data: bytes) -> _StructT:
+    def decode(cls: type[_StructT], data: _BytesLike) -> _StructT:
         """将 Tars 二进制数据解码为当前类实例.
 
         Args:
@@ -422,7 +423,7 @@ def encode(obj: Any) -> bytes:
     """
     ...
 
-def decode(cls: type[_StructT], data: bytes) -> _StructT:
+def decode(cls: type[_StructT], data: _BytesLike) -> _StructT:
     """从 Tars 二进制数据反序列化为类实例.
 
     Args:
@@ -451,7 +452,7 @@ def encode_raw(obj: Any) -> bytes:
     """
     ...
 
-def decode_raw(data: bytes) -> TarsDict:
+def decode_raw(data: _BytesLike) -> TarsDict:
     """将字节解码为 TarsDict.
 
     Args:

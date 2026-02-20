@@ -26,11 +26,14 @@ assert isinstance(raw, TarsDict)
 * 业务对象优先使用 `Struct`。
 * `User.decode(data)` 返回类型稳定,适合服务主链路。
 * 字段约束失败时抛 `ValidationError`。
+* `bytes` 字段可直接接收 `bytearray`、`memoryview`，统一按 `SimpleList(bytes)` 编码。
+* 解码输入支持 bytes-like（`bytes`、`bytearray`、`memoryview`）。
 
 ### Raw 模式用于边界输入
 
 * `decode(data)` 返回 `TarsDict`,适合动态协议或网关透传。
 * Raw 模式下普通 `dict` 按 `Map` 语义处理,`TarsDict` 按 `Struct` 语义处理。
+* Raw/Any 路径中 `bytearray`、`memoryview` 也按 `bytes` 语义编码。
 
 ### 调试与可视化
 
@@ -43,3 +46,4 @@ assert isinstance(raw, TarsDict)
 * 对外部输入建议先做大小限制,再进入解码。
 * 业务逻辑不要依赖 `decode_trace` 输出格式。
 * 当模型稳定后,优先走 schema 模式,减少运行时分派。
+* 非连续 `memoryview` 会先拷贝为连续 `bytes` 再编码。

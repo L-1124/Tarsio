@@ -32,6 +32,8 @@ assert restored.id == 7
 | `bytes` | `SimpleList` | 对应 `vector<byte>`。 |
 | `Any` | 运行时分派 | 根据实际值决定编码分支。 |
 
+`bytes` 语义同时接受实现 buffer protocol 的输入（如 `bytearray`、`memoryview`），编码结果与 `bytes` 一致。
+
 ### 容器类型
 
 | Python 类型 | 编码语义 | 解码结果 |

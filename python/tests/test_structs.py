@@ -829,6 +829,33 @@ def test_simple_list_wire_format() -> None:
     assert data.hex().upper().startswith("0D000003")
 
 
+def test_bytes_field_accepts_buffer_protocol_inputs() -> None:
+    """Bytes 字段应接受 bytearray/memoryview 并编码为 SimpleList."""
+
+    class B(Struct):
+        v: Annotated[bytes, 0]
+
+    for value in (bytearray(b"abc"), memoryview(b"abc")):
+        data = encode(B(value))  # pyright: ignore[reportArgumentType]
+        assert data.hex().upper().startswith("0D000003")
+        restored = decode(B, data)
+        assert restored.v == b"abc"
+        assert isinstance(restored.v, bytes)
+
+
+def test_bytes_field_accepts_non_contiguous_memoryview() -> None:
+    """非连续 memoryview 应自动拷贝后按 bytes 语义编码."""
+
+    class B(Struct):
+        v: Annotated[bytes, 0]
+
+    view = memoryview(bytearray(b"abcdef"))[::2]
+    data = encode(B(view))  # pyright: ignore[reportArgumentType]
+    restored = decode(B, data)
+    assert restored.v == b"ace"
+    assert isinstance(restored.v, bytes)
+
+
 def test_any_simplelist_auto_utf8_and_passthrough() -> None:
     """Any 字段在遇到 SimpleList 时应保留为 bytes (不再自动转 str)."""
 
@@ -840,6 +867,12 @@ def test_any_simplelist_auto_utf8_and_passthrough() -> None:
 
     # 修改: auto_simplelist 移除后，应始终返回 bytes
     assert utf8_decoded.val == b"hello"
+
+    for value in (bytearray(b"hello"), memoryview(b"hello")):
+        payload = encode_raw(TarsDict({0: value}))
+        decoded = decode(AnyBox, payload)
+        assert decoded.val == b"hello"
+        assert isinstance(decoded.val, bytes)
 
 
 def test_nested_struct_simplelist_wire_and_roundtrip() -> None:
