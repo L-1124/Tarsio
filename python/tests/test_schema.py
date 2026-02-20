@@ -140,6 +140,23 @@ def test_duplicate_tag_raises() -> None:
             b: Annotated[int, 1]
 
 
+def test_tag_upper_limit_raises_error() -> None:
+    """Tag 超过上限 255 时抛出 ValueError / TypeError."""
+    # 根据目前的具体实现可能抛出 TypeError (Schema构建时) 或者是 ValueError
+    with pytest.raises((TypeError, ValueError)):
+
+        class User(Struct):
+            a: Annotated[int, 256]
+
+
+def test_tag_negative_raises_error() -> None:
+    """负数 Tag 时抛出 ValueError / TypeError."""
+    with pytest.raises((TypeError, ValueError)):
+
+        class User(Struct):
+            a: Annotated[int, -1]
+
+
 def test_meta_constraints_with_field_tag_is_allowed() -> None:
     """Meta 约束与 field(tag=...) 组合应允许正常解码."""
 

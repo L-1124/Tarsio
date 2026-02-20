@@ -55,6 +55,24 @@ def test_encode_string_values(val: str, expected_hex: str) -> None:
     assert data.hex().upper() == expected_hex
 
 
+def test_encode_decode_extra_long_string() -> None:
+    """测试超长字符串的编解码 (String4 边界及以上)."""
+    # 临界点: 255 字节 (String1 最大容量)
+    s_255 = "a" * 255
+    data_255 = encode_raw(TarsDict({1: s_255}))
+    assert decode_raw(data_255)[1] == s_255
+
+    # 临界点以上: 256 字节 (进入 String4)
+    s_256 = "b" * 256
+    data_256 = encode_raw(TarsDict({1: s_256}))
+    assert decode_raw(data_256)[1] == s_256
+
+    # 超大字符串 (1MB)
+    s_1mb = "c" * (1024 * 1024)
+    data_1mb = encode_raw(TarsDict({1: s_1mb}))
+    assert decode_raw(data_1mb)[1] == s_1mb
+
+
 def test_encode_two_fields_struct() -> None:
     """测试多字段结构体编码顺序与 Tag."""
     # {0: 1, 1: "a"}

@@ -322,6 +322,28 @@ def test_field_accepts_nodefault_sentinel() -> None:
         D()  # pyright: ignore[reportCallIssue]
 
 
+def test_empty_struct_behavior() -> None:
+    """空结构体应编码为空字节，也可从空字节解码."""
+
+    class EmptyStruct(Struct):
+        pass
+
+    with pytest.raises(TypeError, match="Cannot instantiate abstract schema class"):
+        EmptyStruct()
+
+
+def test_all_default_struct_behavior() -> None:
+    """全默认值结构体从空字节解码应取得全默认值."""
+
+    class AllDefault(Struct):
+        i: Annotated[int, 0] = 0
+        s: Annotated[str, 1] = ""
+
+    obj = decode(AllDefault, b"")
+    assert obj.i == 0
+    assert obj.s == ""
+
+
 def test_missing_non_optional_field_without_default_raises() -> None:
     """非 Optional 且无默认值的字段在解码缺失时应抛出异常."""
 
@@ -379,6 +401,27 @@ def test_recursive_struct_deep_nesting() -> None:
         curr_r = curr_r.next
         count += 1
     assert count == 10
+
+
+def test_struct_recursion_limit_exceeded() -> None:
+    """结构体编码/解码递归深度应被限制."""
+    head = Node(0)
+    curr = head
+    for i in range(1, 105):
+        new_node = Node(i)
+        curr.next = new_node
+        curr = new_node
+
+    with pytest.raises(ValueError, match="Recursion limit"):
+        encode(head)
+
+
+def test_struct_decode_recursion_limit_exceeded() -> None:
+    """验证解码结构体时的深层嵌套字典导致递归超限."""
+    # Node's next field is tag 1 (StructBegin is 1A), its val is tag 0 (Int1 val 0 is 00 00)
+    data = bytes.fromhex("00001A" * 105 + "0B" * 105)
+    with pytest.raises(ValueError, match="Recursion limit"):
+        decode(Node, data)
 
 
 # ==========================================
