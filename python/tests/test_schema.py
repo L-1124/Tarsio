@@ -1,6 +1,6 @@
 """测试 Schema/Meta/Inspect 相关行为."""
 
-from typing import Annotated, Optional, cast
+from typing import Annotated, Generic, Optional, TypeVar, cast
 
 import pytest
 from tarsio import inspect as tinspect
@@ -311,6 +311,34 @@ def test_struct_info_fields_and_order() -> None:
     info = tinspect.struct_info(Sample)
     assert info is not None
     assert [f.name for f in info.fields] == ["a", "b"]
+
+
+def test_struct_info_generic_template_returns_fields() -> None:
+    """未具体化泛型模板的 struct_info 应返回字段信息."""
+    t_type = TypeVar("t_type")
+
+    class Box(Struct, Generic[t_type]):
+        value: Annotated[t_type, 0]
+
+    info = tinspect.struct_info(Box)
+    assert info is not None
+    assert info.fields[0].name == "value"
+
+
+def test_struct_info_generic_template_and_concrete_diff() -> None:
+    """模板与具体化泛型的字段类型应反映差异."""
+    t_type = TypeVar("t_type")
+
+    class Box(Struct, Generic[t_type]):
+        value: Annotated[t_type, 0]
+
+    template_info = tinspect.struct_info(Box)
+    assert template_info is not None
+    assert template_info.fields[0].type.kind == "any"
+
+    concrete_info = tinspect.struct_info(Box[int])
+    assert concrete_info is not None
+    assert concrete_info.fields[0].type.kind == "int"
 
 
 def test_struct_info_meta_constraints() -> None:

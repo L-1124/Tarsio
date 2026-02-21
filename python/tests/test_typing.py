@@ -19,15 +19,18 @@ from typing import (
     Annotated,
     Any,
     Final,
+    Generic,
     Literal,
     NewType,
     Optional,
     TypeAlias,
+    TypeVar,
     Union,
     cast,
 )
 
-from tarsio._core import Meta, Struct, decode, encode, inspect
+import pytest
+from tarsio._core import Meta, Struct, ValidationError, decode, encode, inspect
 from typing_extensions import (
     NamedTuple,
     NotRequired,
@@ -328,6 +331,53 @@ def test_newtype_final_alias() -> None:
     assert dec.n == 1
     assert dec.f == 2
     assert dec.a == 3
+
+
+def test_generic_typevar_bound_runtime_validation() -> None:
+    """未具体化 TypeVar(bound=...) 应按 bound 做运行时校验."""
+    t_bound = TypeVar("t_bound", bound=int)
+
+    class Box(Struct, Generic[t_bound]):
+        value: Annotated[t_bound, 0]
+
+    ok = Box(value=1)
+    assert ok.value == 1
+
+    with pytest.raises(ValidationError, match="type mismatch"):
+        Box(value=cast(Any, "x"))
+
+
+def test_generic_typevar_constraints_runtime_validation() -> None:
+    """未具体化 TypeVar(constraints) 应按约束联合类型校验."""
+    t_limited = TypeVar("t_limited", int, str)
+
+    class Box(Struct, Generic[t_limited]):
+        value: Annotated[t_limited, 0]
+
+    assert Box(value=1).value == 1
+    assert Box(value="x").value == "x"
+
+    with pytest.raises(ValidationError, match="type mismatch"):
+        Box(value=cast(Any, 1.2))
+
+
+def test_parametrized_generic_struct_is_strict_and_cached() -> None:
+    """具体化泛型应严格校验且相同参数命中缓存."""
+    t_any = TypeVar("t_any")
+
+    class Box(Struct, Generic[t_any]):
+        value: Annotated[t_any, 0]
+
+    box_int = Box[int]
+    box_int_2 = Box[int]
+    box_str = Box[str]
+
+    assert box_int is box_int_2
+    assert box_int is not box_str
+
+    assert box_int(value=3).value == 3
+    with pytest.raises(ValidationError, match="type mismatch"):
+        box_int(value=cast(Any, "3"))
 
 
 # ==========================================

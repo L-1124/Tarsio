@@ -3,7 +3,7 @@
 验证 Struct 构造、配置、默认值、演进兼容性等 API 契约.
 """
 
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Generic, Optional, TypeVar
 
 import pytest
 from tarsio._core import (
@@ -295,13 +295,13 @@ def test_non_empty_mutable_literal_default_raises_type_error() -> None:
 def test_field_rejects_both_default_and_default_factory() -> None:
     """Field 同时传 default 与 default_factory 应抛 TypeError."""
     with pytest.raises(TypeError, match="cannot specify both"):
-        field(default=1, default_factory=list)
+        field(default=1, default_factory=list)  # pyright: ignore[reportCallIssue]
 
 
 def test_field_rejects_non_callable_default_factory() -> None:
     """Field 的 default_factory 不可调用时应抛 TypeError."""
     with pytest.raises(TypeError, match="must be a callable"):
-        field(default_factory=123)
+        field(default_factory=123)  # pyright: ignore[reportArgumentType]
 
 
 def test_field_rejects_invalid_tag() -> None:
@@ -388,6 +388,31 @@ def test_empty_struct_behavior() -> None:
 
     with pytest.raises(TypeError, match="Cannot instantiate abstract schema class"):
         EmptyStruct()
+
+
+def test_generic_struct_template_can_instantiate() -> None:
+    """泛型 Struct 模板类应可直接实例化."""
+    t_type = TypeVar("t_type")
+
+    class Box(Struct, Generic[t_type]):
+        value: Annotated[t_type, 0]
+
+    obj = Box(value=123)
+    assert obj.value == 123
+
+
+def test_struct_with_generic_base_can_instantiate() -> None:
+    """Struct + Generic 基类多继承不应被误判为抽象类."""
+    t_type = TypeVar("t_type")
+
+    class Carrier(Generic[t_type]):
+        pass
+
+    class Wrapped(Struct, Carrier[t_type]):
+        value: Annotated[t_type, 0]
+
+    obj = Wrapped(value="ok")
+    assert obj.value == "ok"
 
 
 def test_all_default_struct_behavior() -> None:

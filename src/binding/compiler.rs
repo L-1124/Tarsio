@@ -19,12 +19,6 @@ pub fn compile_schema_from_info<'py>(
     info: &Bound<'py, PyAny>,
     config: SchemaConfig,
 ) -> PyResult<Option<Arc<StructDef>>> {
-    if let Ok(params) = cls.getattr("__parameters__")
-        && let Ok(tuple) = params.cast::<PyTuple>()
-        && !tuple.is_empty()
-    {
-        return Ok(None);
-    }
     if info.is_none() {
         return Ok(None);
     }

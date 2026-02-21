@@ -222,10 +222,6 @@ pub fn introspect_struct_fields<'py>(
     cls: &Bound<'py, PyType>,
 ) -> PyResult<Option<Vec<FieldInfoIR>>> {
     let ctx = IntrospectionContext::new(py)?;
-    if is_generic_template(cls)? {
-        return Ok(None);
-    }
-
     if !detect_struct_kind_with_ctx(py, cls, &ctx)? {
         return Ok(None);
     }
@@ -262,15 +258,6 @@ fn introspect_type_info_ir_with_ctx<'py>(
 }
 
 type GenericOrigin<'py> = (Option<Bound<'py, PyAny>>, Option<Bound<'py, PyTuple>>);
-
-fn is_generic_template(cls: &Bound<'_, PyType>) -> PyResult<bool> {
-    if let Ok(params) = cls.getattr(intern!(cls.py(), "__parameters__"))
-        && let Ok(tuple) = params.cast::<PyTuple>()
-    {
-        return Ok(!tuple.is_empty());
-    }
-    Ok(false)
-}
 
 fn resolve_generic_origin<'py>(cls: &Bound<'py, PyType>) -> PyResult<GenericOrigin<'py>> {
     if let (Ok(origin), Ok(args)) = (
@@ -330,7 +317,12 @@ fn build_typevar_map<'py>(
         && let Ok(params) = params_any.cast::<PyTuple>()
     {
         for (param, arg) in params.iter().zip(args.iter()) {
-            map.insert(param.as_ptr() as usize, arg);
+            let mapped = if arg.is_instance(&ctx.typevar_cls)? {
+                resolve_typevar_fallback(py, &arg, ctx)?
+            } else {
+                arg
+            };
+            map.insert(param.as_ptr() as usize, mapped);
         }
         return Ok(map);
     }
@@ -340,7 +332,8 @@ fn build_typevar_map<'py>(
     {
         for param in params.iter() {
             if param.is_instance(&ctx.typevar_cls)? {
-                map.insert(param.as_ptr() as usize, param);
+                let fallback = resolve_typevar_fallback(py, &param, ctx)?;
+                map.insert(param.as_ptr() as usize, fallback);
             }
         }
     }
@@ -1080,17 +1073,40 @@ fn is_dataclass_type<'py>(
 }
 
 fn resolve_typevar<'py>(
-    _py: Python<'py>,
+    py: Python<'py>,
     tp: &Bound<'py, PyAny>,
     typevar_map: &HashMap<usize, Bound<'py, PyAny>>,
     ctx: &IntrospectionContext<'py>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    if tp.is_instance(&ctx.typevar_cls)?
-        && let Some(mapped) = typevar_map.get(&(tp.as_ptr() as usize))
-    {
-        return Ok(mapped.clone());
+    if tp.is_instance(&ctx.typevar_cls)? {
+        if let Some(mapped) = typevar_map.get(&(tp.as_ptr() as usize)) {
+            return Ok(mapped.clone());
+        }
+        return resolve_typevar_fallback(py, tp, ctx);
     }
     Ok(tp.clone())
+}
+
+fn resolve_typevar_fallback<'py>(
+    py: Python<'py>,
+    tp: &Bound<'py, PyAny>,
+    ctx: &IntrospectionContext<'py>,
+) -> PyResult<Bound<'py, PyAny>> {
+    if let Ok(bound) = tp.getattr(intern!(py, "__bound__"))
+        && !bound.is_none()
+    {
+        return Ok(bound);
+    }
+
+    if let Ok(constraints_any) = tp.getattr(intern!(py, "__constraints__"))
+        && let Ok(constraints) = constraints_any.cast::<PyTuple>()
+        && !constraints.is_empty()
+    {
+        let union = ctx.union_origin.get_item(constraints)?;
+        return Ok(union);
+    }
+
+    Ok(ctx.any_type.clone())
 }
 
 fn lookup_default_value<'py>(

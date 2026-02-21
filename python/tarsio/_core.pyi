@@ -42,6 +42,12 @@ NODEFAULT: Final[object]
 def field(
     *,
     tag: int | None = None,
+    wrap_simplelist: bool = ...,
+) -> Any: ...
+@overload
+def field(
+    *,
+    tag: int | None = None,
     default: Any,
     wrap_simplelist: bool = ...,
 ) -> Any: ...
@@ -351,6 +357,15 @@ class Struct(metaclass=StructMeta):
         **kwargs: Any,
     ) -> None:
         """配置 Struct 子类行为."""
+        ...
+    @classmethod
+    def __class_getitem__(cls, params: Any) -> Any:
+        """返回参数化后的 Struct 类型.
+
+        - 未具体化模板允许实例化，TypeVar 会按 bound/constraints/Any 进行运行时解释。
+        - 具体化参数（如 `Box[int]`）会生成可缓存复用的具体类型，并参与严格校验。
+        - 若参数中仍包含未解析 TypeVar，则返回通用 GenericAlias 以支持继续组合泛型。
+        """
         ...
     def encode(self) -> bytes:
         """将当前实例编码为 Tars 二进制数据.
