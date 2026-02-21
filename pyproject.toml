@@ -1,6 +1,6 @@
 [project]
 name = "tarsio"
-version = "0.5.0"
+version = "0.5.1"
 description = "Fast Tars/JCE protocol implementation for Python, powered by Rust"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
