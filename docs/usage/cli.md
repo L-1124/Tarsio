@@ -1,7 +1,6 @@
 # CLI 工具
 
 `tarsio` CLI 用于解析和查看 Tars 二进制数据。
-它支持 hex 字符串、文件输入，以及 `pretty/json/tree` 三种输出格式。
 
 ## 示例代码
 
@@ -63,10 +62,3 @@ pip install "tarsio[cli]"
 * `on`: 强制探测，仍受深度和节点上限保护。
 
 在 `tree` 或 `json` 输出中，探测成功的节点会展开显示。
-
-## 注意事项
-
-* `ENCODED` 与 `--file` 不能同时使用。
-* `--file-format hex` 要求输入为 UTF-8 文本且内容是合法 hex。
-* 输入不是合法 hex 或二进制格式时，CLI 会以非零状态码退出。
-* `tree` 视图用于诊断，不代表业务层字段约束都已通过。

@@ -1,7 +1,6 @@
 # 类型内省
 
 `tarsio.inspect` 用于在运行时查看类型被解析后的结果。
-它适合做 schema 调试、自动文档生成和动态校验前置检查。
 
 ## 示例代码
 
@@ -65,4 +64,3 @@ assert node_type.kind == "struct"
 
 * 不支持的类型会抛 `TypeError`，建议在应用启动阶段提前检查。
 * `struct_info` 支持未具体化泛型模板。TypeVar 会按 `bound`、`constraints` 或 `Any` 规则降解后展示。
-* 内省输出用于分析和工具集成，不应替代业务输入校验。

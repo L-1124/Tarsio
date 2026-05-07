@@ -1,8 +1,5 @@
 # Structs
 
-`Struct` 是 Tarsio 推荐的数据建模方式。
-本页仅覆盖当前版本已支持的结构体能力。
-
 ## 默认值
 
 支持静态默认值和 `default_factory`。

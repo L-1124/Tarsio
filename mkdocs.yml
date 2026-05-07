@@ -54,7 +54,6 @@ nav:
     - 支持类型: usage/types.md
     - 结构体建模: usage/structs.md
     - 字段约束: usage/constraints.md
-    - Schema 演进: usage/schema_evolution.md
     - 类型内省: usage/inspect.md
   - CLI 工具: usage/cli.md
   - API 参考:
@@ -63,7 +62,6 @@ nav:
     - Functions and Exceptions: api/functions.md
   - 协议与排错:
     - Tars 协议概览: protocol.md
-    - 已知问题: known_issues.md
 
 markdown_extensions:
   - pymdownx.highlight:
