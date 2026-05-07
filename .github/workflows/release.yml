@@ -75,7 +75,7 @@ jobs:
             target: i686
             python-architecture: x86
             # 32位环境通常需要显式指定解释器以避免混淆
-            interpreter: 3.10 3.11 3.12 3.13
+            interpreter: 3.10 3.11 3.12 3.13 3.14
 
         exclude:
           - target: undefined
@@ -99,7 +99,7 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           # 显式覆盖支持的 Python 版本
-          args: --release --out dist --interpreter ${{ matrix.interpreter || '3.10 3.11 3.12 3.13' }}
+          args: --release --out dist --interpreter ${{ matrix.interpreter || '3.10 3.11 3.12 3.13 3.14' }}
           sccache: "true"
 
       - name: check artifacts
