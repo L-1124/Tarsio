@@ -14,8 +14,8 @@
 
 ```bash
 uv sync                  # 安装依赖
-uv run maturin develop   # 编译 Rust 扩展并安装到 venv
-uv run pytest            # 运行 Python 测试
+uv run pytest            # 运行 Python 测试；开发态会按需构建/加载 Rust 扩展
+uv run maturin develop   # 手动刷新 Rust 扩展到 venv（通常无需单独执行）
 cargo test               # 运行 Rust 测试
 ```
 

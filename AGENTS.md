@@ -26,7 +26,7 @@ Tarsio 项目是 Rust 核心驱动的高性能 Python Tars (JCE) 协议库。此
 ### Setup commands
 
 * 安装依赖：`uv sync`
-* 编译 Rust 扩展：`uv run maturin develop`
+* 开发态 Python 命令：`uv run ...` 会在需要时通过 maturin 构建/加载 Rust 扩展；通常无需单独执行 `uv run maturin develop`。
 * 运行 Python 测试：`uv run pytest`
 * 运行 Rust 测试：`cargo test`
 
@@ -107,5 +107,5 @@ Tarsio 项目是 Rust 核心驱动的高性能 Python Tars (JCE) 协议库。此
 * 每次回答都以 `皇上启奏:` 开头。
 * **核心规约**：遵循 `CONTRIBUTING.md` 中的详细规约。**在执行任务前，必须完整阅读该指南以确保合规。**
 * 禁止在 Python 测试中模拟 Rust WireType，除非是明确的协议基线测试。
-* 修改 Rust 代码后，必须运行 `uv run maturin develop` 更新扩展。
+* 修改 Rust 代码后，优先直接运行目标 `uv run ...` 验证命令；仅在需要手动刷新开发环境时运行 `uv run maturin develop`。
 * 仅在明确要求时，才能 `git commit` 或 `git push`。
