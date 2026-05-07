@@ -64,9 +64,32 @@ pub fn _tarsio_structmeta_new<'py>(
     }
 
     let mut field_names: Vec<String> = Vec::new();
-    if let Some(ann_any) = namespace.get_item("__annotations__")?
+    let annotations = if let Some(ann_any) = namespace.get_item("__annotations__")?
         && let Ok(ann) = ann_any.cast::<PyDict>()
     {
+        Some(ann.clone())
+    } else {
+        py.import("annotationlib").ok().and_then(|annotationlib| {
+            let annotate = annotationlib
+                .call_method1("get_annotate_from_class_namespace", (namespace,))
+                .ok()?;
+            if annotate.is_none() {
+                return None;
+            }
+            let format = annotationlib
+                .getattr("Format")
+                .ok()?
+                .getattr("FORWARDREF")
+                .ok()?;
+            annotationlib
+                .call_method("call_annotate_function", (annotate, format), None)
+                .ok()?
+                .cast::<PyDict>()
+                .ok()
+                .cloned()
+        })
+    };
+    if let Some(ann) = annotations {
         for k in ann.keys() {
             let s = k.extract::<String>()?;
             if s.starts_with("__") {
