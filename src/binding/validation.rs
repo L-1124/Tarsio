@@ -1,5 +1,6 @@
 use crate::ValidationError;
-use crate::binding::core::{Constraints, TarsDict, TypeExpr, WireType};
+use crate::binding::ir::{Constraints, TypeExpr, WireType};
+use crate::binding::schema::TarsDict;
 use crate::binding::utils::{class_from_type, dataclass_fields, is_buffer_like};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyDict, PyFloat, PyFrozenSet, PySequence, PySet, PyString};
@@ -162,6 +163,7 @@ pub(crate) fn value_matches_type<'py>(
             WireType::String => Ok(value.is_instance_of::<PyString>()),
             _ => Ok(false),
         },
+        TypeExpr::Bytes => Ok(is_buffer_like(value)),
         TypeExpr::Enum(enum_cls, _) => Ok(value.is_instance(enum_cls.bind(py).as_any())?),
         TypeExpr::Struct(cls_obj) => {
             let cls = class_from_type(py, cls_obj);
@@ -210,6 +212,9 @@ pub(crate) fn value_matches_type<'py>(
             Ok(value.is_instance_of::<PySet>() || value.is_instance_of::<PyFrozenSet>())
         }
         TypeExpr::Map(_, _) => {
+            Ok(value.is_instance_of::<PyDict>() || dataclass_fields(value)?.is_some())
+        }
+        TypeExpr::TypedDict => {
             Ok(value.is_instance_of::<PyDict>() || dataclass_fields(value)?.is_some())
         }
         TypeExpr::Optional(inner) => {

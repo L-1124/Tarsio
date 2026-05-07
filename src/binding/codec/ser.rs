@@ -6,7 +6,8 @@ use std::cell::RefCell;
 use bytes::BufMut;
 
 use crate::binding::codec::raw::{serialize_any, serialize_struct_fields, write_tarsdict_fields};
-use crate::binding::schema::{TarsDict, TypeExpr, UnionCache, WireType, ensure_schema_for_class};
+use crate::binding::ir::{StructDef, TypeExpr, UnionCache, WireType};
+use crate::binding::schema::{TarsDict, ensure_schema_for_class};
 use crate::binding::utils::{
     PySequenceFast, check_depth, check_exact_sequence_type, class_from_type, dataclass_fields,
     maybe_shrink_buffer, try_coerce_buffer_to_bytes,
@@ -106,7 +107,7 @@ pub fn encode_object_to_pybytes(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyRes
 
 pub(crate) fn encode_struct_payload_to_vec(
     obj: &Bound<'_, PyAny>,
-    def: &crate::binding::schema::StructDef,
+    def: &StructDef,
     depth: usize,
 ) -> PyResult<Vec<u8>> {
     let mut payload = Vec::with_capacity(64);
@@ -159,6 +160,11 @@ pub(crate) fn serialize_impl(
         TypeExpr::Any => {
             serialize_any(writer, tag, val, depth + 1, &serialize_impl_standard)?;
         }
+        TypeExpr::Bytes => {
+            let bytes = try_coerce_buffer_to_bytes(val)?
+                .ok_or_else(|| PyTypeError::new_err("Bytes value must be bytes-like"))?;
+            writer.write_bytes(tag, bytes.as_bytes());
+        }
         TypeExpr::NoneType => {
             return Err(PyTypeError::new_err(
                 "NoneType must be encoded via Optional or Union",
@@ -176,6 +182,16 @@ pub(crate) fn serialize_impl(
             serialize_list_like(writer, tag, type_expr, val, depth)?;
         }
         TypeExpr::Map(_, _) => serialize_map_like(writer, tag, type_expr, val, depth)?,
+        TypeExpr::TypedDict => serialize_map_like(
+            writer,
+            tag,
+            &TypeExpr::Map(
+                Box::new(TypeExpr::Primitive(WireType::String)),
+                Box::new(TypeExpr::Any),
+            ),
+            val,
+            depth,
+        )?,
         TypeExpr::Optional(_) => serialize_optional(writer, tag, type_expr, val, depth)?,
     }
     Ok(())

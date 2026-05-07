@@ -4,8 +4,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::binding::core::{
-    Constraints, FieldDef, SCHEMA_ATTR, SCHEMA_CACHE, Schema, SchemaConfig, StructConfig,
-    StructDef, StructMetaData, TypeExpr, UnionCache, WireType, is_nodefault, nodefault_singleton,
+    SCHEMA_ATTR, SCHEMA_CACHE, Schema, SchemaConfig, StructConfig, is_nodefault,
+    nodefault_singleton,
+};
+use crate::binding::ir::{
+    Constraints, FieldDef, StructDef, StructMetaData, TypeExpr, UnionCache, WireType,
 };
 use crate::binding::parse::{ConstraintsIR, TypeInfoIR, introspect_struct_fields};
 
@@ -229,13 +232,10 @@ fn type_info_ir_to_type_expr(py: Python<'_>, typ: &TypeInfoIR) -> PyResult<TypeE
         TypeInfoIR::Str => Ok(TypeExpr::Primitive(WireType::String)),
         TypeInfoIR::Float => Ok(TypeExpr::Primitive(WireType::Double)),
         TypeInfoIR::Bool => Ok(TypeExpr::Primitive(WireType::Bool)),
-        TypeInfoIR::Bytes => Ok(TypeExpr::List(Box::new(TypeExpr::Primitive(WireType::Int)))),
+        TypeInfoIR::Bytes => Ok(TypeExpr::Bytes),
         TypeInfoIR::Any => Ok(TypeExpr::Any),
         TypeInfoIR::NoneType => Ok(TypeExpr::NoneType),
-        TypeInfoIR::TypedDict => Ok(TypeExpr::Map(
-            Box::new(TypeExpr::Primitive(WireType::String)),
-            Box::new(TypeExpr::Any),
-        )),
+        TypeInfoIR::TypedDict => Ok(TypeExpr::TypedDict),
         TypeInfoIR::Dataclass(cls) => Ok(TypeExpr::Dataclass(cls.clone_ref(py))),
         TypeInfoIR::NamedTuple(cls, items) => {
             let mut out = Vec::with_capacity(items.len());

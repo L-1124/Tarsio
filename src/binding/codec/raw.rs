@@ -12,7 +12,8 @@ use smallvec::SmallVec;
 
 use crate::binding::codec::ser;
 use crate::binding::error::{DeError, DeResult, PathItem};
-use crate::binding::schema::{StructDef, TarsDict, TypeExpr, ensure_schema_for_class};
+use crate::binding::ir::{StructDef, TypeExpr};
+use crate::binding::schema::{TarsDict, ensure_schema_for_class};
 use crate::binding::utils::{
     PySequenceFast, check_depth, check_exact_sequence_type, dataclass_fields, maybe_shrink_buffer,
     try_coerce_buffer_to_bytes, with_stdlib_cache,
@@ -266,7 +267,16 @@ pub(crate) fn read_size_non_negative(reader: &mut TarsReader, context: &str) -> 
     if len < 0 {
         return Err(DeError::new(format!("Invalid {} size", context)));
     }
-    Ok(len as usize)
+
+    let len = len as usize;
+    let remaining = reader.remaining().len();
+    if len > remaining {
+        return Err(DeError::new(format!(
+            "Invalid {} size: declared length {} exceeds remaining bytes {}",
+            context, len, remaining
+        )));
+    }
+    Ok(len)
 }
 
 fn read_simple_list_bytes<'a>(reader: &'a mut TarsReader) -> DeResult<&'a [u8]> {

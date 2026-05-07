@@ -3,7 +3,8 @@ use pyo3::types::{PyBytes, PyDict, PyList, PyType};
 use simdutf8::basic::from_utf8;
 use std::sync::Arc;
 
-use crate::binding::schema::{StructDef, TypeExpr, ensure_schema_for_class};
+use crate::binding::ir::{StructDef, TypeExpr};
+use crate::binding::schema::ensure_schema_for_class;
 use crate::codec::consts::TarsType;
 use crate::codec::reader::TarsReader;
 

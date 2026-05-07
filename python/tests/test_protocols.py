@@ -207,6 +207,20 @@ def test_decode_skips_unknown_tag() -> None:
     assert user.uid == 1
 
 
+def test_decode_unknown_tag_malformed_payload_raises_value_error() -> None:
+    """Schema 解码未知字段损坏时应抛出 ValueError."""
+    from typing import Annotated
+
+    from tarsio import Struct
+
+    class User(Struct):
+        uid: Annotated[int, 0]
+
+    data = bytes.fromhex("00011D01")
+    with pytest.raises(ValueError, match="Failed to skip unknown tag 1"):
+        decode(User, data)
+
+
 def test_decode_with_type_mismatch_raises_value_error() -> None:
     """类型不匹配抛出异常."""
     from typing import Annotated
@@ -245,6 +259,20 @@ def test_encode_raw_list_complex() -> None:
     val = TarsDict({0: [1]})
     data = encode_raw(val)
     assert data.hex().upper() == "0900010001"
+
+
+def test_decode_raw_rejects_list_size_exceeding_remaining_bytes() -> None:
+    """Raw 解码应拒绝超过剩余字节的 List 长度."""
+    data = bytes.fromhex("090005")
+    with pytest.raises(ValueError, match="declared length 5 exceeds remaining bytes 0"):
+        decode_raw(data)
+
+
+def test_decode_raw_rejects_map_size_exceeding_remaining_bytes() -> None:
+    """Raw 解码应拒绝超过剩余字节的 Map 长度."""
+    data = bytes.fromhex("080005")
+    with pytest.raises(ValueError, match="declared length 5 exceeds remaining bytes 0"):
+        decode_raw(data)
 
 
 def test_decode_raw_max_depth_exceeded() -> None:

@@ -2,9 +2,9 @@ use crate::binding::codec::raw::{
     decode_any_struct_fields, decode_any_value, decode_raw_from_bytes, read_size_non_negative,
 };
 use crate::binding::error::{DeError, DeResult, PathItem};
-use crate::binding::schema::{
-    Constraints, StructDef, TarsDict, TypeExpr, WireType, ensure_schema_for_class, run_post_init,
-};
+use crate::binding::instantiate::run_post_init;
+use crate::binding::ir::{Constraints, StructDef, TypeExpr, WireType};
+use crate::binding::schema::{TarsDict, ensure_schema_for_class};
 use crate::binding::utils::{check_depth, class_from_type, try_coerce_buffer_to_bytes};
 use crate::binding::validation::{
     validate_constraints_on_value, validate_length_constraints_raw,
@@ -231,7 +231,9 @@ fn deserialize_struct<'py>(
                     tag
                 )));
             }
-            let _ = reader.skip_field(type_id);
+            reader
+                .skip_field(type_id)
+                .map_err(|e| DeError::new(format!("Failed to skip unknown tag {}: {}", tag, e)))?;
         }
     }
 
@@ -306,6 +308,7 @@ fn deserialize_value<'py>(
             deserialize_primitive(py, reader, type_id, wire_type, constraints)
         }
         TypeExpr::Any => decode_any_value(py, reader, type_id, depth),
+        TypeExpr::Bytes => deserialize_bytes_value(py, reader, type_id, constraints),
         TypeExpr::NoneType => Ok(py.None().into_bound(py)),
         TypeExpr::Enum(enum_cls, inner) => {
             deserialize_enum(py, reader, type_id, enum_cls, inner, depth)
@@ -388,6 +391,15 @@ fn deserialize_value<'py>(
         TypeExpr::Map(k_type, v_type) => {
             deserialize_map_value(py, reader, type_id, k_type, v_type, constraints, depth)
         }
+        TypeExpr::TypedDict => deserialize_map_value(
+            py,
+            reader,
+            type_id,
+            &TypeExpr::Primitive(WireType::String),
+            &TypeExpr::Any,
+            constraints,
+            depth,
+        ),
         TypeExpr::Optional(inner) => {
             deserialize_optional(py, reader, type_id, inner, constraints, depth)
         }
@@ -544,6 +556,36 @@ fn deserialize_tarsdict_value<'py>(
     let tarsdict_type = py.get_type::<TarsDict>();
     let instance = tarsdict_type.call1((dict,)).map_err(DeError::wrap)?;
     Ok(instance.into_any())
+}
+
+fn deserialize_bytes_value<'py>(
+    py: Python<'py>,
+    reader: &mut TarsReader,
+    type_id: TarsType,
+    constraints: Option<&Constraints>,
+) -> DeResult<Bound<'py, PyAny>> {
+    if type_id != TarsType::SimpleList {
+        return Err(DeError::new(
+            "Bytes value must be encoded as SimpleList".into(),
+        ));
+    }
+
+    let sub_type = reader
+        .read_u8()
+        .map_err(|e| DeError::new(format!("Failed to read SimpleList subtype: {}", e)))?;
+    if sub_type != 0 {
+        return Err(DeError::new("SimpleList must contain Byte (0)".into()));
+    }
+
+    let len = read_size_non_negative(reader, "SimpleList")?;
+    if let Some(c) = constraints {
+        validate_length_constraints_raw(len, c, None).map_err(DeError::wrap)?;
+    }
+
+    let bytes = reader
+        .read_bytes(len)
+        .map_err(|e| DeError::new(format!("Failed to read SimpleList bytes: {}", e)))?;
+    Ok(PyBytes::new(py, bytes).into_any())
 }
 
 fn deserialize_list_value<'py>(
@@ -803,6 +845,7 @@ fn union_variant_matches_type_id(variant: &TypeExpr, type_id: TarsType) -> bool 
             .any(|item| union_variant_matches_type_id(item, type_id)),
         TypeExpr::Struct(_) => type_id == TarsType::StructBegin,
         TypeExpr::TarsDict => type_id == TarsType::StructBegin,
+        TypeExpr::Bytes => type_id == TarsType::SimpleList,
         TypeExpr::NamedTuple(_, _) => matches!(type_id, TarsType::List | TarsType::SimpleList),
         TypeExpr::Dataclass(_) => type_id == TarsType::Map,
         TypeExpr::List(_) | TypeExpr::VarTuple(_) | TypeExpr::Tuple(_) => {
@@ -810,6 +853,7 @@ fn union_variant_matches_type_id(variant: &TypeExpr, type_id: TarsType) -> bool 
         }
         TypeExpr::Set(_) => type_id == TarsType::List,
         TypeExpr::Map(_, _) => type_id == TarsType::Map,
+        TypeExpr::TypedDict => type_id == TarsType::Map,
         TypeExpr::Optional(inner) => union_variant_matches_type_id(inner, type_id),
     }
 }

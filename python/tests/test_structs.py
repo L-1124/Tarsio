@@ -6,6 +6,7 @@
 from typing import Annotated, Any, Generic, Optional, TypeVar
 
 import pytest
+from tarsio import decode as public_decode
 from tarsio._core import (
     NODEFAULT,
     Meta,
@@ -437,6 +438,27 @@ def test_missing_non_optional_field_without_default_raises() -> None:
     data = encode_raw(TarsDict({}))
     with pytest.raises(ValueError, match="Missing required field"):
         decode(Required, data)
+
+
+def test_public_decode_schema_and_raw_modes_are_data_first() -> None:
+    """公共 decode 应按 data, cls 顺序区分 Schema 与 Raw."""
+
+    class PublicUser(Struct):
+        uid: Annotated[int, 0]
+
+    data = encode(PublicUser(7))
+    restored = public_decode(data, PublicUser)
+    raw = public_decode(data)
+
+    assert restored.uid == 7
+    assert isinstance(raw, TarsDict)
+    assert raw[0] == 7
+
+
+def test_public_decode_rejects_non_struct_target_type() -> None:
+    """公共 decode 目标不是 Struct/TarsDict 时应抛出 TypeError."""
+    with pytest.raises(TypeError, match="Struct subclass"):
+        public_decode(b"", int)
 
 
 # ==========================================
@@ -953,6 +975,17 @@ def test_simple_list_wire_format() -> None:
     # Head 00 (Byte), Len 3 (Int1), Data 313233
     # 0D 00 00 03 31 32 33
     assert data.hex().upper().startswith("0D000003")
+
+
+def test_bytes_field_rejects_plain_list_wire() -> None:
+    """Bytes 字段应只接受 SimpleList 线协议."""
+
+    class B(Struct):
+        v: Annotated[bytes, 0]
+
+    data = encode_raw(TarsDict({0: [1, 2, 3]}))
+    with pytest.raises(ValueError, match="Bytes value must be encoded as SimpleList"):
+        decode(B, data)
 
 
 def test_bytes_field_accepts_buffer_protocol_inputs() -> None:

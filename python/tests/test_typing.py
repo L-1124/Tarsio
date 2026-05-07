@@ -256,6 +256,25 @@ def test_typeddict_support() -> None:
     assert decoded2.u.get("name") is None
 
 
+def test_typeddict_runtime_accepts_dataclass_like_map_value() -> None:
+    """TypedDict 运行时应保持旧 Map 语义并接受 dataclass."""
+
+    class Payload(TypedDict):
+        id: Required[int]
+        name: NotRequired[str]
+
+    @dataclass
+    class PayloadData:
+        id: int
+        name: str
+
+    class Wrap(Struct):
+        payload: Annotated[Payload, 0]
+
+    decoded = decode(Wrap, encode(Wrap(PayloadData(1, "dc"))))  # pyright: ignore[reportArgumentType]
+    assert decoded.payload == {"id": 1, "name": "dc"}
+
+
 # ==========================================
 # 5. Logic & Markers (逻辑与标记)
 # ==========================================
@@ -487,6 +506,22 @@ def test_inspect_type_info_supported_kinds() -> None:
     assert isinstance(cases["int"], inspect.Type)
     assert isinstance(cases["int"], inspect.BasicType)
     assert isinstance(cases["list"], inspect.CompoundType)
+
+
+def test_inspect_struct_preserves_bytes_and_typeddict_semantics() -> None:
+    """验证 inspect 保留 bytes 与 TypedDict 用户语义."""
+
+    class Payload(TypedDict):
+        id: Required[int]
+        name: NotRequired[str]
+
+    class Envelope(Struct):
+        raw: Annotated[bytes, 0]
+        payload: Annotated[Payload, 1]
+
+    info = cast(inspect.StructType, inspect.type_info(Envelope))
+    assert info.fields[0].type.kind == "bytes"
+    assert info.fields[1].type.kind == "typeddict"
 
 
 def test_inspect_struct_type_contains_fields_tree() -> None:

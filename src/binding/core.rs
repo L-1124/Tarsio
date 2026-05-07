@@ -25,6 +25,8 @@ pub enum TypeExpr {
     Primitive(WireType),
     Struct(Py<PyType>),
     TarsDict,
+    Bytes,
+    TypedDict,
     NamedTuple(Py<PyType>, Vec<TypeExpr>),
     Dataclass(Py<PyType>),
     Any,
@@ -49,6 +51,8 @@ impl TypeExpr {
             TypeExpr::Primitive(_) => Ok(()),
             TypeExpr::Struct(cls) => visit.call(cls),
             TypeExpr::TarsDict => Ok(()),
+            TypeExpr::Bytes => Ok(()),
+            TypeExpr::TypedDict => Ok(()),
             TypeExpr::NamedTuple(cls, items) => {
                 visit.call(cls)?;
                 for item in items {
