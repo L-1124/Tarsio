@@ -228,6 +228,16 @@ def _probe_bytes(
     return result
 
 
+def _allow_trace_probe(
+    payload: bytes, depth: int, policy: ProbePolicy, rt: ProbeRuntime
+) -> bool:
+    """根据策略判断是否允许 trace 探测."""
+    cache_hit = payload in rt.trace_cache
+    if cache_hit:
+        return True
+    return _allow_probe(payload, depth, policy, rt)
+
+
 def _decode_trace_cached(payload: bytes, rt: ProbeRuntime) -> TraceNode:
     """带缓存地执行 decode_trace."""
     if payload in rt.trace_cache:
@@ -294,17 +304,19 @@ def build_trace_tree(
         build_trace_tree(child, policy, rt, tree, depth + 1)
 
     if node.jce_type == "SimpleList" and isinstance(node.value, bytes):
-        struct = _probe_bytes(node.value, depth, policy, rt)
-        if struct:
-            try:
-                inner_trace = _decode_trace_cached(node.value, rt)
-            except Exception:
-                return tree
+        if not _allow_trace_probe(node.value, depth, policy, rt):
+            return tree
+        try:
+            inner_trace = _decode_trace_cached(node.value, rt)
+        except Exception:
+            inner_trace = None
+        if inner_trace is not None and inner_trace.children:
             inner_branch = tree.add(
                 Text(">>> Probed Structure >>>", style="bold magenta")
             )
             for child in inner_trace.children:
                 build_trace_tree(child, policy, rt, inner_branch, depth + 1)
+            return tree
 
     return tree
 

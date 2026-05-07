@@ -81,6 +81,34 @@ def test_cli_format_tree_outputs_tree_structure(cli_runner: CliRunner, cli) -> N
     assert "(ROOT)" in result.output
 
 
+def test_cli_tree_probe_decodes_simplelist_list_payload(
+    cli_runner: CliRunner, cli
+) -> None:
+    """CLI tree 应探测 SimpleList 内的 List 载荷."""
+    from tarsio._core import TarsDict, encode_raw
+
+    item = encode_raw(TarsDict({0: "x", 1: "y"})) + encode_raw(TarsDict({1: "z"}))
+    payload = encode_raw([item])
+    data = encode_raw(TarsDict({0: payload}))
+
+    result = cli_runner.invoke(
+        cli,
+        [
+            data.hex(),
+            "--format",
+            "tree",
+            "--probe",
+            "on",
+            "--probe-max-depth",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert ">>> Probed Structure >>>" in result.output
+    assert "(List)" in result.output
+
+
 def test_cli_format_pretty_is_default(cli_runner: CliRunner, cli) -> None:
     """CLI 默认使用 pretty 格式输出."""
     result = cli_runner.invoke(cli, ["00 64"])
