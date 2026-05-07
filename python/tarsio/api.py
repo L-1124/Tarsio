@@ -4,7 +4,7 @@
 并提供了完整的类型提示与文档。
 """
 
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar, get_origin, overload
 
 from ._core import Struct, TarsDict
 from ._core import (
@@ -64,6 +64,10 @@ def encode(obj: Any) -> bytes:
 
 
 @overload
+def decode(data: _BytesLike) -> TarsDict: ...
+
+
+@overload
 def decode(
     data: _BytesLike,
     cls: type[TarsDict],
@@ -84,17 +88,22 @@ def decode(
     """从 Tars 二进制数据反序列化.
 
     Args:
-        cls: 目标类
-        data: 二进制数据
+        data: 二进制数据。
+        cls: 目标类。省略或传入 TarsDict 时返回 Raw 解码结果。
 
     Returns:
         反序列化的类实例或 TarsDict。
 
     Raises:
-        TypeError: 参数类型错误或目标类未注册 Schema。
+        TypeError: 参数类型错误、目标类未注册 Schema、或目标类不是 Struct/TarsDict。
         ValueError: 数据格式不正确。
     """
-    if issubclass(cls, (Struct)):
-        return _core_decode(cls, data)
-    else:
+    origin_cls = get_origin(cls) or cls
+
+    if origin_cls is TarsDict:
         return _core_decode_raw(data)
+
+    if isinstance(origin_cls, type) and issubclass(origin_cls, Struct):
+        return _core_decode(origin_cls, data)
+
+    raise TypeError("decode cls must be TarsDict or a Struct subclass")

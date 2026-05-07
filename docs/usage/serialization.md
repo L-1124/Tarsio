@@ -1,8 +1,5 @@
 # 使用总览
 
-本页给出 Tarsio 的推荐使用路径: 先定义 `Struct`, 再进行编解码。
-若数据结构未知,再切换到 Raw 模式和调试工具。
-
 ## 示例代码
 
 ```python
@@ -13,7 +10,7 @@ class User(Struct):
     name: str = field(tag=1)
 
 data = encode(User(id=7, name="Ada"))
-restored = User.decode(data)
+restored = decode(data, User)
 raw = decode(data)  # TarsDict
 assert restored.name == "Ada"
 assert isinstance(raw, TarsDict)
@@ -24,7 +21,7 @@ assert isinstance(raw, TarsDict)
 ### Schema 模式优先
 
 * 业务对象优先使用 `Struct`。
-* `User.decode(data)` 返回类型稳定,适合服务主链路。
+* `decode(data, User)` 与 `User.decode(data)` 返回类型稳定,适合服务主链路。
 * 字段约束失败时抛 `ValidationError`。
 * `bytes` 字段可直接接收 `bytearray`、`memoryview`，统一按 `SimpleList(bytes)` 编码。
 * `Struct`/`TarsDict` 字段可通过 `field(wrap_simplelist=True)` 按“先正常编码，再包装为 `SimpleList(bytes)`”输出。

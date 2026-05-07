@@ -39,7 +39,7 @@ data = encode(alice)
 print(data.hex())
 
 # 4. 解码 (Decode)
-user = decode(User, data)
+user = decode(data, User)
 assert user == alice
 ```
 
