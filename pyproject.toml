@@ -4,7 +4,8 @@ version = "0.5.1"
 description = "Fast Tars/JCE protocol implementation for Python, powered by Rust"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   { name = "l-1124", email = "68656403+L-1124@users.noreply.github.com" },
 ]
@@ -97,7 +98,12 @@ typeCheckingMode = "standard"
 include = ["python/tests"]
 
 [tool.pytest]
-addopts = ["--cov-report=term-missing", "--cov=tarsio", "-v","--benchmark-disable-gc"]
+addopts = [
+  "--benchmark-disable-gc",
+  "--cov-report=term-missing",
+  "--cov=tarsio",
+  "-v"
+]
 minversion = "6.0"
 python_files = ["test_*.py"]
 pythonpath = ["python"]
